@@ -113,7 +113,8 @@ try {
   await close(host);
 
   // 4. grep finds ripgrep in Pi's tool directory when PATH has none, and explains itself otherwise.
-  const noRgPath = "/usr/bin:/bin";
+  const noRgPath = join(directory, "empty-path");
+  await mkdir(noRgPath);
   host = await connect({ PATH: noRgPath });
   assert.match(host.init.search.ripgrep, /was not found/);
   await host.call("spawn", { cwd: directory, id: "grep-missing", prompt: "GREP", tools: ["grep"], durable: false });
