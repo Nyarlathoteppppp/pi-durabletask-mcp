@@ -7,7 +7,7 @@ import {
   SPAWN_DEFAULT_TURNS,
 } from "./config.js";
 import { pickTools } from "./permissions.js";
-import { PiWorker } from "./pi/worker.js";
+import { PiWorker, type WorkerOptions } from "./pi/worker.js";
 import { resolveDelegateCwd } from "./workspace.js";
 import type { PiThinkingLevel, TerminationReason } from "./types.js";
 import { publish } from "./statusline/state.js";
@@ -56,16 +56,27 @@ const loading = new Map<string, Promise<PiWorker>>();
 const unloading = new Map<string, Promise<void>>();
 function unload(worker: PiWorker): Promise<void> {
   sessions.delete(worker.id);
+  lastUsed.delete(worker.id);
   const done = worker.unload().catch((error: unknown) => { process.stderr.write(`[pi-delegate] unload failed: ${String(error)}\n`); })
     .finally(() => unloading.delete(worker.id));
   unloading.set(worker.id, done);
   return done;
 }
+/** Stored options must still pass this process's policy before they run again. */
+async function checkStoredPolicy(options: WorkerOptions): Promise<void> {
+  pickTools(options.tools);
+  await resolveDelegateCwd(options.cwd);
+}
+
+/** Last lookup or creation per session; history eviction drops the least recently used. */
+const lastUsed = new Map<string, number>();
+const touch = (id: string): void => { lastUsed.set(id, Date.now()); };
+
 /** A live delegate, or a finished durable one loaded from disk on first use. */
 export async function resolve(id: string): Promise<PiWorker> {
   await unloading.get(id);
   const live = sessions.get(id) ?? await loading.get(id);
-  if (live) return live;
+  if (live) { touch(live.id); return live; }
   const record = claimStored(id);
   if (record === "held")
     throw new Error(`Session ${id} is loaded by another running MCP process. Use it from there, or stop that process.`);
@@ -74,10 +85,13 @@ export async function resolve(id: string): Promise<PiWorker> {
     const worker = new PiWorker(record.options);
     worker.recoveryKey = record.key;
     worker.onChange = () => publish(all());
-    try { await PiWorker.recover(record.options, record.prompt, record.key, worker); }
-    catch (error) { worker.dispose(); releaseJob(record.key); throw error; }
+    try {
+      await checkStoredPolicy(record.options);
+      await PiWorker.recover(record.options, record.prompt, record.key, worker);
+    } catch (error) { worker.dispose(); releaseJob(record.key); throw error; }
     sessions.set(worker.id, worker);
-    evictHistory();
+    touch(worker.id);
+    evictHistory(worker);
     publish(all());
     return worker;
   })().finally(() => loading.delete(id));
@@ -135,8 +149,7 @@ export async function recoverAbandoned(): Promise<void> {
       });
       for (const { record, worker } of claimed) {
         try {
-          pickTools(record.options.tools);
-          await resolveDelegateCwd(record.options.cwd);
+          await checkStoredPolicy(record.options);
           await PiWorker.recover(record.options, record.prompt, record.key, worker);
           void worker.run?.then(() => { evictHistory(); sweepStorage(); setImmediate(() => void recoverAbandoned()); });
         } catch (error) {
@@ -172,8 +185,9 @@ export async function abortAll(reason: TerminationReason = "server_shutdown"): P
  * Unload the oldest finished sessions once in-memory history is over budget. Running ones are safe.
  * This only frees memory: durable sessions stay on disk, loadable by id, until retention removes them.
  */
-export function evictHistory(): void {
-  const done = all().filter((w) => !w.isActive).sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+export function evictHistory(keep?: PiWorker): void {
+  const used = (w: PiWorker): number => lastUsed.get(w.id) ?? Date.parse(w.startedAt);
+  const done = all().filter((w) => !w.isActive && w !== keep).sort((a, b) => used(a) - used(b));
   while (sessions.size > HISTORY_LIMIT && done.length) {
     const oldest = done.shift();
     if (!oldest) break;

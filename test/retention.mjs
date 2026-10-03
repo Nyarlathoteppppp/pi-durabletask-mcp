@@ -42,9 +42,9 @@ const http = createServer(async (req, res) => {
 http.on("connection", (socket) => { sockets.add(socket); socket.on("close", () => sockets.delete(socket)); });
 await new Promise((resolve) => http.listen(0, "127.0.0.1", resolve));
 
-const connect = async (env = {}) => {
+const connect = async ({ server = "dist/index.js", ...env } = {}) => {
   const client = new Client({ name: "retention-test", version: "1" });
-  const transport = new StdioClientTransport({ command: process.execPath, args: ["dist/index.js"], stderr: "ignore",
+  const transport = new StdioClientTransport({ command: process.execPath, args: [server], stderr: "ignore",
     env: { ...process.env, PI_OFFLINE: "1", PI_CODING_AGENT_DIR: agentDir, PI_DELEGATE_STATE_DIR: stateDir,
       PI_DELEGATE_MODEL: "test/one", PI_DELEGATE_IGNORE_SCOPE: "1", ...env } });
   const host = { client, transport };
@@ -141,7 +141,43 @@ try {
   assert.equal(row("running-a"), undefined);
   assert.ok(row("running-b"));
   await close(host);
-  console.log("  OK -> non-durable writes nothing, eviction keeps disk, lazy load and cross-host hold, retention and tombstones, size limit spares unfinished, forget stored");
+  // 7. A stored session is loaded under this process's policy, not the one it was created under.
+  host = await connect({ PI_DELEGATE_ALLOW_WRITE: "1" });
+  await host.call("spawn", { cwd: directory, id: "writer", prompt: "plain", tools: ["write"] });
+  await done(host, "writer");
+  await close(host);
+  host = await connect();
+  await assert.rejects(() => host.call("follow_up", { sessionId: "writer", prompt: "write now" }), /blocked/,
+    "a read-only host does not regain write tools through history");
+  await assert.rejects(() => host.call("status", { sessionId: "writer" }), /blocked/);
+  await close(host);
+
+  // 8. Loading a stored session into a full history keeps it; the least recently used one goes.
+  host = await connect({ PI_DELEGATE_HISTORY: "1" });
+  await host.call("spawn", { cwd: directory, id: "old", prompt: "plain", tools: [] });
+  await done(host, "old");
+  await host.call("spawn", { cwd: directory, id: "new", prompt: "plain", tools: [] });
+  await done(host, "new");
+  await waitUntil(async () => (await host.call("sessions")).stored.some((s) => s.sessionId === "old"));
+  await host.call("follow_up", { sessionId: "old", prompt: "again" });
+  await done(host, "old");
+  assert.equal((await host.call("status", { sessionId: "old" })).turns, 2, "the loaded session was not evicted under it");
+  await close(host);
+
+  // 9. A crash right after a follow-up task commits leaves the job unfinished, so recovery resumes
+  //    it at startup and the sweep cannot take it for finished.
+  host = await connect({ server: "test/recovery-server.mjs", TEST_CRASH_AFTER_FOLLOWUP_COMMIT: "1" });
+  await assert.rejects(() => host.call("follow_up", { sessionId: "new", prompt: "after crash" }));
+  clients.delete(host);
+  assert.equal(row("new").finished_at, null, "a committed follow-up is never marked finished");
+  host = await connect();
+  assert.ok((await host.call("sessions")).sessions.some((s) => s.sessionId === "new"), "startup recovery resumed it");
+  await done(host, "new");
+  assert.equal((await host.call("status", { sessionId: "new" })).turns, 2);
+  assert.ok(row("new").finished_at > 0);
+  await close(host);
+
+  console.log("  OK -> non-durable writes nothing, eviction keeps disk, lazy load and cross-host hold, retention and tombstones, size limit spares unfinished, forget stored, policy on load, LRU keeps loaded history, follow-up crash window");
 } finally {
   for (const host of clients) await host.client.close().catch(() => {});
   for (const socket of sockets) socket.destroy();

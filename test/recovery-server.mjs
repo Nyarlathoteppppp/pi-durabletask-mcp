@@ -27,6 +27,24 @@ DurableJob.prototype.save = async function (checkpoint) {
     while (!existsSync(barrier + ".release")) await new Promise((resolve) => setTimeout(resolve, 10));
   }
 };
+// Die right after a follow-up task commits, before anything else runs.
+const begin = DurableJob.prototype.begin;
+DurableJob.prototype.begin = async function (prompt, checkpoint, execute, recover = false) {
+  if (process.env.TEST_CRASH_AFTER_FOLLOWUP_COMMIT && this.taskId && !recover) {
+    const root = this.harness.root.bind(this.harness);
+    this.harness.root = async (ctx) => {
+      const handle = await root(ctx);
+      const commit = handle.commit.bind(handle);
+      handle.commit = async (...args) => {
+        await commit(...args);
+        process.kill(process.pid, "SIGKILL");
+        await new Promise(() => {});
+      };
+      return handle;
+    };
+  }
+  return begin.call(this, prompt, checkpoint, execute, recover);
+};
 // Hold a recovery between reading its checkpoint and reopening the store as executor.
 const close = DurableJob.prototype.close;
 DurableJob.prototype.close = async function (release = true) {

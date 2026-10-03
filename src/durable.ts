@@ -181,8 +181,9 @@ export function sweep(now = Date.now()): string[] {
   for (const row of finished) {
     if (row.finished_at >= now - RETENTION_MS && total <= STORAGE_LIMIT_BYTES) break;
     if (owns(row.key) || !tryAcquire(row.key)) continue;
-    const fresh = db().prepare("SELECT finished_at FROM jobs WHERE key = ?").get(row.key) as { finished_at: number | null } | undefined;
-    if (!fresh || fresh.finished_at === null) { releaseOwnership(row.key); continue; }
+    // Another process may have followed it up, or finished it again, since the scan.
+    const fresh = catalog.prepare("SELECT finished_at FROM jobs WHERE key = ?").get(row.key) as { finished_at: number | null } | undefined;
+    if (!fresh || fresh.finished_at !== row.finished_at) { releaseOwnership(row.key); continue; }
     const size = bytes(jobDir(row.key));
     forgetOwnedJob(row.key);
     total -= size;
@@ -305,13 +306,16 @@ export class DurableJob implements JobStore {
   async begin(prompt: string, checkpoint: Checkpoint, execute: Execute, recover = false): Promise<{ done: Promise<Checkpoint> }> {
     this.execute = execute;
     if (!recover || !this.taskId) {
+      // Unfinished first: a crash before the task commits leaves an unfinished row whose current
+      // task is terminal, which recovery reopens and marks finished again. The reverse order would
+      // leave a running task marked finished, skipped by recovery and open to the sweep.
+      db().prepare("UPDATE jobs SET finished_at = NULL WHERE key = ?").run(this.key);
       const root = await this.harness.root(context);
       this.taskId = await root.commit(async (tx) => {
         const id = await tx.createTask(this.task, { prompt, checkpoint }, { ownership: { kind: "conversation" } });
         (await tx.doc(CurrentTask)).taskId = id;
         return id;
       }, context);
-      db().prepare("UPDATE jobs SET finished_at = NULL WHERE key = ?").run(this.key);
     }
     return { done: this.wait() };
   }
