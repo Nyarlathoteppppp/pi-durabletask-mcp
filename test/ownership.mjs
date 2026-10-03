@@ -57,6 +57,8 @@ const connect = async (hooks = {}) => {
   clients.add(host);
   try { await client.connect(transport); } catch (error) { clients.delete(host); throw error; }
   host.call = async (name, args = {}) => {
+    // These tests exercise durability, which is opt-in for new delegates.
+    if ((name === "spawn" || name === "run") && args.durable === undefined) args = { ...args, durable: true };
     const result = await client.callTool({ name, arguments: args });
     assert.ok(!result.isError, result.content?.[0]?.text);
     return JSON.parse(result.content[0].text);
@@ -185,6 +187,9 @@ try {
     owner = await connect();
   }
   assert.equal((await owner.call("status", { sessionId: "finished" })).state, "done");
+  // Recovery never claims a finished job, so restarts leave its count alone; loading it clears it.
+  await owner.call("follow_up", { sessionId: "finished", prompt: "plain" });
+  await waitUntil(async () => (await owner.call("status", { sessionId: "finished" })).state === "done");
   assert.equal(catalog("SELECT attempts FROM jobs WHERE key = ?", keyOf("finished")).attempts, 0);
   await close(owner);
 

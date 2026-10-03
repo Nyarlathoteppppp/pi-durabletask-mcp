@@ -9,7 +9,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import type { FileEntry } from "@earendil-works/pi-coding-agent";
-import { AGENT_DIR, MAX_RECOVERY_ATTEMPTS, RETENTION_MS, STATE_DIR, STORAGE_LIMIT_BYTES } from "./config.js";
+import { AGENT_DIR, DAY_MS, MAX_RECOVERY_ATTEMPTS, RETENTION_DAYS, STATE_DIR, STORAGE_LIMIT_BYTES } from "./config.js";
 import { initOwnership, owns, release as releaseOwnership, removeTombstones, tryAcquire } from "./ownership.js";
 import { getRuntime } from "./pi/runtime.js";
 import type { WorkerOptions } from "./pi/worker.js";
@@ -56,6 +56,8 @@ export interface JobStore {
   begin(prompt: string, checkpoint: Checkpoint, execute: Execute, recover?: boolean): Promise<{ done: Promise<Checkpoint> }>;
   close(release?: boolean): Promise<void>;
   forget(): Promise<void>;
+  /** The finished state, kept where every process can read it. */
+  recordFinal(snapshot: Snapshot): void;
 }
 
 /**
@@ -73,6 +75,7 @@ export class MemoryJob implements JobStore {
   /** Like closing a Harness, this cancels a running execution. */
   async close(): Promise<void> { this.controller.abort(); }
   async forget(): Promise<void> { this.controller.abort(); }
+  recordFinal(): void {}
 }
 
 let catalog: DatabaseSync | undefined;
@@ -88,11 +91,14 @@ function db(): DatabaseSync {
     CREATE TABLE IF NOT EXISTS meta (name TEXT PRIMARY KEY, value TEXT NOT NULL);
     INSERT OR IGNORE INTO meta VALUES ('ownership_protocol', '${OWNERSHIP_PROTOCOL}');
     CREATE TABLE IF NOT EXISTS jobs (key TEXT PRIMARY KEY, pid INTEGER NOT NULL, agent_dir TEXT NOT NULL,
-      options TEXT NOT NULL, prompt TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, finished_at INTEGER);`);
+      options TEXT NOT NULL, prompt TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, finished_at INTEGER,
+      snapshot TEXT);`);
   // finished_at is set while the current task is terminal and cleared by follow_up. Only finished
   // jobs are swept, and recovery claims only unfinished ones. Added after the first v2 catalogs.
-  if (!(opened.prepare("PRAGMA table_info(jobs)").all() as { name: string }[]).some((c) => c.name === "finished_at"))
-    opened.exec("ALTER TABLE jobs ADD COLUMN finished_at INTEGER");
+  // snapshot holds the finished state, so any process can show it without loading the store.
+  const columns = new Set((opened.prepare("PRAGMA table_info(jobs)").all() as { name: string }[]).map((c) => c.name));
+  if (!columns.has("finished_at")) opened.exec("ALTER TABLE jobs ADD COLUMN finished_at INTEGER");
+  if (!columns.has("snapshot")) opened.exec("ALTER TABLE jobs ADD COLUMN snapshot TEXT");
   chmodSync(path, 0o600);
   const protocol = (opened.prepare("SELECT value FROM meta WHERE name = 'ownership_protocol'").get() as { value: string }).value;
   if (protocol !== String(OWNERSHIP_PROTOCOL)) {
@@ -127,6 +133,18 @@ export function claimAbandoned(excludeIds: Set<string>, limit: number): JobRecor
 const byId = (id: string): Row | undefined => db().prepare(
   "SELECT key, options, prompt FROM jobs WHERE agent_dir = ? AND json_extract(options, '$.id') = ? ORDER BY rowid DESC LIMIT 1",
 ).get(AGENT_DIR, id) as Row | undefined;
+
+/**
+ * The recorded final state of a finished job, read without its lock, so a session loaded by
+ * another process stays readable. Undefined while it runs, or if it finished before recording.
+ */
+export function storedSnapshot(id: string): Snapshot | undefined {
+  const row = db().prepare(
+    "SELECT snapshot FROM jobs WHERE agent_dir = ? AND json_extract(options, '$.id') = ? AND finished_at IS NOT NULL " +
+    "AND snapshot IS NOT NULL ORDER BY rowid DESC LIMIT 1",
+  ).get(AGENT_DIR, id) as { snapshot: string } | undefined;
+  return row ? JSON.parse(row.snapshot) as Snapshot : undefined;
+}
 
 /** True when a stored job, in any process, already uses this session id. */
 export const storedIdInUse = (id: string): boolean => byId(id) !== undefined;
@@ -176,10 +194,14 @@ export function sweep(now = Date.now()): string[] {
   const removed: string[] = [];
   const catalog = db();
   let total = readdirSync(JOBS_DIR).reduce((sum, key) => sum + bytes(join(JOBS_DIR, key)), 0);
-  const finished = catalog.prepare("SELECT key, finished_at FROM jobs WHERE finished_at IS NOT NULL ORDER BY finished_at")
-    .all() as { key: string; finished_at: number }[];
+  // Each job keeps its own retention. Under size pressure the oldest finished go first whatever
+  // their retention, so one long-kept job cannot hold storage above the limit.
+  const finished = catalog.prepare(
+    "SELECT key, finished_at, coalesce(json_extract(options, '$.retentionDays'), ?) AS days FROM jobs " +
+    "WHERE finished_at IS NOT NULL ORDER BY finished_at",
+  ).all(RETENTION_DAYS) as { key: string; finished_at: number; days: number }[];
   for (const row of finished) {
-    if (row.finished_at >= now - RETENTION_MS && total <= STORAGE_LIMIT_BYTES) break;
+    if (row.finished_at + row.days * DAY_MS >= now && total <= STORAGE_LIMIT_BYTES) continue;
     if (owns(row.key) || !tryAcquire(row.key)) continue;
     // Another process may have followed it up, or finished it again, since the scan.
     const fresh = catalog.prepare("SELECT finished_at FROM jobs WHERE key = ?").get(row.key) as { finished_at: number | null } | undefined;
@@ -325,6 +347,9 @@ export class DurableJob implements JobStore {
     if (task.state.outcome.status !== "completed") throw new Error(`Durable task ${task.state.outcome.status}: ` +
       ("error" in task.state.outcome ? JSON.stringify(task.state.outcome.error) : "no result"));
     return task.state.outcome.result;
+  }
+  recordFinal(snapshot: Snapshot): void {
+    if (owns(this.key)) db().prepare("UPDATE jobs SET snapshot = ? WHERE key = ?").run(JSON.stringify(snapshot), this.key);
   }
   save(checkpoint: Checkpoint): Promise<void> {
     if (this.closing || !this.runtime) return Promise.resolve();

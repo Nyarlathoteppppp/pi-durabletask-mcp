@@ -329,24 +329,30 @@ having two executors of one task. The catalog's `pid` column is diagnostic only.
   cannot crash every host in turn. Inspect it, then `forget` it. Completing a turn, a clean
   shutdown, or loading finished history resets the count.
 
-#### Non-durable delegates and retention
+#### Durable is opt-in; retention
 
-`durable: false` on `spawn`, `run` or `spawn_batch` keeps a delegate in memory only. It
-writes no catalog row, lock or store, still supports `status`, `wait`, `steer` and
-`follow_up` while this MCP process lives, and is gone when it exits; it is never recovered.
-Use it for short, cheap, re-runnable work such as reviews, searches and model comparisons.
-The default stays durable.
+Delegates are in memory only by default. Such a delegate writes no catalog row, lock or store,
+supports `status`, `wait`, `steer` and `follow_up` while this MCP process lives, and is gone
+when it exits; it is never recovered. That suits short, cheap, re-runnable work such as reviews,
+searches and model comparisons. Pass `durable: true` on `spawn`, `run` or `spawn_batch` for long
+work, external side effects, work that must survive a restart or be followed up later, or when
+the user asks for it. `retentionDays` (1-365) sets how long that one is kept; it is refused
+without `durable: true`.
 
 Durable delegates are kept on disk after they finish, then deleted automatically:
 
 - `PI_DELEGATE_HISTORY` limits how many finished delegates each process keeps loaded in
-  memory. Unloading one only frees memory: a durable delegate stays on disk, appears in
-  `sessions` under `stored`, and loads again on first use by id from any process, unless
-  another live process has it loaded.
-- A finished delegate is deleted `PI_DELEGATE_RETENTION_DAYS` (default 7) after it last
-  finished; `follow_up` restarts the clock.
+  memory. Unloading one only frees memory: a durable delegate stays on disk and appears in
+  `sessions` under `stored`.
+- Any process can read a finished durable delegate with `status` or `wait`, including one
+  another live process has loaded: its final state is recorded in the catalog, so reading
+  loads nothing. `follow_up` loads it, which needs any process holding it to let go first.
+- A finished delegate is deleted `retentionDays` after it last finished, or
+  `PI_DELEGATE_RETENTION_DAYS` (default 7) when its spawn named none; `follow_up` restarts
+  the clock.
 - When stored delegates exceed `PI_DELEGATE_STORAGE_LIMIT_MB` (default 1024), the oldest
-  finished ones are deleted early until the total is under the limit.
+  finished ones are deleted early until the total is under the limit, whatever their
+  `retentionDays`.
 - Unfinished delegates are never deleted, under any pressure. Neither are delegates another
   live process has loaded; that process applies retention to them itself.
 - The check runs when a process starts and, at most once a minute, when a delegate finishes.
@@ -494,7 +500,7 @@ MCP for one task in an enabled batch, pass `nativeMcp: false, mcpServers: []`.
 | `PI_DELEGATE_LIST_CAP`        | `60`             | Above this, `init` summarises models by provider instead of listing them |
 | `PI_DELEGATE_STATE_DIR`       | XDG state dir    | Status-line state and durable task storage (local filesystem only)       |
 | `PI_DELEGATE_MAX_RECOVERY_ATTEMPTS` | `3`        | Claims without progress before a delegate is reported instead of resumed |
-| `PI_DELEGATE_RETENTION_DAYS`  | `7`              | Days a finished durable delegate is kept on disk                         |
+| `PI_DELEGATE_RETENTION_DAYS`  | `7`              | Days a finished durable delegate is kept when its spawn sets no `retentionDays` |
 | `PI_DELEGATE_STORAGE_LIMIT_MB` | `1024`          | Stored delegates above this are deleted early, oldest finished first     |
 | `PI_DELEGATE_STATUSLINE_WRAP` | unset            | Status line command to wrap and append to                                |
 | `PI_DELEGATE_STATUSLINE_LOG`  | unset            | File to append a timestamp to on every status line render, for debugging |

@@ -1,8 +1,9 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { HISTORY_LIMIT } from "../config.js";
-import { all, assertCapacity, forget, resolve } from "../registry.js";
-import { storedJobs } from "../durable.js";
+import { all, assertCapacity, forget, loaded, resolve } from "../registry.js";
+import { storedJobs, storedSnapshot } from "../durable.js";
+import { compactSnapshot } from "../pi/worker.js";
 import type { PiWorker } from "../pi/worker.js";
 import type { Snapshot } from "../types.js";
 import { gated, json } from "./shared.js";
@@ -49,6 +50,16 @@ export async function waitForProgress(
   });
 }
 
+/**
+ * Reading a finished session needs no ownership: its final state is in the catalog. This keeps
+ * sessions loaded by another process readable, and avoids loading a conversation just to look.
+ */
+function stored(sessionId: string, verbose?: boolean): Snapshot | undefined {
+  if (loaded(sessionId)) return undefined;
+  const snapshot = storedSnapshot(sessionId);
+  return snapshot && (verbose ? snapshot : compactSnapshot(snapshot));
+}
+
 export function registerControl(server: McpServer): void {
   gated(
     server,
@@ -65,7 +76,7 @@ export function registerControl(server: McpServer): void {
         verbose: z.boolean().optional().describe("Include tool results and call ids in the trace"),
       },
     },
-    async ({ sessionId, verbose }) => json((await resolve(sessionId)).snapshot({ verbose })),
+    async ({ sessionId, verbose }) => json(stored(sessionId, verbose) ?? (await resolve(sessionId)).snapshot({ verbose })),
   );
 
   gated(
@@ -97,6 +108,9 @@ export function registerControl(server: McpServer): void {
       },
     },
     async ({ sessionId, timeoutMs = 30_000, afterTurns, afterToolCalls, verbose }, extra) => {
+      // A finished session elsewhere cannot progress; its recorded state is the answer.
+      const finished = stored(sessionId, verbose);
+      if (finished) return json(finished);
       const worker = await resolve(sessionId);
       await waitForProgress(
         worker,

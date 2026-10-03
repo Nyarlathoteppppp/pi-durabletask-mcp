@@ -97,6 +97,16 @@ try {
   const waited = await host.call("wait", { sessionId: "many", timeoutMs: 250 });
   assert.equal(waited.toolCalls.length, 5, "wait is compact too");
 
+  // 1b. Without durable, a delegate is in memory only.
+  assert.equal(host.init.durability.default, false);
+  await host.call("spawn", { cwd: directory, id: "plain-default", prompt: "plain", tools: [] });
+  const plain = await settle(host, "plain-default");
+  assert.equal(plain.durable, false);
+  assert.equal(plain.retentionDays, undefined);
+  assert.equal((await host.call("sessions")).stored.length, 0, "nothing stored");
+  await assert.rejects(() => host.call("spawn", { cwd: directory, id: "keep", prompt: "plain", tools: [], retentionDays: 30 }),
+    /retentionDays applies only to durable delegates/);
+
   // 2. A provider whose credentials fail is reported by init, not offered, and refused at spawn.
   assert.match(host.init.failingProviders.broken, /OAuth refresh failed/);
   assert.ok(!JSON.stringify(host.init.models).includes("broken/one"), "its models are not offered");

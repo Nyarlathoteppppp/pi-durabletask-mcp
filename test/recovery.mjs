@@ -79,6 +79,8 @@ const connect = async (hooks = {}) => {
   clients.add(host);
   await client.connect(transport);
   const call = async (name, args = {}) => {
+    // These tests exercise durability, which is opt-in for new delegates.
+    if ((name === "spawn" || name === "run") && args.durable === undefined) args = { ...args, durable: true };
     const result = await client.callTool({ name, arguments: args });
     assert.ok(!result.isError, result.content?.[0]?.text);
     return JSON.parse(result.content[0].text);

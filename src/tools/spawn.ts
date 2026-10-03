@@ -5,7 +5,9 @@ import {
   BATCH_MAX,
   DEFAULT_MODEL,
   MAX_DURATION_MS,
+  MAX_RETENTION_DAYS,
   MAX_TURNS,
+  RETENTION_DAYS,
   PROGRESS_MS,
   RUN_DEFAULT_DURATION_MS,
   RUN_DEFAULT_TURNS,
@@ -31,9 +33,13 @@ export function bindCancellation(
 }
 
 const DURABLE_HELP =
-  "Default true: saved to disk, recovered after an MCP restart, kept for follow_up until retention expires. " +
-  "false: memory only, nothing written, gone when this MCP process exits. Use false for short, cheap, " +
-  "re-runnable work such as reviews, searches and model comparisons.";
+  "Default false: memory only, nothing written, gone when this MCP process exits; right for short, cheap, " +
+  "re-runnable work such as reviews, searches and model comparisons. Pass true when the work is long, has " +
+  "external side effects, should survive an MCP restart, or will be followed up later, or when the user asks.";
+const RETENTION_HELP =
+  `Durable only: days to keep it on disk after it finishes (default ${RETENTION_DAYS}, max ${MAX_RETENTION_DAYS}). ` +
+  "Set it longer when the user wants to come back to this session later.";
+const retentionDays = z.number().int().min(1).max(MAX_RETENTION_DAYS).optional();
 
 const spawnShape = {
   prompt: z.string().describe("The task for the pi agent"),
@@ -68,6 +74,7 @@ const spawnShape = {
     .boolean()
     .optional()
     .describe(DURABLE_HELP),
+  retentionDays: retentionDays.describe(RETENTION_HELP),
   maxTurns: z
     .number()
     .int()
@@ -101,6 +108,7 @@ const taskShape = z.object({
   mcpServers: z.array(z.string()).optional(),
   maxTurns: z.number().int().min(1).max(MAX_TURNS).optional(),
   maxDurationMs: z.number().int().min(1_000).max(MAX_DURATION_MS).optional(),
+  retentionDays: retentionDays.describe("Overrides the batch `retentionDays` for this task alone"),
 });
 
 export function registerSpawn(server: McpServer): void {
@@ -165,13 +173,14 @@ export function registerSpawn(server: McpServer): void {
           .max(MAX_DURATION_MS)
           .optional()
           .describe(`Default wall-clock deadline; server ceiling ${MAX_DURATION_MS} ms`),
+        retentionDays: retentionDays.describe(`Default for every task in this batch. ${RETENTION_HELP}`),
         idPrefix: z
           .string()
           .optional()
           .describe('Names the tasks `<prefix>-01`, `<prefix>-02`, ... e.g. "audit" gives "audit-01"'),
       },
     },
-    async ({ tasks, model, thinking, cwd, tools, extensions, durable, nativeMcp, mcpServers, maxTurns, maxDurationMs, idPrefix }) => {
+    async ({ tasks, model, thinking, cwd, tools, extensions, durable, nativeMcp, mcpServers, maxTurns, maxDurationMs, retentionDays, idPrefix }) => {
       const width = Math.max(String(tasks.length).length, 2);
       const merged = tasks.map((t, i) => ({
         prompt: t.prompt,
@@ -186,6 +195,7 @@ export function registerSpawn(server: McpServer): void {
         mcpServers: t.mcpServers ?? mcpServers,
         maxTurns: t.maxTurns ?? maxTurns,
         maxDurationMs: t.maxDurationMs ?? maxDurationMs,
+        retentionDays: t.retentionDays ?? retentionDays,
         id: t.id ?? (idPrefix ? `${idPrefix}-${String(i + 1).padStart(width, "0")}` : undefined),
       }));
 

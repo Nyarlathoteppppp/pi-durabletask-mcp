@@ -11,7 +11,7 @@ import {
   type InlineExtension,
 } from "@earendil-works/pi-coding-agent";
 import { DurableJob, forgetOwnedJob, MemoryJob, releaseJob, type Checkpoint, type JobStore } from "../durable.js";
-import { AGENT_DIR } from "../config.js";
+import { AGENT_DIR, RETENTION_DAYS } from "../config.js";
 import { secretPathGuard } from "../secrets.js";
 import { createProtectedGrepTool } from "./search.js";
 import { nativeMcpFactories, validateNativeMcp, type NativeMcpOptions } from "./native-mcp.js";
@@ -44,6 +44,8 @@ export interface WorkerOptions extends NativeMcpOptions {
   extensions?: boolean;
   /** False keeps the delegate in memory only: no storage, no recovery. Default true. */
   durable?: boolean;
+  /** Days to keep a finished durable delegate; RETENTION_DAYS when absent. */
+  retentionDays?: number | undefined;
   maxTurns: number;
   maxDurationMs: number;
   startedAt?: string;
@@ -121,6 +123,11 @@ export class PiWorker {
     return this.options.durable !== false;
   }
 
+  /** How long this delegate stays on disk after finishing; undefined when it is not durable. */
+  get retentionDays(): number | undefined {
+    return this.durable ? this.options.retentionDays ?? RETENTION_DAYS : undefined;
+  }
+
   /** Cancelling a session does not release its concurrency slot until the SDK becomes idle. */
   get isActive(): boolean {
     return this.state === "starting" || this.state === "running" || this.abortPromise !== undefined || this.settling;
@@ -144,6 +151,7 @@ export class PiWorker {
     tools,
     extensions = false,
     durable = true,
+    retentionDays,
     nativeMcp = false,
     mcpServers = [],
     maxTurns,
@@ -162,7 +170,7 @@ export class PiWorker {
     this.maxTurns = maxTurns;
     this.maxDurationMs = maxDurationMs;
     this.startedAt = startedAt ?? new Date().toISOString();
-    this.options = { id: this.id, label, cwd, model, thinking, tools, extensions, durable, nativeMcp, mcpServers: this.mcpServers, maxTurns, maxDurationMs,
+    this.options = { id: this.id, label, cwd, model, thinking, tools, extensions, durable, retentionDays, nativeMcp, mcpServers: this.mcpServers, maxTurns, maxDurationMs,
       startedAt: this.startedAt };
   }
 
@@ -265,6 +273,7 @@ export class PiWorker {
     });
     if (saved && !this.job.needsResume) {
       this.restoreSnapshot(saved);
+      this.recordFinal();
     } else await this.beginDurable(prompt, saved, Boolean(key));
     return this;
   }
@@ -386,7 +395,7 @@ export class PiWorker {
       this.state = "error";
       this.error = message(error);
       this.finishedAt = new Date().toISOString();
-    }).finally(() => { this.settling = false; this.onChange?.(); });
+    }).finally(() => { this.settling = false; this.recordFinal(); this.onChange?.(); });
   }
 
   static async recover(options: WorkerOptions, prompt: string, key: string, worker = new PiWorker(options)): Promise<PiWorker> {
@@ -675,12 +684,7 @@ export class PiWorker {
   }
 
   snapshot({ verbose = false }: { verbose?: boolean } = {}): Snapshot {
-    // Polling a delegate must stay cheap for the caller's context: compact snapshots carry only
-    // the last few calls, with short arguments, and the newest notices.
-    const trace: Array<ToolCall | ToolCallSummary> = verbose ? this.toolCalls
-      : this.toolCalls.slice(-RECENT_CALLS).map((c) => ({ seq: c.seq, name: c.name, state: c.state, ms: c.ms,
-        args: c.args && c.args.length > COMPACT_ARGS ? `${c.args.slice(0, COMPACT_ARGS)}…` : c.args }));
-    return {
+    const full: Snapshot = {
       sessionId: this.id,
       label: this.label,
       state: this.state,
@@ -689,11 +693,11 @@ export class PiWorker {
       cwd: this.cwd,
       activeTools: this.activeTools,
       turns: this.turns,
-      toolCalls: trace,
+      toolCalls: this.toolCalls,
       toolCallCount: this.toolCalls.length,
       lastText: this.lastText,
       questions: this.pendingQuestions(),
-      notices: verbose ? this.notices : this.notices.slice(-RECENT_CALLS),
+      notices: this.notices,
       error: this.error,
       startedAt: this.startedAt,
       finishedAt: this.finishedAt,
@@ -701,8 +705,26 @@ export class PiWorker {
       limits: { maxTurns: this.maxTurns, maxDurationMs: this.maxDurationMs },
       termination: this.termination,
       durable: this.durable,
+      retentionDays: this.retentionDays,
     };
+    return verbose ? full : compactSnapshot(full);
   }
+
+  /** Keep the finished state readable by any process without loading the session. */
+  private recordFinal(): void {
+    if (this.suspended || this.isActive) return;
+    this.job?.recordFinal(this.snapshot({ verbose: true }));
+  }
+}
+
+/**
+ * Polling a delegate must stay cheap for the caller's context: compact snapshots carry only the
+ * last few calls, with short arguments, and the newest notices.
+ */
+export function compactSnapshot(full: Snapshot): Snapshot {
+  const trace: ToolCallSummary[] = full.toolCalls.slice(-RECENT_CALLS).map((c) => ({ seq: c.seq, name: c.name,
+    state: c.state, ms: c.ms, args: c.args && c.args.length > COMPACT_ARGS ? `${c.args.slice(0, COMPACT_ARGS)}…` : c.args }));
+  return { ...full, toolCalls: trace, notices: full.notices.slice(-RECENT_CALLS) };
 }
 
 /** Match committed results to calls; never blindly replay an interrupted side effect. */

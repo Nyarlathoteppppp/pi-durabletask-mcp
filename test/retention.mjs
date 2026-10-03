@@ -51,6 +51,8 @@ const connect = async ({ server = "dist/index.js", ...env } = {}) => {
   clients.add(host);
   await client.connect(transport);
   host.call = async (name, args = {}) => {
+    // These tests exercise durability, which is opt-in for new delegates.
+    if ((name === "spawn" || name === "run") && args.durable === undefined) args = { ...args, durable: true };
     const result = await client.callTool({ name, arguments: args });
     if (result.isError) throw new Error(result.content?.[0]?.text);
     return JSON.parse(result.content[0].text);
@@ -100,20 +102,31 @@ try {
   await assert.rejects(() => host.call("spawn", { cwd: directory, id: "first", prompt: "plain", tools: [] }),
     /already in use/, "a stored id is still taken");
 
-  // 3. Another process cannot load a session this host has loaded; it can once this host lets go.
+  // 3. Any process can read a finished session, even one another process has loaded; only taking
+  //    it over for follow_up needs that process to let go.
   const other = await connect();
-  await assert.rejects(() => other.call("status", { sessionId: "second" }), /loaded by another running MCP process/);
-  assert.equal((await other.call("status", { sessionId: "first" })).lastText, "OK", "stored session loads on demand");
+  assert.equal((await other.call("status", { sessionId: "second" })).state, "done", "readable while loaded elsewhere");
+  assert.equal((await other.call("wait", { sessionId: "second", timeoutMs: 250 })).state, "done");
+  await assert.rejects(() => other.call("follow_up", { sessionId: "second", prompt: "x" }), /loaded by another running MCP process/);
+  assert.equal((await other.call("status", { sessionId: "first" })).lastText, "OK", "stored session readable without loading");
+  assert.equal((await other.call("sessions")).sessions.some((s) => s.sessionId === "first"), false, "reading did not load it");
   await kill(host);
   assert.equal((await other.call("status", { sessionId: "second" })).state, "done");
   await assert.rejects(() => other.call("status", { sessionId: "ephemeral" }), /Unknown sessionId/, "ephemeral is gone");
   await close(other);
 
   // 4. Startup sweep deletes finished sessions past retention, and their lock files; others stay.
-  catalog("UPDATE jobs SET finished_at = ? WHERE key = ?", Date.now() - 8 * 86_400_000, row("first").key);
+  //    Retention is per session: one kept for 30 days outlives the 7-day default.
+  host = await connect();
+  await host.call("spawn", { cwd: directory, id: "kept", prompt: "plain", tools: [], retentionDays: 30 });
+  await done(host, "kept");
+  assert.equal((await host.call("status", { sessionId: "kept" })).retentionDays, 30);
+  await close(host);
+  for (const id of ["first", "kept"]) catalog("UPDATE jobs SET finished_at = ? WHERE key = ?", Date.now() - 8 * 86_400_000, row(id).key);
   const firstKey = row("first").key;
   host = await connect();
   await waitUntil(() => row("first") === undefined);
+  assert.ok(row("kept"), "a 30-day session survives 8 days");
   assert.equal(existsSync(join(v2, "jobs", firstKey)), false);
   await waitUntil(() => !lockFiles().includes(`${firstKey}.sqlite`));
   assert.ok(row("second"), "unexpired session kept");
@@ -149,7 +162,7 @@ try {
   host = await connect();
   await assert.rejects(() => host.call("follow_up", { sessionId: "writer", prompt: "write now" }), /blocked/,
     "a read-only host does not regain write tools through history");
-  await assert.rejects(() => host.call("status", { sessionId: "writer" }), /blocked/);
+  assert.equal((await host.call("status", { sessionId: "writer" })).state, "done", "reading needs no tool policy");
   await close(host);
 
   // 8. Loading a stored session into a full history keeps it; the least recently used one goes.

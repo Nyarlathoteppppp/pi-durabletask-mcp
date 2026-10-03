@@ -1,6 +1,6 @@
 import {
+  DAY_MS,
   DEFAULT_MODEL,
-  RETENTION_MS,
   HISTORY_LIMIT,
   MAX_CONCURRENT,
   SPAWN_DEFAULT_DURATION_MS,
@@ -72,6 +72,9 @@ async function checkStoredPolicy(options: WorkerOptions): Promise<void> {
 const lastUsed = new Map<string, number>();
 const touch = (id: string): void => { lastUsed.set(id, Date.now()); };
 
+/** A delegate loaded in this process, if any, without loading anything. */
+export const loaded = (id: string): PiWorker | undefined => sessions.get(id);
+
 /** A live delegate, or a finished durable one loaded from disk on first use. */
 export async function resolve(id: string): Promise<PiWorker> {
   await unloading.get(id);
@@ -123,7 +126,8 @@ export function sweepStorage(force = false): void {
   const now = Date.now();
   if (!force && now - lastSweep < 60_000) return;
   lastSweep = now;
-  const expired = all().filter((w) => w.durable && !w.isActive && w.finishedAt && Date.parse(w.finishedAt) < now - RETENTION_MS);
+  const expired = all().filter((w) => w.retentionDays !== undefined && !w.isActive && w.finishedAt &&
+    Date.parse(w.finishedAt) + w.retentionDays * DAY_MS < now);
   void Promise.all(expired.map(unload))
     .then(() => sweep(now))
     .catch((error) => process.stderr.write(`[pi-delegate] storage sweep failed: ${String(error)}\n`))
@@ -207,9 +211,12 @@ export interface LaunchRequest extends NativeMcpOptions {
   label?: string | undefined;
   maxTurns?: number | undefined;
   maxDurationMs?: number | undefined;
+  retentionDays?: number | undefined;
 }
 
 async function prepare(req: LaunchRequest): Promise<LaunchRequest & { cwd: string; tools: string[] }> {
+  if (req.retentionDays !== undefined && req.durable !== true)
+    throw new Error("retentionDays applies only to durable delegates; pass durable: true as well.");
   const cwd = await resolveDelegateCwd(req.cwd);
   validateNativeMcp(req, cwd);
   return { ...req, cwd, tools: pickTools(req.tools) };
@@ -224,11 +231,12 @@ function makeWorker(req: LaunchRequest & { cwd: string; tools: string[] }): PiWo
     thinking: req.thinking,
     tools: req.tools,
     extensions: req.extensions ?? false,
-    durable: req.durable ?? true,
+    durable: req.durable ?? false,
     nativeMcp: req.nativeMcp ?? false,
     mcpServers: req.mcpServers,
     maxTurns: req.maxTurns ?? SPAWN_DEFAULT_TURNS,
     maxDurationMs: req.maxDurationMs ?? SPAWN_DEFAULT_DURATION_MS,
+    retentionDays: req.retentionDays,
   });
 }
 

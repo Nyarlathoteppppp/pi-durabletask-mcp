@@ -75,6 +75,8 @@ export interface Snapshot {
   termination: Termination | undefined;
   /** False: in memory only, gone when this MCP process exits. */
   durable: boolean;
+  /** Days kept on disk after finishing; absent for non-durable delegates. */
+  retentionDays?: number | undefined;
 }
 
 /** pi's enabledModels scope, resolved for one working directory. */

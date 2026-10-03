@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Delegates are in memory only by default; pass `durable: true` to save, recover and keep one.
+- `retentionDays` (1-365) on `spawn`, `run` and `spawn_batch` sets how long a durable delegate is kept; `PI_DELEGATE_RETENTION_DAYS` remains the default.
+- The final state of a finished durable delegate is recorded in the catalog, so any process can read it with `status` or `wait` without loading it, even while another process has it loaded. Only `follow_up` takes ownership.
+
 ## 0.3.0
 
 - Initialize Pi HTTP networking in SDK hosts and test compressed TLS responses.

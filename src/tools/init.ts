@@ -23,7 +23,7 @@ import { json, markInitialised } from "./shared.js";
 import { recoverAbandoned } from "../registry.js";
 import { DURABLE_DIR } from "../durable.js";
 import { ripgrepPath, RIPGREP_MISSING } from "../pi/search.js";
-import { RETENTION_MS, STORAGE_LIMIT_BYTES } from "../config.js";
+import { MAX_RETENTION_DAYS, RETENTION_DAYS, STORAGE_LIMIT_BYTES } from "../config.js";
 import { VERSION as PI_SDK_VERSION, getPackageDir } from "@earendil-works/pi-coding-agent";
 
 export function registerInit(server: McpServer): void {
@@ -72,10 +72,10 @@ export function registerInit(server: McpServer): void {
           ...health.failing,
         } } : {}),
         search: { ripgrep: ripgrepPath() ?? RIPGREP_MISSING },
-        durability: { enabled: true, storage: DURABLE_DIR,
+        durability: { enabled: true, default: false, storage: DURABLE_DIR,
           recovery: "init resumes abandoned tasks from saved history. Completed tool calls are retained; interrupted calls get an unknown-outcome error and are not automatically replayed. Original deadlines and turn budgets still apply.",
-          optOut: "Pass durable: false for short, cheap, re-runnable work (reviews, searches, model comparisons): nothing is written and it is gone when this MCP process exits. Keep the default for long work, external side effects, or later follow_up.",
-          retention: `Finished durable sessions are deleted ${RETENTION_MS / 86_400_000} days after they finish, or earlier, oldest first, when stored sessions exceed ${Math.round(STORAGE_LIMIT_BYTES / 1048576)} MiB. Unfinished ones are never deleted. \`sessions\` lists them under \`stored\`; they load on first use by id.` },
+          optIn: "Delegates are in memory only by default: nothing is written and they are gone when this MCP process exits. Pass durable: true for long work, external side effects, work that should survive a restart or be followed up later, or when the user asks.",
+          retention: `A finished durable session is deleted retentionDays after it finishes (default ${RETENTION_DAYS}, max ${MAX_RETENTION_DAYS}; set it per spawn), or earlier, oldest first, when stored sessions exceed ${Math.round(STORAGE_LIMIT_BYTES / 1048576)} MiB. Unfinished ones are never deleted. \`sessions\` lists them under \`stored\`; any process can read them with status, and follow_up loads one.` },
         nativeMcp: {
           supported: true, default: false,
           usage: "Pass nativeMcp: true and explicit mcpServers names from Pi mcp.json. Authorize exact MCP tool names plus codemode/tool_search through PI_DELEGATE_ALLOW_TOOLS and the call's tools list. tools: [] stays tool-free; native MCP does not require third-party extensions.",
