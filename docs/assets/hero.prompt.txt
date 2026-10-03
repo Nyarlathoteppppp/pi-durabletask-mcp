@@ -1,0 +1,11 @@
+Use case: ads-marketing
+Asset type: GitHub README hero banner for an open-source developer tool called pi-durabletask-mcp.
+Primary request: Create a polished, restrained, memorable ultra-wide horizontal editorial graphic, approximately 3:1 aspect ratio. It should look like carefully art-directed product identity for a serious local developer tool, not generic AI artwork.
+Scene: warm ivory background, huge generous negative space, subtle paper grain. One elegant compact sculptural execution console on the right: a deep charcoal rounded rectangle with a small luminous coral-orange pi symbol, connected to three small persisting checkpoint tiles by a continuous thin coral path. A small deliberate break in the path is bridged by a clean arc, suggesting recovery after interruption. Extremely simple architecture-inspired visual metaphor, beautifully balanced.
+Composition: on the left half, a large exact project title set in crisp dark charcoal monospaced typography, split over two lines exactly as:
+"pi-durabletask"
+"mcp"
+Below the title, the exact small tagline "Delegate. Steer. Recover."
+Right half holds the sculptural console and checkpoint trail; clean baseline alignment, spacious margins on all edges. Keep the entire image very wide and shallow, suited to a README heading displayed at 860px wide.
+Palette: ivory, charcoal, muted coral-orange only. Very subtle shadows, precise materials, quiet premium editorial finish, a little retro computing character. High legibility at small display size.
+Constraints: Only the title and tagline text above. No other text, no badges, no logos of other companies, no robot or human, no generic neon network, no gradients flooding the background, no glowing sci-fi scene, no watermark. No screenshot or fabricated product UI.
