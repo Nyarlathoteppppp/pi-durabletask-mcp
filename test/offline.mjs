@@ -8,7 +8,7 @@ const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !n
 Object.assign(env, { PI_OFFLINE: "1", PI_CODING_AGENT_DIR: join(dir, "agent"), PI_DELEGATE_STATE_DIR: join(dir, "state") });
 try {
   for (const [file, ...args] of [
-    ["http"], ["launch", "node", "dist/index.js"], ["policy"], ["lifecycle"], ["workspace"], ["regressions"], ["result-relationships"], ["integration"], ["recovery"], ["ownership"], ["retention"], ["retention-race"], ["usability"], ["review-claims"], ["pause-race"], ["native-mcp"], ["native-recovery"],
+    ["http"], ["launch", "node", "dist/index.js"], ["policy"], ["lifecycle"], ["workspace"], ["regressions"], ["result-relationships"], ["integration"], ["recovery"], ["ownership"], ["retention"], ["retention-race"], ["orphan-gc"], ["usability"], ["review-claims"], ["pause-race"], ["native-mcp"], ["native-recovery"],
   ]) {
     const code = await new Promise((resolve, reject) => {
       const child = spawn(process.execPath, [`test/${file}.mjs`, ...args], { env, stdio: "inherit" });

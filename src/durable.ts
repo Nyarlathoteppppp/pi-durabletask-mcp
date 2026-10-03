@@ -94,13 +94,18 @@ function db(): DatabaseSync {
   const existing = hasMeta
     ? (opened.prepare("SELECT value FROM meta WHERE name = 'ownership_protocol'").get() as { value: string } | undefined)?.value
     : undefined;
-  if (existing !== undefined && existing !== String(OWNERSHIP_PROTOCOL)) {
+  if (hasMeta && existing !== String(OWNERSHIP_PROTOCOL)) {
     opened.close();
-    throw new Error(`${path} uses ownership protocol ${existing}; this build speaks ${OWNERSHIP_PROTOCOL}`);
+    throw new Error(`${path} uses ownership protocol ${existing ?? "(missing)"}; this build speaks ${OWNERSHIP_PROTOCOL}`);
+  }
+  if (!hasMeta) {
+    // Create the table and its protocol together, so a crash cannot leave a meta without one.
+    opened.exec(`BEGIN IMMEDIATE;
+      CREATE TABLE IF NOT EXISTS meta (name TEXT PRIMARY KEY, value TEXT NOT NULL);
+      INSERT OR IGNORE INTO meta VALUES ('ownership_protocol', '${OWNERSHIP_PROTOCOL}');
+      COMMIT;`);
   }
   opened.exec(`
-    CREATE TABLE IF NOT EXISTS meta (name TEXT PRIMARY KEY, value TEXT NOT NULL);
-    INSERT OR IGNORE INTO meta VALUES ('ownership_protocol', '${OWNERSHIP_PROTOCOL}');
     CREATE TABLE IF NOT EXISTS jobs (key TEXT PRIMARY KEY, pid INTEGER NOT NULL, agent_dir TEXT NOT NULL,
       options TEXT NOT NULL, prompt TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, finished_at INTEGER,
       snapshot TEXT);`);
@@ -217,6 +222,18 @@ const bytes = (dir: string): number => {
 export function sweep(now = Date.now()): string[] {
   const removed: string[] = [];
   const catalog = db();
+  const exists = catalog.prepare("SELECT 1 FROM jobs WHERE key = ?");
+  // Reclaim interrupted deletes before measuring pressure, so orphan bytes cannot evict
+  // otherwise retainable history. A new job holds its lock before creating its directory.
+  for (const key of readdirSync(JOBS_DIR)) {
+    if (!KEY.test(key) || exists.get(key) !== undefined || owns(key) || !tryAcquire(key)) continue;
+    try {
+      if (exists.get(key) === undefined) {
+        rmSync(jobDir(key), { recursive: true, force: true });
+        removed.push(key);
+      }
+    } finally { releaseOwnership(key); }
+  }
   let total = readdirSync(JOBS_DIR).reduce((sum, key) => sum + bytes(join(JOBS_DIR, key)), 0);
   // Each job keeps its own retention. Under size pressure the oldest finished go first whatever
   // their retention, so one long-kept job cannot hold storage above the limit.
@@ -235,7 +252,6 @@ export function sweep(now = Date.now()): string[] {
     total -= size;
     removed.push(row.key);
   }
-  const exists = db().prepare("SELECT 1 FROM jobs WHERE key = ?");
   removeTombstones((key) => exists.get(key) !== undefined);
   return removed;
 }

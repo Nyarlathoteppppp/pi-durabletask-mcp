@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Persist the model actually selected by Pi when a caller uses its configured default, so unfinished tasks recover with a resolvable model ID.
+- Recover exhausted deadlines and turn budgets without provider authentication; a saved final answer still takes precedence.
+- Reclaim orphan job directories left by interrupted deletion before applying storage pressure, protecting active owners and otherwise retainable history.
+- Reject an existing metadata table with a missing ownership protocol; initialize new metadata and its protocol in one transaction.
 - Delegates are in memory only by default; pass `durable: true` to save, recover and keep one.
 - `retentionDays` (1-365) on `spawn`, `run` and `spawn_batch` sets how long a durable delegate is kept; `PI_DELEGATE_RETENTION_DAYS` remains the default.
 - The final state of a finished durable delegate is recorded in the catalog, so any process can read it with `status` or `wait` without loading it, even while another process has it loaded. Only `follow_up` takes ownership.

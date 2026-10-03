@@ -237,7 +237,10 @@ export class PiWorker {
       session.dispose();
       return this;
     }
-    this.model = model ? `${model.provider}/${model.id}` : "(pi default)";
+    // Record the model Pi actually chose, so recovery resolves the same one. A placeholder in the
+    // stored options would not resolve.
+    const chosen = model ?? session.model;
+    this.model = chosen ? `${chosen.provider}/${chosen.id}` : "(pi default)";
     this.thinking = session.thinkingLevel;
     this.activeTools = session.getActiveToolNames();
 
@@ -248,7 +251,7 @@ export class PiWorker {
       await this.nativeClose;
       return this;
     }
-    this.options = { ...this.options, model: this.model, thinking: this.thinking };
+    this.options = { ...this.options, model: chosen ? this.model : undefined, thinking: this.thinking };
     this.job = this.options.durable === false ? new MemoryJob() : await DurableJob.open(this.options, prompt, key);
     if (this.isStopped()) {
       await this.job.close();
@@ -357,8 +360,10 @@ export class PiWorker {
     const answered = recover && saved?.inputStarted && !this.steering.length &&
       this.session!.messages.at(-1)?.role === "assistant" &&
       (this.session!.messages.at(-1) as { stopReason?: string }).stopReason === "stop";
+    // A recovery already past its budget is only marked aborted, so it needs no model either.
+    const overBudget = recover && (this.turns >= this.maxTurns || this.elapsedMs() >= this.maxDurationMs);
     const provider = this.model?.includes("/") ? this.model.slice(0, this.model.indexOf("/")) : undefined;
-    if (!alreadyStopped && !answered && provider) await assertProviderReady(provider);
+    if (!alreadyStopped && !answered && !overBudget && provider) await assertProviderReady(provider);
     if (!recover) this.runStartedAt = new Date().toISOString();
     if (!alreadyStopped) {
       this.state = "running";

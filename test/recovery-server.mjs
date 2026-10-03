@@ -4,6 +4,11 @@ import { DurableJob } from "../dist/durable.js";
 const save = DurableJob.prototype.save;
 DurableJob.prototype.save = async function (checkpoint) {
   await save.call(this, checkpoint);
+  // Persist a spent turn before any model call, leaving unfinished work at its turn limit.
+  if (process.env.TEST_CRASH_AT_TURN && checkpoint.snapshot.turns >= Number(process.env.TEST_CRASH_AT_TURN)) {
+    process.kill(process.pid, "SIGKILL");
+    await new Promise(() => {});
+  }
   if (process.env.TEST_CRASH_ON_RECOVERY && checkpoint.recoveryInput) {
     process.kill(process.pid, "SIGKILL");
     await new Promise(() => {});

@@ -1,19 +1,21 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
-// Run-clock, abort and provider-check edges, and duplicate-id protection on a degraded catalog.
+// Run-clock, model/provider recovery, catalog integrity and interrupted cleanup.
 const directory = await mkdtemp(join(tmpdir(), "pi-delegate-claims-"));
 const agentDir = join(directory, "agent");
 const stateDir = join(directory, "state");
 const brokenFile = join(directory, "broken-provider");
 const clients = new Set();
 const sockets = new Set();
+const heldRequests = new Set();
+let defaultInterrupted = false;
 const waitUntil = async (predicate) => {
   const deadline = Date.now() + 15000;
   while (!await predicate()) {
@@ -30,6 +32,11 @@ const http = createServer(async (req, res) => {
   for await (const chunk of req) body += chunk;
   // A slow reply lets a too-short deadline fire before the run can finish.
   if (body.includes("SLOW")) await new Promise((resolve) => setTimeout(resolve, 150));
+  if (body.includes("HOLD")) { heldRequests.add("late"); return; }
+  if (body.includes("INTERRUPT_DEFAULT") && !defaultInterrupted) {
+    defaultInterrupted = true;
+    return;
+  }
   res.writeHead(200, { "Content-Type": "text/event-stream" });
   const emit = (delta, finish_reason = null) => res.write(`data: ${JSON.stringify({
     id: "claims-test", object: "chat.completion.chunk", created: 1, model: "one",
@@ -131,16 +138,18 @@ try {
   await scenario("4 answered recovery needs no provider", async () => {
   // 4. A recovery whose answer was already given needs no model call, so broken auth does not stop it.
   host = await connect({ TEST_CRASH_AFTER_ANSWER: "OK" });
-  await host.call("spawn", { cwd: directory, id: "answered", prompt: "plain", tools: [], durable: true }).catch(() => {});
+  await host.call("spawn", { cwd: directory, id: "answered", prompt: "plain", tools: [], durable: true, maxTurns: 1, maxDurationMs: 1000 }).catch(() => {});
   await waitUntil(() => { try { process.kill(host.transport.pid, 0); return false; } catch { return true; } });
   await close(host);
   assert.equal(catalog("SELECT finished_at FROM jobs WHERE json_extract(options, '$.id') = 'answered'")[0].finished_at, null);
   await writeFile(brokenFile, "test");
+  await new Promise((resolve) => setTimeout(resolve, 1100));
   host = await connect();
   await waitUntil(async () => (await host.call("sessions")).sessions.some((s) => s.sessionId === "answered"));
   const answered = await settle(host, "answered");
   assert.equal(answered.state, "done", `recovered without a model call: ${answered.error}`);
   assert.equal(answered.lastText, "OK");
+  assert.equal(answered.turns, 1, "a committed answer wins even when both budgets are exhausted");
   await rm(brokenFile);
   await close(host);
   });
@@ -158,10 +167,83 @@ try {
     assert.ok(rows <= 1, `no new duplicate for ${id}: ${rows} rows`);
   }
   await close(a); await close(b);
+  // This intentional corruption belongs only to this scenario.
+  catalog("DELETE FROM jobs WHERE key = ?", "00000000-0000-4000-8000-0000000000ee");
+  catalog("CREATE UNIQUE INDEX jobs_session ON jobs (agent_dir, json_extract(options, '$.id'))");
+  });
+
+  await scenario("6 Pi's own default model survives a restart", async () => {
+    host = await connect({ PI_DELEGATE_MODEL: "" });
+    await host.call("spawn", { cwd: directory, id: "pi-default", prompt: "INTERRUPT_DEFAULT", tools: [], durable: true });
+    await waitUntil(() => defaultInterrupted);
+    process.kill(host.transport.pid, "SIGKILL");
+    await close(host);
+    assert.equal(JSON.parse(catalog("SELECT options FROM jobs WHERE json_extract(options, '$.id') = 'pi-default'")[0].options).model, "test/one");
+    host = await connect({ PI_DELEGATE_MODEL: "" });
+    const recovered = await settle(host, "pi-default");
+    assert.equal(recovered.state, "done", recovered.error);
+    assert.equal(recovered.model, "test/one");
+    assert.equal(recovered.turns, 2);
+    await host.call("follow_up", { sessionId: "pi-default", prompt: "again" });
+    assert.equal((await settle(host, "pi-default")).turns, 3);
+    await close(host);
+  });
+
+  await scenario("7 a recovery past its deadline needs no provider", async () => {
+    host = await connect();
+    await host.call("spawn", { cwd: directory, id: "late", prompt: "HOLD", tools: [], durable: true, maxDurationMs: 1000 });
+    await waitUntil(() => heldRequests.has("late"));
+    process.kill(host.transport.pid, "SIGKILL");
+    await close(host);
+    await writeFile(brokenFile, "test");
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    host = await connect();
+    await waitUntil(async () => (await host.call("sessions")).sessions.some((s) => s.sessionId === "late"));
+    const late = await settle(host, "late");
+    assert.equal(late.state, "aborted", `marked aborted without a model call: ${late.error}`);
+    assert.equal(late.termination?.reason, "deadline");
+    await rm(brokenFile);
+    await close(host);
+  });
+
+  await scenario("8 a store left by an interrupted forget is removed", async () => {
+    const orphan = join(stateDir, "durable", "v2", "jobs", "00000000-0000-4000-8000-0000000000aa");
+    await mkdir(orphan, { recursive: true });
+    await writeFile(join(orphan, "session.sqlite"), "left behind");
+    host = await connect();
+    await waitUntil(async () => { try { await stat(orphan); return false; } catch { return true; } });
+    await close(host);
+  });
+
+  await scenario("9 a catalog whose protocol row is missing fails closed", async () => {
+    const other = join(directory, "state-missing-protocol");
+    await mkdir(join(other, "durable", "v2"), { recursive: true });
+    const db = new DatabaseSync(join(other, "durable", "v2", "catalog.sqlite"));
+    db.exec("CREATE TABLE meta (name TEXT PRIMARY KEY, value TEXT NOT NULL);");
+    db.close();
+    await assert.rejects(() => connect({ PI_DELEGATE_STATE_DIR: other }));
+    const check = new DatabaseSync(join(other, "durable", "v2", "catalog.sqlite"), { readOnly: true });
+    assert.equal(check.prepare("SELECT count(*) AS n FROM meta").get().n, 0, "nothing was guessed or written");
+    check.close();
+  });
+
+  await scenario("10 a recovery past maxTurns needs no provider", async () => {
+    host = await connect({ TEST_CRASH_AT_TURN: "1" });
+    await host.call("spawn", { cwd: directory, id: "spent", prompt: "plain", tools: [], durable: true, maxTurns: 1 }).catch(() => {});
+    await waitUntil(() => { try { process.kill(host.transport.pid, 0); return false; } catch { return true; } });
+    await close(host);
+    await writeFile(brokenFile, "test");
+    host = await connect();
+    const spent = await settle(host, "spent");
+    assert.equal(spent.state, "aborted", spent.error);
+    assert.equal(spent.termination?.reason, "max_turns");
+    assert.equal(spent.turns, 1);
+    await rm(brokenFile);
+    await close(host);
   });
 
   assert.deepEqual(failures, [], `failed: ${failures.join("; ")}`);
-  console.log("  OK -> per-run clock without durability, abort refused when finished, provider checked only before a model call, no new duplicates on a degraded catalog");
+  console.log("  OK -> run clocks, default-model recovery, auth-free completion/budget recovery, duplicate protection, orphan cleanup and fail-closed protocol");
 } finally {
   for (const host of clients) await host.client.close().catch(() => {});
   for (const socket of sockets) socket.destroy();
