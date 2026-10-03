@@ -180,8 +180,9 @@ already live, blocked tools, and every model name. One bad task fails the call a
 nothing. Half a fan-out is the worst outcome, because you pay for the delegates that did start
 and still have to work out which ones did not.
 
-Poll the whole batch with one `sessions` call rather than one `status` per delegate. Drop to
-`status` only for the delegate you actually want to read. `steer` and `abort` stay per session.
+Wait for the whole batch with `wait` and the returned `sessionIds`: `until: "settled"` returns as
+each delegate finishes, with its final text, and `"all_settled"` once all have. Repeat on the
+pending ids. `steer` and `abort` stay per session.
 
 ## Picking a model per call
 

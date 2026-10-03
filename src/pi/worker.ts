@@ -664,7 +664,8 @@ export class PiWorker {
 
   async steer(text: string): Promise<{ steered: true; queued: number }> {
     if (this.state !== "running" || !this.session || this.isStopped())
-      throw new Error(`Session ${this.id} is ${this.state}, cannot steer`);
+      throw new Error(`Session ${this.id} is ${this.state}, cannot steer` +
+        (["done", "aborted", "error"].includes(this.state) ? ". Use follow_up to give a finished session another turn." : "."));
     await this.session.steer(text);
     this.steering = [...this.session.getSteeringMessages()];
     await this.job?.save(this.checkpoint());

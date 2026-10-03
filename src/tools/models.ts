@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { MODEL_ALLOWLIST, MODEL_DENYLIST } from "../config.js";
-import { modelScope, scopedModels } from "../pi/models.js";
+import { defaultModelRef, modelScope, scopedModels } from "../pi/models.js";
 import { json } from "./shared.js";
 
 export function registerModels(server: McpServer): void {
@@ -23,7 +23,11 @@ export function registerModels(server: McpServer): void {
       const all = (await scopedModels(cwd)).map((m) => m.ref);
       const hits = filter ? all.filter((s) => s.toLowerCase().includes(filter.toLowerCase())) : all;
       const models = hits.slice(offset, offset + limit);
+      const fallback = defaultModelRef(cwd);
       return json({
+        // What a spawn without `model` uses, and whether this server would allow it.
+        defaultModel: fallback ?? "(none configured)",
+        ...(fallback ? { defaultUsable: all.includes(fallback) } : {}),
         count: hits.length,
         offset,
         nextOffset: offset + models.length < hits.length ? offset + models.length : null,

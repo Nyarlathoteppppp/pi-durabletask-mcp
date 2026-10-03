@@ -107,12 +107,12 @@ try {
   const other = await connect();
   assert.equal((await other.call("status", { sessionId: "second" })).state, "done", "readable while loaded elsewhere");
   assert.equal((await other.call("wait", { sessionId: "second", timeoutMs: 250 })).state, "done");
-  await assert.rejects(() => other.call("follow_up", { sessionId: "second", prompt: "x" }), /loaded by another running MCP process/);
+  await assert.rejects(() => other.call("follow_up", { sessionId: "second", prompt: "x" }), /running or loaded in another MCP process/);
   assert.equal((await other.call("status", { sessionId: "first" })).lastText, "OK", "stored session readable without loading");
   assert.equal((await other.call("sessions")).sessions.some((s) => s.sessionId === "first"), false, "reading did not load it");
   await kill(host);
   assert.equal((await other.call("status", { sessionId: "second" })).state, "done");
-  await assert.rejects(() => other.call("status", { sessionId: "ephemeral" }), /Unknown sessionId/, "ephemeral is gone");
+  await assert.rejects(() => other.call("status", { sessionId: "ephemeral" }), /Unknown sessionId: ephemeral\. Sessions without durable: true end with the MCP process/, "ephemeral is gone, and the error says why");
   await close(other);
 
   // 4. Startup sweep deletes finished sessions past retention, and their lock files; others stay.
@@ -141,6 +141,9 @@ try {
   await waitUntil(() => row("second") === undefined);
   assert.equal(row("running-a")?.finished_at, null, "unfinished session survives storage pressure");
   assert.equal(row("running-b")?.finished_at, null, "unclaimed unfinished session survives storage pressure");
+  const waiting = await Promise.allSettled(["running-a", "running-b"].map((id) => host.call("status", { sessionId: id })));
+  assert.ok(waiting.some((r) => r.status === "rejected" && /waiting for recovery/.test(String(r.reason))),
+    "the session without a free slot says it is waiting for recovery");
   await close(host);
 
   // 6. forget deletes a stored session without loading it.

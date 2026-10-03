@@ -116,8 +116,8 @@ export function registerSpawn(server: McpServer): void {
         "Fan out several delegates in one call. Each task inherits the batch-level model, cwd, tools " +
         "and extensions unless it overrides them. The whole batch is validated before any delegate " +
         "starts, so a bad model name or a duplicate id fails everything instead of leaving half a " +
-        "fan-out running. Poll the result with `sessions`, which reports all of them at once, rather " +
-        "than one `status` per delegate.",
+        "fan-out running. Wait for the batch with `wait` and the returned sessionIds, rather than " +
+        "polling `sessions` or one `status` per delegate.",
       inputSchema: {
         tasks: z.array(taskShape).min(1).max(BATCH_MAX).describe(`1 to ${BATCH_MAX} delegates to start`),
         model: z.string().optional().describe("Default model for every task in this batch"),
@@ -154,7 +154,8 @@ export function registerSpawn(server: McpServer): void {
     },
     async (args) => json({
       ...await startBatch(args),
-      next: "Poll with `sessions` (one call covers the whole batch). `steer` and `abort` stay per session.",
+      next: "Call wait with these sessionIds (until \"settled\" returns as each finishes, \"all_settled\" when all have); " +
+        "repeat on the pending ids. `steer` and `abort` stay per session.",
     }),
   );
 

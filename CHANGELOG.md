@@ -4,6 +4,10 @@
 
 - `wait` takes `until: "settled"` to return only when a delegate finishes or asks a question, so one loop gets the result without waking on every tool call.
 - `wait` takes `sessionIds` to wait on several delegates, such as a `spawn_batch`: it returns when any settles (`settled`) or all do (`all_settled`), with settled and pending ids and a short summary per session that includes the final text of finished ones.
+- `spawn_batch` returns `sessionIds` and points to `wait` instead of polling `sessions`; batch `wait` summaries include pending questions, so `answer` needs no extra `status`.
+- Errors say why a session is unavailable: unknown (memory-only sessions end with their process), running or loaded in another process, or waiting for recovery. `steer` on a finished session points to `follow_up`.
+- `models` reports `defaultModel`, the model a spawn without `model` gets, and whether it is usable.
+- Two processes claiming the same abandoned job at the same instant could both back off and leave it unclaimed until something else triggered recovery: each held a shared lock while the other tried to upgrade. A claim that finds a busy lock and claims nothing now takes one jittered second look; lazy loading does the same. Measured: simultaneous claims left the job unclaimed in 54 of 60 rounds before, 0 of 60 after.
 
 ## 0.3.2 (2026-10-04)
 

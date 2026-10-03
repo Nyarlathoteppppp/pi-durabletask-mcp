@@ -27,7 +27,7 @@ worker.job.save = async (checkpoint) => {
 };
 await worker.suspend();
 await worker.run;
-assert.equal(claimAbandoned(new Set(), 1)[0].key, worker.job.key);
+assert.equal(claimAbandoned(new Set(), 1).records[0].key, worker.job.key);
 const reopened = await DurableJob.open(options, "stub", worker.job.key);
 try {
   assert.equal(reopened.needsResume, true, "pause must not fault or complete the task");

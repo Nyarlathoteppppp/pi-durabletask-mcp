@@ -174,6 +174,7 @@ export async function startBatch({
   return {
     requested: merged.length,
     started: started.length,
+    sessionIds: started.map((s) => s.sessionId),
     sessions: started,
     // Only reachable if a session dies during construction, after validation passed.
     ...(failures.length ? { failed: failures.length, failures } : {}),
@@ -291,6 +292,8 @@ export interface WaitSummary {
   turns: number;
   toolCallCount: number;
   pendingQuestions: number;
+  /** Present while it waits for an answer, so answer needs no extra status call. */
+  questions?: Snapshot["questions"];
   lastText?: string;
   error?: string;
   termination?: Snapshot["termination"];
@@ -313,6 +316,7 @@ export async function waitForMany(
     return {
       sessionId: s.sessionId, label: s.label, state: s.state, turns: s.turns, toolCallCount: s.toolCallCount,
       pendingQuestions: s.questions.length,
+      ...(s.questions.length ? { questions: s.questions } : {}),
       ...(done ? { lastText: s.lastText } : {}),
       ...(s.error ? { error: s.error } : {}),
       ...(s.termination ? { termination: s.termination } : {}),

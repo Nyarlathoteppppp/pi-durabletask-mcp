@@ -135,22 +135,43 @@ function db(): DatabaseSync {
  * Claim unowned jobs. The lock decides ownership; the row is read again after locking because a
  * concurrent forget deletes the row before it releases the lock.
  */
-export function claimAbandoned(excludeIds: Set<string>, limit: number): JobRecord[] {
+/**
+ * `contended` counts jobs whose lock was busy. Usually a live owner holds it, but two processes
+ * claiming the same job at the same instant can also both see it busy and both back off: each
+ * holds a shared lock while the other tries to upgrade. Callers retry once after a random delay.
+ */
+export function claimAbandoned(excludeIds: Set<string>, limit: number): { records: JobRecord[]; contended: number } {
   const records: JobRecord[] = [];
+  let contended = 0;
   const rows = db().prepare("SELECT key, options, prompt FROM jobs WHERE agent_dir = ? AND finished_at IS NULL ORDER BY rowid DESC");
   for (const row of rows.all(AGENT_DIR) as Row[]) {
     if (records.length >= limit) break;
     if (owns(row.key)) continue;
     const options = JSON.parse(row.options) as WorkerOptions;
     if (options.id && excludeIds.has(options.id)) continue;
-    if (!tryAcquire(row.key)) continue;
+    if (!tryAcquire(row.key)) { contended++; continue; }
     const fresh = db().prepare("SELECT attempts FROM jobs WHERE key = ?").get(row.key) as { attempts: number } | undefined;
     if (!fresh) { releaseOwnership(row.key); continue; }
     db().prepare("UPDATE jobs SET pid = ?, attempts = ? WHERE key = ?").run(process.pid, fresh.attempts + 1, row.key);
     records.push({ key: row.key, options, prompt: row.prompt });
     if (options.id) excludeIds.add(options.id);
   }
-  return records;
+  return { records, contended };
+}
+
+/** A short random pause, so processes that collided on a lock do not collide again. */
+export const jitter = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 50 + Math.random() * 150));
+
+/**
+ * claimAbandoned with one jittered second look when nothing was claimed but some lock was busy.
+ * Without it, two processes starting together can both back off and leave the job unclaimed
+ * until something else triggers recovery.
+ */
+export async function claimAbandonedSettled(excludeIds: Set<string>, limit: number): Promise<JobRecord[]> {
+  const first = claimAbandoned(excludeIds, limit);
+  if (first.records.length || !first.contended) return first.records;
+  await jitter();
+  return claimAbandoned(excludeIds, limit).records;
 }
 
 const byId = (id: string): Row | undefined => db().prepare(
@@ -176,12 +197,14 @@ export const storedIdInUse = (id: string): boolean => byId(id) !== undefined;
  * Claim a finished job by session id so it can be read or followed up. "held" means another live
  * process has it loaded. Unfinished jobs are left to recovery, which counts attempts.
  */
-export function claimStored(id: string): JobRecord | "held" | undefined {
+export function claimStored(id: string): JobRecord | "held" | "pending" | undefined {
   const row = byId(id);
   if (!row || owns(row.key)) return undefined;
   if (!tryAcquire(row.key)) return "held";
   const fresh = db().prepare("SELECT finished_at FROM jobs WHERE key = ?").get(row.key) as { finished_at: number | null } | undefined;
-  if (!fresh || fresh.finished_at === null) { releaseOwnership(row.key); return undefined; }
+  if (!fresh) { releaseOwnership(row.key); return undefined; }
+  // Unfinished and unowned: abandoned, waiting for a recovery slot.
+  if (fresh.finished_at === null) { releaseOwnership(row.key); return "pending"; }
   db().prepare("UPDATE jobs SET pid = ? WHERE key = ?").run(process.pid, row.key);
   return { key: row.key, options: JSON.parse(row.options) as WorkerOptions, prompt: row.prompt };
 }

@@ -118,6 +118,16 @@ try {
   assert.deepEqual(all.settled.sort(), ["quick", "slow"]);
   assert.deepEqual(all.pending, []);
   await assert.rejects(() => host.call("wait", { sessionId: "quick", sessionIds: ["slow"] }), /exactly one/);
+  // spawn_batch hands back the ids to wait on and says how; steer on a finished one points to follow_up;
+  // models says which model a spawn without one gets.
+  const batch = await host.call("spawn_batch", { cwd: directory, idPrefix: "fan", tools: [], tasks: [{ prompt: "plain" }, { prompt: "plain" }] });
+  assert.deepEqual(batch.sessionIds, ["fan-01", "fan-02"]);
+  assert.match(batch.next, /wait with these sessionIds/);
+  assert.deepEqual((await host.call("wait", { sessionIds: batch.sessionIds, until: "all_settled", timeoutMs: 15000 })).pending, []);
+  await assert.rejects(() => host.call("steer", { sessionId: "fan-01", message: "x" }), /Use follow_up/);
+  const listed = await host.call("models", { cwd: directory });
+  assert.equal(listed.defaultModel, "test/one");
+  assert.equal(listed.defaultUsable, true);
   await assert.rejects(() => host.call("wait", { sessionIds: ["slow"], until: "progress" }), /settled/);
 
   // 1b. Without durable, a delegate is in memory only.

@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   AGENT_DIR,
+  DEFAULT_MODEL,
   IGNORE_SCOPE,
   MAX_DURATION_MS,
   MODEL_ALLOWLIST,
@@ -64,6 +65,19 @@ function matchesModelPattern(pattern: string, ref: string): boolean {
 export function inDelegateDenylist(provider: string, id: string): boolean {
   const ref = `${provider}/${id}`;
   return [...MODEL_DENYLIST].some((pattern) => matchesModelPattern(pattern, ref));
+}
+
+/**
+ * The model a spawn without `model` gets: PI_DELEGATE_MODEL, else Pi's configured default for this
+ * cwd (project settings over global). Undefined when neither names one.
+ */
+export function defaultModelRef(cwd?: string): string | undefined {
+  if (DEFAULT_MODEL) return DEFAULT_MODEL;
+  const local = cwd ? readJson(join(cwd, ".pi", "settings.json")) : undefined;
+  const global = readJson(join(AGENT_DIR, "settings.json"));
+  const provider = (local?.defaultProvider ?? global?.defaultProvider) as string | undefined;
+  const model = (local?.defaultModel ?? global?.defaultModel) as string | undefined;
+  return provider && model ? `${provider}/${model}` : undefined;
 }
 
 export interface ScopedModel {

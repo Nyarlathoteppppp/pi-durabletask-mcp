@@ -13,7 +13,7 @@ import { PiWorker, type WorkerOptions } from "./pi/worker.js";
 import { resolveDelegateCwd } from "./workspace.js";
 import type { PiThinkingLevel, TerminationReason } from "./types.js";
 import { publish } from "./statusline/state.js";
-import { claimAbandoned, claimStored, forgetOwnedJob, releaseJob, storageBytes, storedIdInUse, sweep } from "./durable.js";
+import { claimAbandonedSettled, claimStored, jitter, forgetOwnedJob, releaseJob, storageBytes, storedIdInUse, sweep } from "./durable.js";
 import { validateNativeMcp, type NativeMcpOptions } from "./pi/native-mcp.js";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
@@ -77,15 +77,32 @@ const touch = (id: string): void => { lastUsed.set(id, Date.now()); };
 /** A delegate loaded in this process, if any, without loading anything. */
 export const loaded = (id: string): PiWorker | undefined => sessions.get(id);
 
+/** Say why a session cannot be used here, so a caller does not retry a missing or busy id blindly. */
+function unavailable(id: string, reason: "held" | "pending" | undefined): Error {
+  if (reason === "held")
+    return new Error(`Session ${id} is running or loaded in another MCP process. status and wait read it here ` +
+      "once it has finished; to steer, follow up or forget it, use that process or stop it.");
+  if (reason === "pending")
+    return new Error(`Session ${id} is unfinished and waiting for recovery; a process resumes it when a ` +
+      "delegate slot is free. Check again shortly.");
+  return new Error(`Unknown sessionId: ${id}. Sessions without durable: true end with the MCP process that ran ` +
+    "them; durable ones end at forget or after retention. sessions lists what exists here.");
+}
+
 /** A live delegate, or a finished durable one loaded from disk on first use. */
 export async function resolve(id: string): Promise<PiWorker> {
   await unloading.get(id);
   const live = sessions.get(id) ?? await loading.get(id);
   if (live) { touch(live.id); return live; }
-  const record = claimStored(id);
-  if (record === "held")
-    throw new Error(`Session ${id} is loaded by another running MCP process. Use it from there, or stop that process.`);
-  if (!record) throw new Error(`Unknown sessionId: ${id}`);
+  let record = claimStored(id);
+  if (record === "held") {
+    // Another process loading the same session at the same instant can make both back off.
+    await jitter();
+    const now = sessions.get(id) ?? await loading.get(id);
+    if (now) { touch(now.id); return now; }
+    record = claimStored(id);
+  }
+  if (typeof record !== "object") throw unavailable(id, record);
   const load = (async () => {
     const worker = new PiWorker({ ...record.options, durable: true });
     worker.recoveryKey = record.key;
@@ -110,8 +127,7 @@ export async function forget(id: string): Promise<void> {
   if (!worker) {
     // Deleting a stored job does not need its conversation loaded.
     const record = claimStored(id);
-    if (record === "held") throw new Error(`Session ${id} is loaded by another running MCP process.`);
-    if (!record) throw new Error(`Unknown sessionId: ${id}`);
+    if (typeof record !== "object") throw unavailable(id, record);
     forgetOwnedJob(record.key);
     return;
   }
@@ -146,7 +162,7 @@ export async function recoverAbandoned(): Promise<void> {
   if (recovering) return recovering;
   recovering = (async () => {
     while (!shuttingDown && activeCount() < MAX_CONCURRENT) {
-      const records = claimAbandoned(new Set(sessions.keys()), Math.max(0, MAX_CONCURRENT - activeCount()));
+      const records = await claimAbandonedSettled(new Set(sessions.keys()), Math.max(0, MAX_CONCURRENT - activeCount()));
       if (!records.length) break;
       // Reserve the entire claim before awaiting model/runtime initialization.
       const claimed = records.map((record) => {
