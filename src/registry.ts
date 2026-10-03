@@ -1,5 +1,6 @@
 import {
   DEFAULT_MODEL,
+  RETENTION_MS,
   HISTORY_LIMIT,
   MAX_CONCURRENT,
   SPAWN_DEFAULT_DURATION_MS,
@@ -10,7 +11,7 @@ import { PiWorker } from "./pi/worker.js";
 import { resolveDelegateCwd } from "./workspace.js";
 import type { PiThinkingLevel, TerminationReason } from "./types.js";
 import { publish } from "./statusline/state.js";
-import { claimAbandoned } from "./durable.js";
+import { claimAbandoned, claimStored, forgetOwnedJob, releaseJob, storedIdInUse, sweep } from "./durable.js";
 import { validateNativeMcp, type NativeMcpOptions } from "./pi/native-mcp.js";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
@@ -45,21 +46,74 @@ export function claimId(id?: string): string | undefined {
       `Invalid id "${id}". Use 1-64 chars: letters, digits, then . _ : - are allowed. ` +
         `Something like "search-audit-01" or "review:engine.go".`,
     );
-  if (sessions.has(id))
+  if (sessions.has(id) || storedIdInUse(id))
     throw new Error(`Session id "${id}" is already in use. Pick another or call abort/forget first.`);
   return id;
 }
 
-export function must(id: string): PiWorker {
-  const w = sessions.get(id);
-  if (!w) throw new Error(`Unknown sessionId: ${id}`);
-  return w;
+const loading = new Map<string, Promise<PiWorker>>();
+/** Sessions being unloaded still hold their lock; a lookup waits for it before loading again. */
+const unloading = new Map<string, Promise<void>>();
+function unload(worker: PiWorker): Promise<void> {
+  sessions.delete(worker.id);
+  const done = worker.unload().catch((error: unknown) => { process.stderr.write(`[pi-delegate] unload failed: ${String(error)}\n`); })
+    .finally(() => unloading.delete(worker.id));
+  unloading.set(worker.id, done);
+  return done;
+}
+/** A live delegate, or a finished durable one loaded from disk on first use. */
+export async function resolve(id: string): Promise<PiWorker> {
+  await unloading.get(id);
+  const live = sessions.get(id) ?? await loading.get(id);
+  if (live) return live;
+  const record = claimStored(id);
+  if (record === "held")
+    throw new Error(`Session ${id} is loaded by another running MCP process. Use it from there, or stop that process.`);
+  if (!record) throw new Error(`Unknown sessionId: ${id}`);
+  const load = (async () => {
+    const worker = new PiWorker(record.options);
+    worker.recoveryKey = record.key;
+    worker.onChange = () => publish(all());
+    try { await PiWorker.recover(record.options, record.prompt, record.key, worker); }
+    catch (error) { worker.dispose(); releaseJob(record.key); throw error; }
+    sessions.set(worker.id, worker);
+    evictHistory();
+    publish(all());
+    return worker;
+  })().finally(() => loading.delete(id));
+  loading.set(id, load);
+  return load;
 }
 
 export async function forget(id: string): Promise<void> {
+  await unloading.get(id);
   const worker = sessions.get(id);
+  if (!worker) {
+    // Deleting a stored job does not need its conversation loaded.
+    const record = claimStored(id);
+    if (record === "held") throw new Error(`Session ${id} is loaded by another running MCP process.`);
+    if (!record) throw new Error(`Unknown sessionId: ${id}`);
+    forgetOwnedJob(record.key);
+    return;
+  }
   sessions.delete(id);
-  await worker?.forgetPersistent();
+  await worker.forgetPersistent();
+}
+
+let lastSweep = 0;
+/**
+ * Apply retention. Runs at startup and when delegates finish, at most once a minute. Finished
+ * delegates past retention are unloaded first, so the sweep can delete them.
+ */
+export function sweepStorage(force = false): void {
+  const now = Date.now();
+  if (!force && now - lastSweep < 60_000) return;
+  lastSweep = now;
+  const expired = all().filter((w) => w.durable && !w.isActive && w.finishedAt && Date.parse(w.finishedAt) < now - RETENTION_MS);
+  void Promise.all(expired.map(unload))
+    .then(() => sweep(now))
+    .catch((error) => process.stderr.write(`[pi-delegate] storage sweep failed: ${String(error)}\n`))
+    .finally(() => publish(all()));
 }
 
 let recovering: Promise<void> | undefined;
@@ -84,7 +138,7 @@ export async function recoverAbandoned(): Promise<void> {
           pickTools(record.options.tools);
           await resolveDelegateCwd(record.options.cwd);
           await PiWorker.recover(record.options, record.prompt, record.key, worker);
-          void worker.run?.then(() => { evictHistory(); setImmediate(() => void recoverAbandoned()); });
+          void worker.run?.then(() => { evictHistory(); sweepStorage(); setImmediate(() => void recoverAbandoned()); });
         } catch (error) {
           worker.state = "error";
           worker.error = `Recovery failed: ${String(error)}`;
@@ -95,6 +149,7 @@ export async function recoverAbandoned(): Promise<void> {
     }
     evictHistory();
     publish(all());
+    sweepStorage(true);
   })().finally(() => { recovering = undefined; });
   return recovering;
 }
@@ -113,14 +168,16 @@ export async function abortAll(reason: TerminationReason = "server_shutdown"): P
   );
 }
 
-/** Drop the oldest finished sessions once history is over budget. Running ones are safe. */
+/**
+ * Unload the oldest finished sessions once in-memory history is over budget. Running ones are safe.
+ * This only frees memory: durable sessions stay on disk, loadable by id, until retention removes them.
+ */
 export function evictHistory(): void {
   const done = all().filter((w) => !w.isActive).sort((a, b) => a.startedAt.localeCompare(b.startedAt));
   while (sessions.size > HISTORY_LIMIT && done.length) {
     const oldest = done.shift();
     if (!oldest) break;
-    oldest.dispose();
-    void forget(oldest.id).catch((error) => process.stderr.write(`[pi-delegate] forget failed: ${String(error)}\n`));
+    void unload(oldest);
   }
 }
 
@@ -131,6 +188,7 @@ export interface LaunchRequest extends NativeMcpOptions {
   cwd?: string | undefined;
   tools?: string[] | undefined;
   extensions?: boolean | undefined;
+  durable?: boolean | undefined;
   id?: string | undefined;
   label?: string | undefined;
   maxTurns?: number | undefined;
@@ -152,6 +210,7 @@ function makeWorker(req: LaunchRequest & { cwd: string; tools: string[] }): PiWo
     thinking: req.thinking,
     tools: req.tools,
     extensions: req.extensions ?? false,
+    durable: req.durable ?? true,
     nativeMcp: req.nativeMcp ?? false,
     mcpServers: req.mcpServers,
     maxTurns: req.maxTurns ?? SPAWN_DEFAULT_TURNS,
@@ -171,7 +230,7 @@ async function startWorker(worker: PiWorker, prompt: string): Promise<PiWorker> 
     throw e;
   }
   evictHistory();
-  void worker.run?.then(() => setImmediate(() => void recoverAbandoned()));
+  void worker.run?.then(() => { sweepStorage(); setImmediate(() => void recoverAbandoned()); });
   publish(all());
   return worker;
 }

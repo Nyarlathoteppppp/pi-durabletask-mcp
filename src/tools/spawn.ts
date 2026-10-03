@@ -30,6 +30,11 @@ export function bindCancellation(
   return () => signal.removeEventListener("abort", cancel);
 }
 
+const DURABLE_HELP =
+  "Default true: saved to disk, recovered after an MCP restart, kept for follow_up until retention expires. " +
+  "false: memory only, nothing written, gone when this MCP process exits. Use false for short, cheap, " +
+  "re-runnable work such as reviews, searches and model comparisons.";
+
 const spawnShape = {
   prompt: z.string().describe("The task for the pi agent"),
   model: z.string().optional().describe('Model as "provider/modelId", e.g. "openrouter/stealth/ox-alpha"'),
@@ -59,6 +64,10 @@ const spawnShape = {
     .boolean()
     .optional()
     .describe("Load pi extensions for this delegate. Off by default; they add startup cost and can misbehave."),
+  durable: z
+    .boolean()
+    .optional()
+    .describe(DURABLE_HELP),
   maxTurns: z
     .number()
     .int()
@@ -87,6 +96,7 @@ const taskShape = z.object({
   cwd: z.string().optional().describe("Overrides the batch `cwd` for this task alone"),
   tools: z.array(z.string()).optional().describe("Overrides the batch `tools` for this task alone"),
   extensions: z.boolean().optional(),
+  durable: z.boolean().optional().describe("Overrides the batch `durable` for this task alone"),
   nativeMcp: z.boolean().optional(),
   mcpServers: z.array(z.string()).optional(),
   maxTurns: z.number().int().min(1).max(MAX_TURNS).optional(),
@@ -138,6 +148,7 @@ export function registerSpawn(server: McpServer): void {
         cwd: z.string().optional().describe("Default working directory for every task in this batch"),
         tools: z.array(z.string()).optional().describe("Default tool allowlist for every task in this batch"),
         extensions: z.boolean().optional().describe("Default extensions setting for every task in this batch"),
+        durable: z.boolean().optional().describe(`Default for every task in this batch. ${DURABLE_HELP}`),
         nativeMcp: z.boolean().optional().describe("Default native MCP setting for this batch"),
         mcpServers: z.array(z.string()).optional().describe("Default native MCP server selection for this batch"),
         maxTurns: z
@@ -160,7 +171,7 @@ export function registerSpawn(server: McpServer): void {
           .describe('Names the tasks `<prefix>-01`, `<prefix>-02`, ... e.g. "audit" gives "audit-01"'),
       },
     },
-    async ({ tasks, model, thinking, cwd, tools, extensions, nativeMcp, mcpServers, maxTurns, maxDurationMs, idPrefix }) => {
+    async ({ tasks, model, thinking, cwd, tools, extensions, durable, nativeMcp, mcpServers, maxTurns, maxDurationMs, idPrefix }) => {
       const width = Math.max(String(tasks.length).length, 2);
       const merged = tasks.map((t, i) => ({
         prompt: t.prompt,
@@ -170,6 +181,7 @@ export function registerSpawn(server: McpServer): void {
         cwd: t.cwd ?? cwd,
         tools: t.tools ?? tools,
         extensions: t.extensions ?? extensions,
+        durable: t.durable ?? durable,
         nativeMcp: t.nativeMcp ?? nativeMcp,
         mcpServers: t.mcpServers ?? mcpServers,
         maxTurns: t.maxTurns ?? maxTurns,

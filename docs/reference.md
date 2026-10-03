@@ -282,18 +282,70 @@ the same commit then removes the temporary copy. A Session document tracks the c
 task ID, committed atomically with each initial/follow-up task creation. Existing stores
 without that pointer are migrated once by selecting their latest task.
 
-State is stored under `PI_DELEGATE_STATE_DIR/durable/` (by default
-`~/.local/state/pi-delegate-mcp/durable/`). It contains conversation and tool output data.
+State is stored under `PI_DELEGATE_STATE_DIR/durable/v2/` (by default
+`~/.local/state/pi-delegate-mcp/durable/v2/`). It contains conversation and tool output data.
 Directories are private and SQLite files are mode 600. Each delegate has its own SQLite
-store; a shared catalog uses conditional ownership updates so only one MCP process can
-claim an abandoned store. Stores whose owning process is still alive are not claimed.
-Recovery is local to this machine and Pi agent directory.
+store under `jobs/`, listed in a shared `catalog.sqlite`. Recovery is local to this machine
+and Pi agent directory.
+
+#### Ownership
+
+Each store has exactly one owning MCP process, which holds an exclusive SQLite lock on
+`ownership/<key>.sqlite` for as long as it owns the store. The kernel releases the lock when
+the process dies, so a dead owner's stores are claimed by exactly one other process, and a
+reused PID cannot keep them. A process that is alive but stopped or hung keeps its lock and is
+never taken over: kill it to release its delegates. This trades automatic liveness for never
+having two executors of one task. The catalog's `pid` column is diagnostic only.
+
+- `STATE_DIR` must be on a local filesystem. Network filesystems may not honour the locks.
+- Lock files are opened only through `node:sqlite` by `src/ownership.ts`, and are never
+  deleted. Deleting an open lock file would let the next opener lock a new file at the same
+  path. `forget` removes the catalog row and store, then releases the lock, and leaves the
+  small lock file behind.
+- A claim of a task that has not finished a turn since its last claim counts as a recovery
+  attempt. After `PI_DELEGATE_MAX_RECOVERY_ATTEMPTS` (default 3) such claims, the delegate is
+  reported as an error instead of being resumed, so a task that crashes its host on recovery
+  cannot crash every host in turn. Inspect it, then `forget` it. Completing a turn, a clean
+  shutdown, or loading finished history resets the count.
+
+#### Non-durable delegates and retention
+
+`durable: false` on `spawn`, `run` or `spawn_batch` keeps a delegate in memory only. It
+writes no catalog row, lock or store, still supports `status`, `wait`, `steer` and
+`follow_up` while this MCP process lives, and is gone when it exits; it is never recovered.
+Use it for short, cheap, re-runnable work such as reviews, searches and model comparisons.
+The default stays durable.
+
+Durable delegates are kept on disk after they finish, then deleted automatically:
+
+- `PI_DELEGATE_HISTORY` limits how many finished delegates each process keeps loaded in
+  memory. Unloading one only frees memory: a durable delegate stays on disk, appears in
+  `sessions` under `stored`, and loads again on first use by id from any process, unless
+  another live process has it loaded.
+- A finished delegate is deleted `PI_DELEGATE_RETENTION_DAYS` (default 7) after it last
+  finished; `follow_up` restarts the clock.
+- When stored delegates exceed `PI_DELEGATE_STORAGE_LIMIT_MB` (default 1024), the oldest
+  finished ones are deleted early until the total is under the limit.
+- Unfinished delegates are never deleted, under any pressure. Neither are delegates another
+  live process has loaded; that process applies retention to them itself.
+- The check runs when a process starts and, at most once a minute, when a delegate finishes.
+  It needs no background process. Lock files of deleted delegates are removed with them.
+- Recovery at startup resumes only unfinished delegates. Finished ones are not loaded until
+  someone asks for them, so a new process does not take over every other process's history.
+
+`durable/v2/` is ownership protocol 2, recorded in the catalog's `meta` table; a host refuses a
+catalog with another protocol. Builds before protocol 2 used `durable/catalog.sqlite` and
+`durable/<key>/` with PID ownership. The two namespaces never see each other's jobs, so old
+and new builds running at the same time cannot both own a store. Delegates left in the
+protocol 1 namespace are recovered only by old builds. Once no old build is running,
+`durable/catalog.sqlite` and the `durable/<uuid>/` directories can be deleted.
 
 New server processes automatically recover abandoned delegates. `init` also checks for
 abandoned work. Original session IDs, history, model selection, turn budgets, and start
 times are retained; downtime counts toward the original wall-clock deadline. Additional
 abandoned tasks are recovered as concurrency slots become available. Use `sessions`,
-`status`, and `follow_up` as usual. `forget` and history eviction remove persisted records.
+`status`, and `follow_up` as usual. `forget` removes persisted records at once; otherwise
+retention removes them (see below).
 
 Shutdown signals the SDK first, records in-flight tool completions until it becomes idle,
 then saves the final checkpoint and closes storage. Recovery steering is retained until
@@ -419,7 +471,10 @@ MCP for one task in an enabled batch, pass `nativeMcp: false, mcpServers: []`.
 | `PI_DELEGATE_SPAWN_TURNS`     | `30`             | Default turn budget for `spawn` and `spawn_batch`                        |
 | `PI_DELEGATE_SPAWN_DURATION_MS` | `600000`       | Default deadline for `spawn` and `spawn_batch`                           |
 | `PI_DELEGATE_LIST_CAP`        | `60`             | Above this, `init` summarises models by provider instead of listing them |
-| `PI_DELEGATE_STATE_DIR`       | XDG state dir    | Status-line state and durable task storage                               |
+| `PI_DELEGATE_STATE_DIR`       | XDG state dir    | Status-line state and durable task storage (local filesystem only)       |
+| `PI_DELEGATE_MAX_RECOVERY_ATTEMPTS` | `3`        | Claims without progress before a delegate is reported instead of resumed |
+| `PI_DELEGATE_RETENTION_DAYS`  | `7`              | Days a finished durable delegate is kept on disk                         |
+| `PI_DELEGATE_STORAGE_LIMIT_MB` | `1024`          | Stored delegates above this are deleted early, oldest finished first     |
 | `PI_DELEGATE_STATUSLINE_WRAP` | unset            | Status line command to wrap and append to                                |
 | `PI_DELEGATE_STATUSLINE_LOG`  | unset            | File to append a timestamp to on every status line render, for debugging |
 | `PI_DELEGATE_PROGRESS_MS`     | `15000`          | Progress notification interval during `run`                              |
@@ -482,7 +537,8 @@ are not part of the offline suite.
 | `src/config.ts`      | Every environment variable, read in one place         |
 | `src/permissions.ts` | The tool allowlist and the gate that enforces it      |
 | `src/registry.ts`    | Session map, id claiming, history eviction, recovery  |
-| `src/durable.ts`     | Durable task checkpoints, current task, process ownership |
+| `src/durable.ts`     | Durable task checkpoints, current task, catalog, recovery claims |
+| `src/ownership.ts`   | Kernel-lock ownership of durable stores                 |
 | `src/tools/`         | One module per group of MCP tools                     |
 | `src/pi/`            | Everything that touches the pi SDK                    |
 | `src/statusline/`    | State file publishing and the status line binary      |

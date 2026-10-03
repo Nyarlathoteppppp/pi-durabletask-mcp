@@ -16,10 +16,10 @@ const held = new Set();
 const clients = new Set();
 const sockets = new Set();
 const savedTask = (id) => {
-  const catalog = new DatabaseSync(join(stateDir, "durable", "catalog.sqlite"), { readOnly: true });
+  const catalog = new DatabaseSync(join(stateDir, "durable", "v2", "catalog.sqlite"), { readOnly: true });
   try {
     const row = catalog.prepare("SELECT key FROM jobs WHERE json_extract(options, '$.id') = ?").get(id);
-    const store = new DatabaseSync(join(stateDir, "durable", row.key, "session.sqlite"), { readOnly: true });
+    const store = new DatabaseSync(join(stateDir, "durable", "v2", "jobs", row.key, "session.sqlite"), { readOnly: true });
     try { return JSON.parse(store.prepare("SELECT record FROM tasks ORDER BY id DESC LIMIT 1").get().record); }
     finally { store.close(); }
   } finally { catalog.close(); }

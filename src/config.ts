@@ -111,6 +111,15 @@ export const PROGRESS_MS = num(process.env.PI_DELEGATE_PROGRESS_MS, 15_000);
 export const TRACE_ARGS = num(process.env.PI_DELEGATE_TRACE_ARGS, 400);
 export const TRACE_RESULT = num(process.env.PI_DELEGATE_TRACE_RESULT, 600);
 
+/** Finished durable delegates are deleted this long after they finish, unless follow_up reuses them. */
+export const RETENTION_MS = num(process.env.PI_DELEGATE_RETENTION_DAYS, 7) * 86_400_000;
+
+/** Above this, the oldest finished durable delegates are deleted early. Unfinished ones never are. */
+export const STORAGE_LIMIT_BYTES = num(process.env.PI_DELEGATE_STORAGE_LIMIT_MB, 1024) * 1024 * 1024;
+
+/** Claims of a job without progress before recovery stops resuming it and reports an error. */
+export const MAX_RECOVERY_ATTEMPTS = num(process.env.PI_DELEGATE_MAX_RECOVERY_ATTEMPTS, 3);
+
 /** Where the status line reads live session state from. */
 export const STATE_DIR =
   process.env.PI_DELEGATE_STATE_DIR ||

@@ -65,10 +65,10 @@ const connect = async (hooks = {}) => {
 const spawn = (host, id, prompt) => host.call("spawn", { id, cwd: dir, prompt, nativeMcp: true,
   mcpServers: ["fixture"], extensions: false, tools: ["codemode", "mcp__fixture__effect", "mcp__fixture__echo"], maxTurns: 8 });
 const checkpoint = id => {
-  const catalog = new DatabaseSync(join(state, "durable/catalog.sqlite"), { readOnly: true });
+  const catalog = new DatabaseSync(join(state, "durable/v2/catalog.sqlite"), { readOnly: true });
   try {
     const row = catalog.prepare("SELECT key FROM jobs WHERE json_extract(options,'$.id')=?").get(id);
-    const store = new DatabaseSync(join(state, "durable", row.key, "session.sqlite"), { readOnly: true });
+    const store = new DatabaseSync(join(state, "durable/v2/jobs", row.key, "session.sqlite"), { readOnly: true });
     try { const task = JSON.parse(store.prepare("SELECT record FROM tasks ORDER BY id DESC LIMIT 1").get().record); return task.state.checkpoint ?? task.state.outcome?.result; }
     finally { store.close(); }
   } finally { catalog.close(); }

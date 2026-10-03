@@ -1,7 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { HISTORY_LIMIT } from "../config.js";
-import { all, assertCapacity, forget, must } from "../registry.js";
+import { all, assertCapacity, forget, resolve } from "../registry.js";
+import { storedJobs } from "../durable.js";
 import type { PiWorker } from "../pi/worker.js";
 import type { Snapshot } from "../types.js";
 import { gated, json } from "./shared.js";
@@ -62,7 +63,7 @@ export function registerControl(server: McpServer): void {
         verbose: z.boolean().optional().describe("Include tool results and call ids in the trace"),
       },
     },
-    async ({ sessionId, verbose }) => json(must(sessionId).snapshot({ verbose })),
+    async ({ sessionId, verbose }) => json((await resolve(sessionId)).snapshot({ verbose })),
   );
 
   gated(
@@ -74,7 +75,7 @@ export function registerControl(server: McpServer): void {
         "before the next model call. Use this instead of aborting when the agent is going the wrong way.",
       inputSchema: { sessionId: z.string(), message: z.string() },
     },
-    async ({ sessionId, message }) => json(await must(sessionId).steer(message)),
+    async ({ sessionId, message }) => json(await (await resolve(sessionId)).steer(message)),
   );
 
   gated(
@@ -94,7 +95,7 @@ export function registerControl(server: McpServer): void {
       },
     },
     async ({ sessionId, timeoutMs = 30_000, afterTurns, afterToolCalls, verbose }, extra) => {
-      const worker = must(sessionId);
+      const worker = await resolve(sessionId);
       await waitForProgress(
         worker,
         timeoutMs,
@@ -121,7 +122,7 @@ export function registerControl(server: McpServer): void {
         value: z.union([z.string(), z.boolean()]).describe("Chosen option, text, or boolean for a confirm"),
       },
     },
-    async ({ sessionId, requestId, value }) => json(must(sessionId).answer(requestId, value)),
+    async ({ sessionId, requestId, value }) => json((await resolve(sessionId)).answer(requestId, value)),
   );
 
   gated(
@@ -138,7 +139,7 @@ export function registerControl(server: McpServer): void {
       },
     },
     async ({ sessionId, prompt }) => {
-      const worker = must(sessionId);
+      const worker = await resolve(sessionId);
       // Let the worker produce the more useful "use steer" error for a live session.
       if (!worker.isActive) assertCapacity();
       return json(await worker.followUp(prompt));
@@ -152,7 +153,7 @@ export function registerControl(server: McpServer): void {
       description: "Stop a running pi session. Partial output stays readable via `status`.",
       inputSchema: { sessionId: z.string() },
     },
-    async ({ sessionId }) => json(await must(sessionId).abort()),
+    async ({ sessionId }) => json(await (await resolve(sessionId)).abort()),
   );
 
   gated(
@@ -160,8 +161,9 @@ export function registerControl(server: McpServer): void {
     "sessions",
     {
       description:
-        "List pi sessions held by this server, running and finished. Finished ones stay readable for " +
-        `review until evicted (keeps the newest ${HISTORY_LIMIT}).`,
+        "List pi sessions held by this server, running and finished, plus finished durable sessions " +
+        `stored on disk (\`stored\`). Up to ${HISTORY_LIMIT} finished sessions stay loaded; stored ones load ` +
+        "on first use by id. Stored sessions are deleted after the retention period.",
       inputSchema: {
         state: z.string().optional().describe("Filter by state: starting, running, done, aborted, error"),
         verbose: z.boolean().optional().describe("Include full text and tool calls"),
@@ -185,8 +187,11 @@ export function registerControl(server: McpServer): void {
             startedAt: s.startedAt,
             finishedAt: s.finishedAt,
             pendingQuestions: s.questions.length,
+            durable: s.durable,
           }));
-      return json({ count: list.length, sessions: list });
+      const loaded = new Set(snaps.map((s) => s.sessionId));
+      const stored = storedJobs().filter((job) => !loaded.has(job.sessionId));
+      return json({ count: list.length, sessions: list, stored });
     },
   );
 
@@ -198,10 +203,10 @@ export function registerControl(server: McpServer): void {
       inputSchema: { sessionId: z.string() },
     },
     async ({ sessionId }) => {
-      const w = must(sessionId);
-      if (w.isActive)
+      const w = all().find((worker) => worker.id === sessionId);
+      if (w?.isActive)
         throw new Error(`Session ${sessionId} is still ${w.state}. Call abort first.`);
-      w.dispose();
+      w?.dispose();
       await forget(sessionId);
       return json({ forgotten: sessionId });
     },

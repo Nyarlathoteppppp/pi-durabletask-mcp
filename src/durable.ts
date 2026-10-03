@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { chmodSync, mkdirSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
@@ -9,12 +9,27 @@ import {
 } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import type { FileEntry } from "@earendil-works/pi-coding-agent";
-import { AGENT_DIR, STATE_DIR } from "./config.js";
+import { AGENT_DIR, MAX_RECOVERY_ATTEMPTS, RETENTION_MS, STATE_DIR, STORAGE_LIMIT_BYTES } from "./config.js";
+import { initOwnership, owns, release as releaseOwnership, removeTombstones, tryAcquire } from "./ownership.js";
 import { getRuntime } from "./pi/runtime.js";
 import type { WorkerOptions } from "./pi/worker.js";
 import type { Snapshot } from "./types.js";
 
-export const DURABLE_DIR = join(STATE_DIR, "durable");
+/**
+ * Version of the ownership protocol, and of the namespace it owns. v1 kept `durable/catalog.sqlite`
+ * and `durable/<key>/`, owned by PID; v1 hosts still running from an older build use only those.
+ * v2 owns jobs through kernel locks (see ownership.ts) and keeps everything under `durable/v2/`.
+ * The two never see each other's jobs, so mixed builds cannot both own a store. A future protocol
+ * takes a new directory the same way.
+ */
+export const OWNERSHIP_PROTOCOL = 2;
+export const DURABLE_DIR = join(STATE_DIR, "durable", `v${OWNERSHIP_PROTOCOL}`);
+const JOBS_DIR = join(DURABLE_DIR, "jobs");
+const KEY = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+function jobDir(key: string): string {
+  if (!KEY.test(key)) throw new Error(`Invalid durable job key: ${key}`);
+  return join(JOBS_DIR, key);
+}
 const context = BACKGROUND_CONTEXT;
 
 export interface Checkpoint {
@@ -31,67 +46,191 @@ const CurrentTask = defineDoc<{ taskId: number | null }>({
 });
 interface Input { prompt: string; checkpoint: Checkpoint }
 export interface JobRecord { key: string; options: WorkerOptions; prompt: string }
-type Row = { key: string; pid: number; options: string; prompt: string };
+type Row = { key: string; options: string; prompt: string };
 type Execute = (prompt: string, saved: Checkpoint, signal: AbortSignal) => Promise<Checkpoint>;
+
+/** What a worker persists through: a DurableJob, or a MemoryJob for `durable: false`. */
+export interface JobStore {
+  readonly needsResume: boolean;
+  save(checkpoint: Checkpoint): Promise<void>;
+  begin(prompt: string, checkpoint: Checkpoint, execute: Execute, recover?: boolean): Promise<{ done: Promise<Checkpoint> }>;
+  close(release?: boolean): Promise<void>;
+  forget(): Promise<void>;
+}
+
+/**
+ * Non-durable delegates run through this. Nothing reaches the catalog, a lock or SQLite; the
+ * delegate lives as long as this process and cannot be recovered after it exits.
+ */
+export class MemoryJob implements JobStore {
+  readonly needsResume = false;
+  private controller = new AbortController();
+  save(): Promise<void> { return Promise.resolve(); }
+  async begin(prompt: string, checkpoint: Checkpoint, execute: Execute): Promise<{ done: Promise<Checkpoint> }> {
+    this.controller = new AbortController();
+    return { done: execute(prompt, checkpoint, this.controller.signal) };
+  }
+  /** Like closing a Harness, this cancels a running execution. */
+  async close(): Promise<void> { this.controller.abort(); }
+  async forget(): Promise<void> { this.controller.abort(); }
+}
 
 let catalog: DatabaseSync | undefined;
 function db(): DatabaseSync {
   if (catalog) return catalog;
-  mkdirSync(DURABLE_DIR, { recursive: true, mode: 0o700 });
-  chmodSync(DURABLE_DIR, 0o700);
-  catalog = new DatabaseSync(join(DURABLE_DIR, "catalog.sqlite"));
-  catalog.exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;
-    CREATE TABLE IF NOT EXISTS jobs (key TEXT PRIMARY KEY, pid INTEGER NOT NULL,
-      agent_dir TEXT NOT NULL, options TEXT NOT NULL, prompt TEXT NOT NULL);`);
-  chmodSync(join(DURABLE_DIR, "catalog.sqlite"), 0o600);
-  return catalog;
-}
-function alive(pid: number): boolean {
-  if (pid === 0) return false;
-  try { process.kill(pid, 0); return true; }
-  catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH"; }
+  for (const dir of [DURABLE_DIR, JOBS_DIR]) { mkdirSync(dir, { recursive: true, mode: 0o700 }); chmodSync(dir, 0o700); }
+  initOwnership(join(DURABLE_DIR, "ownership"));
+  const path = join(DURABLE_DIR, "catalog.sqlite");
+  const opened = new DatabaseSync(path);
+  // pid is diagnostic only; ownership is the lock. attempts counts claims since the job last
+  // made progress, so a job that kills its host on recovery cannot crash every host in turn.
+  opened.exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;
+    CREATE TABLE IF NOT EXISTS meta (name TEXT PRIMARY KEY, value TEXT NOT NULL);
+    INSERT OR IGNORE INTO meta VALUES ('ownership_protocol', '${OWNERSHIP_PROTOCOL}');
+    CREATE TABLE IF NOT EXISTS jobs (key TEXT PRIMARY KEY, pid INTEGER NOT NULL, agent_dir TEXT NOT NULL,
+      options TEXT NOT NULL, prompt TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, finished_at INTEGER);`);
+  // finished_at is set while the current task is terminal and cleared by follow_up. Only finished
+  // jobs are swept, and recovery claims only unfinished ones. Added after the first v2 catalogs.
+  if (!(opened.prepare("PRAGMA table_info(jobs)").all() as { name: string }[]).some((c) => c.name === "finished_at"))
+    opened.exec("ALTER TABLE jobs ADD COLUMN finished_at INTEGER");
+  chmodSync(path, 0o600);
+  const protocol = (opened.prepare("SELECT value FROM meta WHERE name = 'ownership_protocol'").get() as { value: string }).value;
+  if (protocol !== String(OWNERSHIP_PROTOCOL)) {
+    opened.close();
+    throw new Error(`${path} uses ownership protocol ${protocol}; this build speaks ${OWNERSHIP_PROTOCOL}`);
+  }
+  return catalog = opened;
 }
 
-/** SQLite's conditional update selects one owner even when multiple MCP hosts recover together. */
+/**
+ * Claim unowned jobs. The lock decides ownership; the row is read again after locking because a
+ * concurrent forget deletes the row before it releases the lock.
+ */
 export function claimAbandoned(excludeIds: Set<string>, limit: number): JobRecord[] {
   const records: JobRecord[] = [];
-  for (const row of db().prepare("SELECT * FROM jobs WHERE agent_dir = ? ORDER BY rowid DESC").all(AGENT_DIR) as Row[]) {
+  const rows = db().prepare("SELECT key, options, prompt FROM jobs WHERE agent_dir = ? AND finished_at IS NULL ORDER BY rowid DESC");
+  for (const row of rows.all(AGENT_DIR) as Row[]) {
     if (records.length >= limit) break;
-    if (alive(row.pid)) continue;
+    if (owns(row.key)) continue;
     const options = JSON.parse(row.options) as WorkerOptions;
     if (options.id && excludeIds.has(options.id)) continue;
-    const changed = db().prepare("UPDATE jobs SET pid = ? WHERE key = ? AND pid = ?")
-      .run(process.pid, row.key, row.pid).changes;
-    if (changed) {
-      records.push({ key: row.key, options, prompt: row.prompt });
-      if (options.id) excludeIds.add(options.id);
-    }
+    if (!tryAcquire(row.key)) continue;
+    const fresh = db().prepare("SELECT attempts FROM jobs WHERE key = ?").get(row.key) as { attempts: number } | undefined;
+    if (!fresh) { releaseOwnership(row.key); continue; }
+    db().prepare("UPDATE jobs SET pid = ?, attempts = ? WHERE key = ?").run(process.pid, fresh.attempts + 1, row.key);
+    records.push({ key: row.key, options, prompt: row.prompt });
+    if (options.id) excludeIds.add(options.id);
   }
   return records;
 }
 
-export function forgetOwnedJob(key: string): void {
-  const removed = db().prepare("DELETE FROM jobs WHERE key = ? AND pid = ?").run(key, process.pid).changes;
-  if (removed) rmSync(join(DURABLE_DIR, key), { recursive: true, force: true });
+const byId = (id: string): Row | undefined => db().prepare(
+  "SELECT key, options, prompt FROM jobs WHERE agent_dir = ? AND json_extract(options, '$.id') = ? ORDER BY rowid DESC LIMIT 1",
+).get(AGENT_DIR, id) as Row | undefined;
+
+/** True when a stored job, in any process, already uses this session id. */
+export const storedIdInUse = (id: string): boolean => byId(id) !== undefined;
+
+/**
+ * Claim a finished job by session id so it can be read or followed up. "held" means another live
+ * process has it loaded. Unfinished jobs are left to recovery, which counts attempts.
+ */
+export function claimStored(id: string): JobRecord | "held" | undefined {
+  const row = byId(id);
+  if (!row || owns(row.key)) return undefined;
+  if (!tryAcquire(row.key)) return "held";
+  const fresh = db().prepare("SELECT finished_at FROM jobs WHERE key = ?").get(row.key) as { finished_at: number | null } | undefined;
+  if (!fresh || fresh.finished_at === null) { releaseOwnership(row.key); return undefined; }
+  db().prepare("UPDATE jobs SET pid = ? WHERE key = ?").run(process.pid, row.key);
+  return { key: row.key, options: JSON.parse(row.options) as WorkerOptions, prompt: row.prompt };
 }
 
-export class DurableJob {
+/** Let go of a job without deleting it, so another process may load it. */
+export function releaseJob(key: string): void {
+  if (!owns(key)) return;
+  db().prepare("UPDATE jobs SET pid = 0 WHERE key = ?").run(key);
+  releaseOwnership(key);
+}
+
+/** Finished jobs nobody has loaded, newest first, for listing without opening their stores. */
+export function storedJobs(): { sessionId: string; label: string | undefined; finishedAt: string }[] {
+  const rows = db().prepare("SELECT key, options, finished_at FROM jobs WHERE agent_dir = ? AND finished_at IS NOT NULL ORDER BY finished_at DESC")
+    .all(AGENT_DIR) as { key: string; options: string; finished_at: number }[];
+  return rows.filter((row) => !owns(row.key)).map((row) => {
+    const options = JSON.parse(row.options) as WorkerOptions;
+    return { sessionId: options.id ?? row.key, label: options.label, finishedAt: new Date(row.finished_at).toISOString() };
+  });
+}
+
+const bytes = (dir: string): number => {
+  try { return readdirSync(dir).reduce((sum, file) => sum + statSync(join(dir, file)).size, 0); }
+  catch { return 0; }
+};
+
+/**
+ * Delete finished jobs past retention, then the oldest finished jobs while the store is over its
+ * size limit. Unfinished jobs are never deleted, and neither are jobs a live process has loaded:
+ * the lock is taken before deleting, as forget does. Returns the deleted keys.
+ */
+export function sweep(now = Date.now()): string[] {
+  const removed: string[] = [];
+  const catalog = db();
+  let total = readdirSync(JOBS_DIR).reduce((sum, key) => sum + bytes(join(JOBS_DIR, key)), 0);
+  const finished = catalog.prepare("SELECT key, finished_at FROM jobs WHERE finished_at IS NOT NULL ORDER BY finished_at")
+    .all() as { key: string; finished_at: number }[];
+  for (const row of finished) {
+    if (row.finished_at >= now - RETENTION_MS && total <= STORAGE_LIMIT_BYTES) break;
+    if (owns(row.key) || !tryAcquire(row.key)) continue;
+    const fresh = db().prepare("SELECT finished_at FROM jobs WHERE key = ?").get(row.key) as { finished_at: number | null } | undefined;
+    if (!fresh || fresh.finished_at === null) { releaseOwnership(row.key); continue; }
+    const size = bytes(jobDir(row.key));
+    forgetOwnedJob(row.key);
+    total -= size;
+    removed.push(row.key);
+  }
+  const exists = db().prepare("SELECT 1 FROM jobs WHERE key = ?");
+  removeTombstones((key) => exists.get(key) !== undefined);
+  return removed;
+}
+
+/** Removes the row first, then the data, and releases the lock last. The lock file stays. */
+export function forgetOwnedJob(key: string): void {
+  if (!owns(key)) return;
+  db().prepare("DELETE FROM jobs WHERE key = ?").run(key);
+  rmSync(jobDir(key), { recursive: true, force: true });
+  releaseOwnership(key);
+}
+
+export class DurableJob implements JobStore {
   private harness!: Harness;
   private taskId: TaskId<Checkpoint> | undefined;
   private runtime: TaskRuntime<Input, Checkpoint, Checkpoint, object> | undefined;
   private writes: Promise<void> = Promise.resolve();
   private closing = false;
   private execute: Execute | undefined;
+  /** Turn count at the first save after a recovery claim; one more turn clears `attempts`. */
+  private progressFrom: number | undefined;
+  private attemptsPending = false;
   readonly key: string;
   needsResume = false;
   private constructor(key: string) { this.key = key; }
 
   static async open(options: WorkerOptions, prompt: string, key?: string): Promise<DurableJob> {
     const job = new DurableJob(key ?? randomUUID());
-    if (!key) db().prepare("INSERT INTO jobs VALUES (?, ?, ?, ?, ?)")
-      .run(job.key, process.pid, AGENT_DIR, JSON.stringify(options), prompt);
-    const directory = join(DURABLE_DIR, job.key);
-    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    const catalog = db(); // also initialises the ownership directory
+    let attempts = 0;
+    let unfinished = false;
+    if (!key) {
+      if (!tryAcquire(job.key)) throw new Error(`Ownership lock for new job ${job.key} is already held`);
+    } else if (!owns(key)) {
+      throw new Error(`Durable job ${key} is not owned by this process`);
+    } else {
+      const row = catalog.prepare("SELECT attempts, finished_at FROM jobs WHERE key = ?").get(key) as { attempts: number; finished_at: number | null } | undefined;
+      attempts = row?.attempts ?? 0;
+      unfinished = row?.finished_at === null;
+    }
+    job.attemptsPending = attempts > 0;
+    const directory = jobDir(job.key);
     const Task = defineTask<Input, Checkpoint, Checkpoint>({
       name: "pi-delegate.sdk", version: 1,
       initial: (input) => input.checkpoint,
@@ -110,6 +249,9 @@ export class DurableJob {
     const registry = createRegistry();
     registry.install(defineExtension({ name: "pi-delegate", tasks: [Task] }));
     try {
+      if (!key) catalog.prepare("INSERT INTO jobs (key, pid, agent_dir, options, prompt) VALUES (?, ?, ?, ?, ?)")
+        .run(job.key, process.pid, AGENT_DIR, JSON.stringify(options), prompt);
+      mkdirSync(directory, { recursive: true, mode: 0o700 });
       job.harness = await Harness.open(await openNodeSqliteStorage(join(directory, "session.sqlite")),
         { models: await getRuntime(), registry }, context);
       chmodSync(join(directory, "session.sqlite"), 0o600);
@@ -129,6 +271,17 @@ export class DurableJob {
       }, context);
       const current = job.taskId ? await job.harness.getTask(job.taskId, context) : undefined;
       job.needsResume = Boolean(current && current.state.status !== "terminal");
+      if (key && !job.needsResume && (job.attemptsPending || unfinished)) {
+        // Loading finished history is not a recovery attempt. A crash between the terminal commit
+        // and its catalog update leaves finished_at unset; record it now.
+        job.attemptsPending = false;
+        catalog.prepare("UPDATE jobs SET attempts = 0, finished_at = coalesce(finished_at, ?) WHERE key = ?").run(Date.now(), key);
+      }
+      // Judged only here, where the task is known to be unfinished, so finished history is never
+      // reported as exhausted. The caller keeps the lock, so no other host retries it either.
+      if (job.needsResume && attempts > MAX_RECOVERY_ATTEMPTS)
+        throw new Error(`Recovery stopped: the job was claimed ${attempts} times without completing a turn. ` +
+          "Inspect it, then forget it.");
       job.task = Task;
       return job;
     } catch (error) {
@@ -158,11 +311,13 @@ export class DurableJob {
         (await tx.doc(CurrentTask)).taskId = id;
         return id;
       }, context);
+      db().prepare("UPDATE jobs SET finished_at = NULL WHERE key = ?").run(this.key);
     }
     return { done: this.wait() };
   }
   private async wait(): Promise<Checkpoint> {
     const task = await this.harness.waitForTask(this.taskId!, context);
+    db().prepare("UPDATE jobs SET finished_at = ? WHERE key = ?").run(Date.now(), this.key);
     if (task.state.outcome.status !== "completed") throw new Error(`Durable task ${task.state.outcome.status}: ` +
       ("error" in task.state.outcome ? JSON.stringify(task.state.outcome.error) : "no result"));
     return task.state.outcome.result;
@@ -171,6 +326,13 @@ export class DurableJob {
     if (this.closing || !this.runtime) return Promise.resolve();
     const runtime = this.runtime;
     const copy = JSON.parse(JSON.stringify(checkpoint)) as Checkpoint;
+    if (this.attemptsPending) {
+      this.progressFrom ??= copy.snapshot.turns;
+      if (copy.snapshot.turns > this.progressFrom) {
+        this.attemptsPending = false;
+        db().prepare("UPDATE jobs SET attempts = 0 WHERE key = ?").run(this.key);
+      }
+    }
     this.writes = this.writes.then(() => runtime.commit(() => ({ status: "running", checkpoint: copy }), context));
     return this.writes;
   }
@@ -179,7 +341,11 @@ export class DurableJob {
     this.closing = true;
     await this.writes.catch(() => {});
     await this.harness.close(context);
-    if (release) db().prepare("UPDATE jobs SET pid = 0 WHERE key = ? AND pid = ?").run(this.key, process.pid);
+    if (release && owns(this.key)) {
+      // A clean release is not a crash; the next claim starts counting again.
+      db().prepare("UPDATE jobs SET pid = 0, attempts = 0 WHERE key = ?").run(this.key);
+      releaseOwnership(this.key);
+    }
   }
   async forget(): Promise<void> {
     await this.close(false);

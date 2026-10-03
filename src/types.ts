@@ -71,6 +71,8 @@ export interface Snapshot {
   elapsedMs: number;
   limits: { maxTurns: number; maxDurationMs: number };
   termination: Termination | undefined;
+  /** False: in memory only, gone when this MCP process exits. */
+  durable: boolean;
 }
 
 /** pi's enabledModels scope, resolved for one working directory. */

@@ -10,7 +10,7 @@ import {
   type FileEntry,
   type InlineExtension,
 } from "@earendil-works/pi-coding-agent";
-import { DurableJob, forgetOwnedJob, type Checkpoint } from "../durable.js";
+import { DurableJob, forgetOwnedJob, MemoryJob, releaseJob, type Checkpoint, type JobStore } from "../durable.js";
 import { AGENT_DIR } from "../config.js";
 import { secretPathGuard } from "../secrets.js";
 import { createProtectedGrepTool } from "./search.js";
@@ -42,6 +42,8 @@ export interface WorkerOptions extends NativeMcpOptions {
   thinking?: PiThinkingLevel | undefined;
   tools: string[];
   extensions?: boolean;
+  /** False keeps the delegate in memory only: no storage, no recovery. Default true. */
+  durable?: boolean;
   maxTurns: number;
   maxDurationMs: number;
   startedAt?: string;
@@ -98,7 +100,7 @@ export class PiWorker {
   /** pi reports provider failures as an assistant message with stopReason "error", not a throw. */
   private providerError: string | undefined;
   private abortPromise: Promise<void> | undefined;
-  private job: DurableJob | undefined;
+  private job: JobStore | undefined;
   recoveryKey: string | undefined;
   private journalUnsubscribe: (() => void) | undefined;
   private suspended = false;
@@ -109,6 +111,10 @@ export class PiWorker {
   private steering: string[] = [];
   private recoveryInput: Checkpoint["recoveryInput"];
   private options: WorkerOptions;
+
+  get durable(): boolean {
+    return this.options.durable !== false;
+  }
 
   /** Cancelling a session does not release its concurrency slot until the SDK becomes idle. */
   get isActive(): boolean {
@@ -132,6 +138,7 @@ export class PiWorker {
     thinking,
     tools,
     extensions = false,
+    durable = true,
     nativeMcp = false,
     mcpServers = [],
     maxTurns,
@@ -150,7 +157,7 @@ export class PiWorker {
     this.maxTurns = maxTurns;
     this.maxDurationMs = maxDurationMs;
     this.startedAt = startedAt ?? new Date().toISOString();
-    this.options = { id: this.id, label, cwd, model, thinking, tools, extensions, nativeMcp, mcpServers: this.mcpServers, maxTurns, maxDurationMs,
+    this.options = { id: this.id, label, cwd, model, thinking, tools, extensions, durable, nativeMcp, mcpServers: this.mcpServers, maxTurns, maxDurationMs,
       startedAt: this.startedAt };
   }
 
@@ -222,7 +229,7 @@ export class PiWorker {
       return this;
     }
     this.options = { ...this.options, model: this.model, thinking: this.thinking };
-    this.job = await DurableJob.open(this.options, prompt, key);
+    this.job = this.options.durable === false ? new MemoryJob() : await DurableJob.open(this.options, prompt, key);
     if (this.isStopped()) {
       await this.job.close();
       this.dispose();
@@ -397,6 +404,14 @@ export class PiWorker {
     await this.job?.close();
     this.dispose();
     await this.nativeClose;
+  }
+
+  /** Drop a finished delegate from memory. A durable one stays on disk until retention removes it. */
+  async unload(): Promise<void> {
+    this.dispose();
+    await this.nativeClose;
+    if (this.job) await this.job.close();
+    else if (this.recoveryKey) releaseJob(this.recoveryKey);
   }
 
   async forgetPersistent(): Promise<void> {
@@ -661,6 +676,7 @@ export class PiWorker {
       elapsedMs: this.elapsedMs(),
       limits: { maxTurns: this.maxTurns, maxDurationMs: this.maxDurationMs },
       termination: this.termination,
+      durable: this.durable,
     };
   }
 }

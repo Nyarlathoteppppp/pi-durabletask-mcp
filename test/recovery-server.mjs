@@ -4,6 +4,10 @@ import { DurableJob } from "../dist/durable.js";
 const save = DurableJob.prototype.save;
 DurableJob.prototype.save = async function (checkpoint) {
   await save.call(this, checkpoint);
+  if (process.env.TEST_CRASH_ON_RECOVERY && checkpoint.recoveryInput) {
+    process.kill(process.pid, "SIGKILL");
+    await new Promise(() => {});
+  }
   const crashFile = process.env.TEST_RECOVERY_CRASH;
   if (crashFile && checkpoint.recoveryInput && !existsSync(crashFile)) {
     writeFileSync(crashFile, JSON.stringify(checkpoint));
@@ -21,6 +25,16 @@ DurableJob.prototype.save = async function (checkpoint) {
     !existsSync(barrier + ".started")) {
     writeFileSync(barrier + ".started", "committed");
     while (!existsSync(barrier + ".release")) await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+};
+// Hold a recovery between reading its checkpoint and reopening the store as executor.
+const close = DurableJob.prototype.close;
+DurableJob.prototype.close = async function (release = true) {
+  await close.call(this, release);
+  const closeBarrier = process.env.TEST_CLOSE_BARRIER;
+  if (closeBarrier && !release && !existsSync(closeBarrier + ".started")) {
+    writeFileSync(closeBarrier + ".started", "closed");
+    while (!existsSync(closeBarrier + ".release")) await new Promise((resolve) => setTimeout(resolve, 10));
   }
 };
 await import("../dist/index.js");
