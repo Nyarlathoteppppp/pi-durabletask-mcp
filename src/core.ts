@@ -89,8 +89,12 @@ export async function startExecution(request: LaunchRequest) {
     thinking: w.thinking,
     activeTools: w.activeTools,
     limits: { maxTurns: w.maxTurns, maxDurationMs: w.maxDurationMs },
+    next: WAIT_HINT,
   };
 }
+
+/** Returned with a started run, so the caller's next call collects the answer in one loop. */
+const WAIT_HINT = "Call wait with this sessionId and until \"settled\" until state is done, aborted or error; its lastText is the answer.";
 
 export interface BatchRequest extends Omit<LaunchRequest, "prompt" | "id" | "label"> {
   tasks: LaunchRequest[];
@@ -342,7 +346,7 @@ export async function followUp(sessionId: string, prompt: string) {
   const worker = await resolve(sessionId);
   // Let the worker produce the more useful "use steer" error for a live session.
   if (!worker.isActive) assertCapacity();
-  return worker.followUp(prompt);
+  return { ...await worker.followUp(prompt), next: WAIT_HINT };
 }
 
 export async function cancelExecution(sessionId: string) {

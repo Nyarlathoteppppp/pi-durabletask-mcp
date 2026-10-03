@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { MODEL_ALLOWLIST, MODEL_DENYLIST } from "../config.js";
+import { LIST_CAP, MODEL_ALLOWLIST, MODEL_DENYLIST } from "../config.js";
 import { defaultModelRef, modelScope, scopedModels } from "../pi/models.js";
 import { json } from "./shared.js";
 
@@ -16,10 +16,10 @@ export function registerModels(server: McpServer): void {
         filter: z.string().optional(),
         cwd: z.string().optional().describe("Picks up a project-local pi model scope"),
         offset: z.number().int().min(0).optional().describe("First matching model index to return"),
-        limit: z.number().int().min(1).max(200).optional().describe("Page size, at most 200"),
+        limit: z.number().int().min(1).max(200).optional().describe(`Page size, default ${LIST_CAP}, at most 200`),
       },
     },
-    async ({ filter, cwd, offset = 0, limit = 200 }) => {
+    async ({ filter, cwd, offset = 0, limit = LIST_CAP }) => {
       const all = (await scopedModels(cwd)).map((m) => m.ref);
       const hits = filter ? all.filter((s) => s.toLowerCase().includes(filter.toLowerCase())) : all;
       const models = hits.slice(offset, offset + limit);
@@ -31,6 +31,8 @@ export function registerModels(server: McpServer): void {
         count: hits.length,
         offset,
         nextOffset: offset + models.length < hits.length ? offset + models.length : null,
+        ...(offset + models.length < hits.length
+          ? { note: "More models match. Pass filter to narrow the list, or nextOffset to page." } : {}),
         scoped: Boolean(modelScope(cwd)) || MODEL_ALLOWLIST.size > 0 || MODEL_DENYLIST.size > 0,
         models,
       });

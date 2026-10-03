@@ -7,6 +7,8 @@
 - `spawn_batch` returns `sessionIds` and points to `wait` instead of polling `sessions`; batch `wait` summaries include pending questions, so `answer` needs no extra `status`.
 - Errors say why a session is unavailable: unknown (memory-only sessions end with their process), running or loaded in another process, or waiting for recovery. `steer` on a finished session points to `follow_up`.
 - `models` reports `defaultModel`, the model a spawn without `model` gets, and whether it is usable.
+- `spawn` and `follow_up` results say how to collect the answer (`next`: wait with `until: "settled"`).
+- `models` returns `LIST_CAP` (60) models per page by default instead of 200, with a note when more match.
 - Two processes claiming the same abandoned job at the same instant could both back off and leave it unclaimed until something else triggered recovery: each held a shared lock while the other tried to upgrade. A claim that finds a busy lock and claims nothing now takes one jittered second look; lazy loading does the same. Measured: simultaneous claims left the job unclaimed in 54 of 60 rounds before, 0 of 60 after.
 
 ## 0.3.2 (2026-10-04)

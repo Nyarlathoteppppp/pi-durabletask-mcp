@@ -128,6 +128,15 @@ try {
   const listed = await host.call("models", { cwd: directory });
   assert.equal(listed.defaultModel, "test/one");
   assert.equal(listed.defaultUsable, true);
+  const spawned = await host.call("spawn", { cwd: directory, id: "hinted", prompt: "plain", tools: [] });
+  assert.match(spawned.next, /until "settled"/, "spawn says how to collect the answer");
+  await host.call("wait", { sessionId: "hinted", until: "settled", timeoutMs: 15000 });
+  assert.match((await host.call("follow_up", { sessionId: "hinted", prompt: "again" })).next, /until "settled"/);
+  const capped = await connect({ PI_DELEGATE_LIST_CAP: "1" });
+  const page = await capped.call("models", { cwd: directory });
+  assert.equal(page.models.length, 1, "models pages at LIST_CAP by default");
+  assert.match(page.note, /filter|nextOffset/);
+  await close(capped);
   await assert.rejects(() => host.call("wait", { sessionIds: ["slow"], until: "progress" }), /settled/);
 
   // 1b. Without durable, a delegate is in memory only.
