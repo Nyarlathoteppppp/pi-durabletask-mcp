@@ -2,13 +2,13 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { MODEL_ALLOWLIST, MODEL_DENYLIST } from "../config.js";
 import { modelScope, scopedModels } from "../pi/models.js";
-import { gated, json } from "./shared.js";
+import { json } from "./shared.js";
 
 export function registerModels(server: McpServer): void {
-  gated(
-    server,
+  server.registerTool(
     "models",
     {
+      annotations: { readOnlyHint: true, openWorldHint: false },
       description:
         "List models this delegate may use from pi's available providers after model filters. " +
         "Use `filter` to find a provider or model, and `offset`/`limit` to page through long lists.",

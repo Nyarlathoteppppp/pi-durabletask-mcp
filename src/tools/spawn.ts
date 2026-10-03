@@ -10,7 +10,7 @@ import {
 } from "../config.js";
 import { PERMITTED, READ_ONLY_TOOLS } from "../permissions.js";
 import { runExecution, startBatch, startExecution } from "../core.js";
-import { gated, json } from "./shared.js";
+import { json } from "./shared.js";
 
 // Preserve the existing helper import path for consumers.
 export { bindCancellation } from "../core.js";
@@ -18,7 +18,7 @@ export { bindCancellation } from "../core.js";
 const DURABLE_HELP =
   "Default false: memory only, nothing written, gone when this MCP process exits; right for short, cheap, " +
   "re-runnable work such as reviews, searches and model comparisons. Pass true when the work is long, has " +
-  "external side effects, should survive an MCP restart, or will be followed up later, or when the user asks.";
+  "external side effects, should survive an MCP restart, or needs disk retention. Memory sessions can follow_up while retained in this process.";
 const RETENTION_HELP =
   `Durable only: days to keep it on disk after it finishes (default ${RETENTION_DAYS}, max ${MAX_RETENTION_DAYS}). ` +
   "Set it longer when the user wants to come back to this session later.";
@@ -26,7 +26,7 @@ const retentionDays = z.number().int().min(1).max(MAX_RETENTION_DAYS).optional()
 
 const spawnShape = {
   prompt: z.string().describe("The task for the pi agent"),
-  model: z.string().optional().describe('Model as "provider/modelId", e.g. "openrouter/stealth/ox-alpha"'),
+  model: z.string().optional().describe('Omit for the configured default. Use "provider/modelId" from the models tool to choose another.'),
   thinking: z
     .enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"])
     .optional()
@@ -95,23 +95,23 @@ const taskShape = z.object({
 });
 
 export function registerSpawn(server: McpServer): void {
-  gated(
-    server,
+  server.registerTool(
     "spawn",
     {
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
       description:
         "Delegate a task to a pi agent running in the background. Returns a sessionId immediately, so " +
-        "nothing blocks. Poll with `status`, redirect with `steer`, answer its questions with `answer`. " +
+        "nothing blocks. Use `wait` for progress/results, `status` for a snapshot, `steer` to redirect, and `answer` for questions. " +
         "Use this for anything that might take more than a minute.",
       inputSchema: spawnShape,
     },
     async (args) => json(await startExecution(args)),
   );
 
-  gated(
-    server,
+  server.registerTool(
     "spawn_batch",
     {
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
       description:
         "Fan out several delegates in one call. Each task inherits the batch-level model, cwd, tools " +
         "and extensions unless it overrides them. The whole batch is validated before any delegate " +
@@ -158,13 +158,14 @@ export function registerSpawn(server: McpServer): void {
     }),
   );
 
-  gated(
-    server,
+  server.registerTool(
     "run",
     {
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
       description:
         "Delegate a task to a pi agent and wait for the final answer. Blocks until done. " +
-        "Prefer `spawn` for long work; this is for quick questions.",
+        "Client request cancellation aborts the delegate. Prefer spawn plus wait for long work; " +
+        "this is for quick questions.",
       inputSchema: spawnShape,
     },
     async (args, extra) => {

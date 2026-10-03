@@ -4,6 +4,17 @@ const [cmd, ...args] = process.argv.slice(2);
 const c = new Client({ name: "launch", version: "0" });
 await c.connect(new StdioClientTransport({ command: cmd, args }));
 const { tools } = await c.listTools();
+for (const name of ["status", "wait", "sessions", "models"]) {
+  if (tools.find(tool => tool.name === name)?.annotations?.readOnlyHint !== true)
+    throw new Error(`${name} must advertise read-only behavior`);
+}
+for (const name of ["spawn", "spawn_batch", "run", "steer", "answer", "follow_up", "abort", "forget"]) {
+  const annotations = tools.find(tool => tool.name === name)?.annotations;
+  if (annotations?.readOnlyHint !== false || annotations?.destructiveHint !== true)
+    throw new Error(`${name} must describe its potential mutations`);
+}
+if (tools.find(tool => tool.name === "init")?.annotations?.readOnlyHint !== false)
+  throw new Error("init may refresh OAuth and must not advertise read-only behavior");
 const spawn = tools.find((tool) => tool.name === "spawn");
 if (!spawn?.inputSchema?.properties?.thinking)
   throw new Error("spawn schema does not expose the thinking argument");

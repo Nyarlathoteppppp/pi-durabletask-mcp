@@ -140,7 +140,7 @@ export function sweepStorage(force = false): void {
 }
 
 let recovering: Promise<void> | undefined;
-/** Called by init and when work settles; only abandoned stores can change owners. */
+/** Called at server startup and when work settles; only abandoned stores can change owners. */
 export async function recoverAbandoned(): Promise<void> {
   if (shuttingDown) return;
   if (recovering) return recovering;

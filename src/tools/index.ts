@@ -4,7 +4,7 @@ import { registerInit } from "./init.js";
 import { registerModels } from "./models.js";
 import { registerSpawn } from "./spawn.js";
 
-/** `init` registers itself ungated; everything else goes through `gated`. */
+/** Tool operations validate their own inputs; init is optional diagnostics. */
 export function registerTools(server: McpServer): void {
   registerInit(server);
   registerSpawn(server);

@@ -1,7 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.3.2 (2026-10-04)
 
+- Make `init` optional setup/auth diagnostics; tools work directly after connection, with short server and agent instructions.
+- Validate Pi's configured default model against the same delegate allowlist, denylist and project scope as an explicit model, before a model request.
+- Return pending questions promptly from `wait`, preserving background execution and cancellation behavior.
+- Advertise tool read/mutation annotations without changing client approval policy.
 - Extract a protocol-independent execution core; existing MCP tools preserve their schemas and behavior, with shared-state and cancellation/progress regressions.
 - Persist the model actually selected by Pi when a caller uses its configured default, so unfinished tasks recover with a resolvable model ID.
 - Recover exhausted deadlines and turn budgets without provider authentication; a saved final answer still takes precedence.

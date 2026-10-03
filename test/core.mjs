@@ -12,7 +12,6 @@ const registry = await import("../dist/registry.js");
 const { PiWorker } = await import("../dist/pi/worker.js");
 const { Question } = await import("../dist/pi/ui.js");
 const { createServer } = await import("../dist/server.js");
-const { markInitialised } = await import("../dist/tools/shared.js");
 const { cleanup } = await import("../dist/statusline/state.js");
 const dir = await mkdtemp(join(tmpdir(), "pi-core-"));
 const originalStart = PiWorker.prototype.start;
@@ -47,8 +46,7 @@ const call = async (name, args = {}) => {
 };
 try {
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
-  assert.equal((await raw("sessions")).isError, true);
-  markInitialised(); // Init/auth itself is covered by the real-provider integration suite.
+  assert.equal((await call("sessions")).count, 0, "tools work without an init call");
 
   const started = await core.startExecution({ cwd: dir, id: "core-start", prompt: "work", tools: [] });
   const w = registry.loaded(started.sessionId);
@@ -58,6 +56,9 @@ try {
   const q = new Question("confirm", "continue?");
   w.questions.set(q.id, q);
   assert.equal((await core.getState(w.id)).questions[0].id, q.id);
+  const questionSnapshot = await call("wait", { sessionId: w.id, timeoutMs: 1000 });
+  assert.equal(questionSnapshot.questions[0].id, q.id);
+  assert.equal(w.questions.has(q.id), true, "wait observes the question without answering");
   await call("answer", { sessionId: w.id, requestId: q.id, value: true });
   assert.equal(await q.promise, true);
   assert.equal((await core.getState(w.id)).questions.length, 0);

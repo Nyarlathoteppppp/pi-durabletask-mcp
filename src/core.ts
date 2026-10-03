@@ -27,6 +27,7 @@ export async function waitForProgress(
     TERMINAL.has(worker.state) ||
     worker.turns > afterTurns ||
     worker.toolCalls.length > afterToolCalls ||
+    worker.questions.size > 0 ||
     signal?.aborted
   )
     return worker.snapshot();
@@ -45,7 +46,8 @@ export async function waitForProgress(
       if (
         TERMINAL.has(worker.state) ||
         worker.turns > afterTurns ||
-        worker.toolCalls.length > afterToolCalls
+        worker.toolCalls.length > afterToolCalls ||
+        worker.questions.size > 0
       )
         finish();
     }, 200);

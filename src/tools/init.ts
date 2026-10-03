@@ -19,8 +19,7 @@ import {
 } from "../config.js";
 import { PERMITTED, READ_ONLY_TOOLS } from "../permissions.js";
 import { modelScope, preflight } from "../pi/models.js";
-import { json, markInitialised } from "./shared.js";
-import { recoverAbandoned } from "../registry.js";
+import { json } from "./shared.js";
 import { DURABLE_DIR } from "../durable.js";
 import { ripgrepPath, RIPGREP_MISSING } from "../pi/search.js";
 import { MAX_RETENTION_DAYS, RETENTION_DAYS, STORAGE_LIMIT_BYTES } from "../config.js";
@@ -31,9 +30,9 @@ export function registerInit(server: McpServer): void {
     "init",
     {
       description:
-        "READ THIS FIRST. Reports what this server can reach and how to drive it: permitted tools, " +
-        "the default model, models available per provider, and the recipes for delegating. " +
-        "Every other tool refuses until this has been called once.",
+        "Optional setup diagnostics: reports model availability, provider authentication, permissions and budgets. " +
+        "Use when diagnosing configuration; no init call is needed before delegating. OAuth credentials may refresh.",
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
       inputSchema: {
         models: z.string().optional().describe('Substring to filter the model list, e.g. "deepseek"'),
         cwd: z
@@ -43,11 +42,8 @@ export function registerInit(server: McpServer): void {
       },
     },
     async ({ models: filter, cwd }) => {
-      // Throws if pi is missing, unauthenticated, or scoped down to nothing. The gate stays
-      // shut in that case, so the other tools remain closed rather than half-working.
+      // Inspect provider health without starting or recovering executions.
       const health = await preflight(cwd);
-      await recoverAbandoned();
-      markInitialised();
       const scope = modelScope(cwd);
       // Models of providers whose credentials failed to resolve are already left out.
       const all = health.usable;
@@ -73,8 +69,8 @@ export function registerInit(server: McpServer): void {
         } } : {}),
         search: { ripgrep: ripgrepPath() ?? RIPGREP_MISSING },
         durability: { enabled: true, default: false, storage: DURABLE_DIR,
-          recovery: "init resumes abandoned tasks from saved history. Completed tool calls are retained; interrupted calls get an unknown-outcome error and are not automatically replayed. Original deadlines and turn budgets still apply.",
-          optIn: "Delegates are in memory only by default: nothing is written and they are gone when this MCP process exits. Pass durable: true for long work, external side effects, work that should survive a restart or be followed up later, or when the user asks.",
+          recovery: "Server startup resumes abandoned tasks from saved history. Completed tool calls are retained; interrupted calls get an unknown-outcome error and are not automatically replayed. Original deadlines and turn budgets still apply.",
+          optIn: "Memory delegates can follow_up while retained in this process. Pass durable: true for work that must survive a restart or be retained on disk; unfinished work resumes at server startup.",
           retention: `A finished durable session is deleted retentionDays after it finishes (default ${RETENTION_DAYS}, max ${MAX_RETENTION_DAYS}; set it per spawn), or earlier, oldest first, when stored sessions exceed ${Math.round(STORAGE_LIMIT_BYTES / 1048576)} MiB. Unfinished ones are never deleted. \`sessions\` lists them under \`stored\`; any process can read them with status, and follow_up loads one.` },
         nativeMcp: {
           supported: true, default: false,
@@ -125,7 +121,7 @@ export function registerInit(server: McpServer): void {
                 byProvider,
                 note:
                   `${hits.length} models is too many to list. Narrow it with the \`models\` argument, ` +
-                  "then page through results with offset and limit.",
+                  "or call the models tool with filter, offset and limit to page through results.",
               }
             : { available: hits }),
         },
@@ -133,15 +129,14 @@ export function registerInit(server: McpServer): void {
         howToDelegate: [
           "1. `spawn` for real work. It returns a sessionId immediately, nothing blocks. Give it an " +
             "absolute `cwd` (required), plus your own `id` and a `label` so you can trace it later.",
-          "2. `status` to poll. Read `state`, `turns`, and `toolCalls` (the ordered tool trace). " +
+          "2. `status` for a snapshot. Read `state`, `turns`, and `toolCallCount`. " +
             "Add `verbose: true` to see tool results.",
-          "3. `wait` to pause up to 55 seconds for progress or completion. Cancelling a wait does " +
-            "not abort the background delegate, so repeat it instead of guessing that a live task is stuck.",
+          "3. `wait` for progress, completion or questions. Pass the previous turns as afterTurns and " +
+            "toolCallCount as afterToolCalls. Answer pending questions; otherwise repeat while running. Cancelling wait leaves the delegate running.",
           "4. `steer` if it goes the wrong way. The message lands after its current tool call, " +
             "before the next model call. Cheaper than aborting and restarting.",
-          "5. `answer` when `status` shows a non-empty `questions` array, which blocks the delegate " +
-            "until you reply. Only extensions can ask, so this never fires unless you spawned with " +
-            "`extensions: true`.",
+          "5. `answer` when status/wait shows questions. Use questions[].id as requestId; " +
+            "the delegate waits for your answer. Extension UI prompts are exposed here.",
           "6. `follow_up` to give a finished delegate another turn on the same session. Turns are " +
             "cumulative against maxTurns; the wall-clock limit applies to each run, so a durable session can be continued days later.",
           "7. `sessions` lists everything including finished runs; `forget` drops one.",

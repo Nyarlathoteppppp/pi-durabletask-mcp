@@ -48,12 +48,37 @@ unbind();
     state: "running",
     turns: 0,
     toolCalls: [],
+    questions: new Map(),
     snapshot() { return { state: this.state, turns: this.turns, toolCalls: this.toolCalls }; },
   };
   const pending = waitForProgress(waiting, 500, undefined, 0, 0);
   setTimeout(() => { waiting.turns = 1; }, 20);
   assert.equal((await pending).turns, 1);
   assert.equal(waiting.state, "running");
+}
+
+// An interaction is progress even after the current turn/tool has already been observed.
+{
+  const w = worker(5, 60_000);
+  w.state = "running";
+  const waiting = waitForProgress(w, 1500);
+  setTimeout(() => w.questions.set("confirm", { toJSON: () => ({ id: "confirm", kind: "confirm" }) }), 20);
+  // A 1.5s timeout must not delay a question which the existing 200ms poll can observe.
+  let timer;
+  let result;
+  try {
+    result = await Promise.race([waiting,
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("wait did not wake for a question")), 800); }),
+    ]);
+  } finally { clearTimeout(timer); }
+  assert.equal(result.questions[0].id, "confirm");
+  assert.equal(w.state, "running");
+  assert.equal(w.questions.size, 1);
+  let delivered = false;
+  const immediate = waitForProgress(w, 1500).then(snapshot => { delivered = true; return snapshot; });
+  await Promise.resolve();
+  assert.equal(delivered, true, "an existing question returns without waiting for a poll or timeout");
+  assert.equal((await immediate).questions[0].id, "confirm");
 }
 
 // Tool loops get one finalization steer at 75%, then an abort at the hard turn budget.

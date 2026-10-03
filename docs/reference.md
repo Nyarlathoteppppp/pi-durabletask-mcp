@@ -6,19 +6,39 @@
 
 | Tool          | Purpose                                                                                                                                 |
 | ------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `init`        | **Call first.** Reports reachable models, permitted tools, and how to drive a delegate. Every other tool refuses until it has run once. |
+| `init`        | Optional setup diagnostics: models, provider authentication, permissions and budgets. OAuth credentials may refresh. |
 | `spawn`       | Delegate in the background. Returns `sessionId` immediately. **Use this by default.**                                                   |
 | `spawn_batch` | Fan out up to the configured batch limit (default 4). Validated first, so nothing starts if one task is bad.                           |
 | `run`         | Delegate and block until done. For quick questions only.                                                                                |
 | `status`      | State, turns, tools used, latest text, and pending questions.                                                                           |
-| `wait`        | Wait up to 55 seconds for progress or completion without aborting the background worker.                                                |
+| `wait`        | Wait up to 55 seconds for progress, pending questions or completion. Cancelling this call leaves the worker running. |
 | `steer`       | Redirect a running agent. Lands after its current tool call.                                                                            |
 | `follow_up`   | Give a finished delegate another turn. It keeps everything it read, so you do not re-explain the task.                                   |
-| `answer`      | Answer a question surfaced by `status`. Only reachable with `extensions: true`, since only extensions can ask.                           |
+| `answer`      | Answer an actual pending extension UI question from `status` or `wait`; use `questions[].id` as `requestId`. |
 | `abort`       | Stop a session; partial output stays readable.                                                                                          |
 | `models`      | List models this delegate may use.                                                                                                      |
 | `sessions`    | List sessions, running and finished. Filter by `state`, expand with `verbose`.                                                          |
 | `forget`      | Drop a finished session from history, freeing its id.                                                                                   |
+
+## Agent instructions
+
+Tools work immediately after the MCP connection is established. For clients that need
+workflow guidance, add this short block to their skill, `AGENTS.md` or `CLAUDE.md`:
+
+```text
+Use Pi for bounded delegation; put the task's context and constraints in the prompt.
+Prefer spawn with an absolute repository cwd; omit model/tools for configured defaults and read-only tools.
+Use models to choose an alternative model; init is optional setup diagnostics.
+Use wait with prior turns as afterTurns and toolCallCount as afterToolCalls.
+Answer pending questions using questions[].id as requestId before waiting again.
+Use steer while running and follow_up when finished, while the session remains retained.
+Memory sessions live in this server; use durable:true for restart recovery and disk retention.
+Cancelling run aborts its delegate; cancelling wait only ends the wait.
+```
+
+Tool annotations describe read and mutation behavior; clients decide how to use the hints.
+The stdio entry point runs recovery before connecting. Code embedding `createServer()` owns
+startup recovery explicitly; `init` does not start or recover tasks.
 
 ## Other MCP clients
 
@@ -86,7 +106,7 @@ Pi retries transient provider failures itself (stream drops, 429/5xx, timeouts),
 `provider retry 1/3 in 2000ms: <error>`, and a run that fails after retrying says so in `error`.
 Retrying the same provider by hand rarely helps after that; choose another.
 
-`init` resolves the credentials of every provider a delegate may use, as a request would,
+Optional `init` resolves the credentials of every provider a delegate may use, as a request would,
 refreshing OAuth tokens that would expire within the longest delegate run. Providers that fail
 are listed under `failingProviders` with the reason and their models are not offered; `spawn`,
 `run` and `spawn_batch` refuse a model of such a provider before starting anything. API keys
@@ -100,8 +120,9 @@ shell's PATH. `init` reports which one under `search.ripgrep`, or how to fix a m
 
 ## Giving a delegate another turn
 
-A finished delegate is not spent. Pi keeps its session in durable checkpoints, so `follow_up` re-prompts
-the same agent with everything it already read still in context:
+A finished delegate can continue with `follow_up`, keeping what it already read in context.
+Memory sessions can continue while retained in the running server; durable sessions persist
+across restarts until retention removes them:
 
 ```json
 { "sessionId": "search-audit-01", "prompt": "Now check whether the build files reference it too" }
@@ -376,8 +397,8 @@ and new builds running at the same time cannot both own a store. Delegates left 
 protocol 1 namespace are recovered only by old builds. Once no old build is running,
 `durable/catalog.sqlite` and the `durable/<uuid>/` directories can be deleted.
 
-New server processes automatically recover abandoned delegates. `init` also checks for
-abandoned work. Original session IDs, history, model selection, turn budgets, and start
+New stdio server processes automatically recover abandoned delegates before connecting.
+Original session IDs, history, model selection, turn budgets, and start
 times are retained; downtime counts toward the original wall-clock deadline. Additional
 abandoned tasks are recovered as concurrency slots become available. Use `sessions`,
 `status`, and `follow_up` as usual. `forget` removes persisted records at once; otherwise
@@ -576,7 +597,7 @@ are not part of the offline suite.
 | `src/registry.ts`    | Session map, id claiming, history eviction, recovery  |
 | `src/durable.ts`     | Durable task checkpoints, current task, catalog, recovery claims |
 | `src/ownership.ts`   | Kernel-lock ownership of durable stores                 |
-| `src/tools/`         | MCP schemas, init gate, result formatting and notifications |
+| `src/tools/`         | MCP schemas, annotations, result formatting and notifications |
 | `src/pi/`            | Everything that touches the pi SDK                    |
 | `src/statusline/`    | State file publishing and the status line binary      |
 

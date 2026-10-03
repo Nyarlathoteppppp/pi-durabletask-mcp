@@ -240,6 +240,13 @@ export class PiWorker {
     // Record the model Pi actually chose, so recovery resolves the same one. A placeholder in the
     // stored options would not resolve.
     const chosen = model ?? session.model;
+    if (!model && chosen) {
+      // SDK defaults must obey the same delegate policy as an explicit model.
+      try {
+        await resolveModel(`${chosen.provider}/${chosen.id}`, this.cwd);
+        assertThinkingSupported(chosen, this.thinkingSpec);
+      } catch (error) { session.dispose(); throw error; }
+    }
     this.model = chosen ? `${chosen.provider}/${chosen.id}` : "(pi default)";
     this.thinking = session.thinkingLevel;
     this.activeTools = session.getActiveToolNames();

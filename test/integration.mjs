@@ -53,7 +53,11 @@ try {
     assert.ok(!result.isError, result.content?.[0]?.text);
     return JSON.parse(result.content[0].text);
   };
-  assert.equal((await raw("sessions")).isError, true, "init gate is enforced");
+  assert.equal((await call("sessions")).count, 0, "sessions works before init");
+  const direct = await call("run", { cwd: dir, prompt: "Reply OK", tools: [] });
+  assert.equal(direct.state, "done", "real SDK execution works before init");
+  await call("forget", { sessionId: direct.sessionId });
+  requests.length = 0;
   assert.equal((await call("init", { cwd: dir, models: "test/" })).models.defaultWhenYouOmitModel, "test/one");
 
   const invalidBatch = await raw("spawn_batch", { cwd: dir, tasks: [

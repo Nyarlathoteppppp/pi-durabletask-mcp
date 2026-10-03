@@ -3,15 +3,17 @@ import { PKG_NAME, PKG_VERSION } from "./config.js";
 import { registerTools } from "./tools/index.js";
 
 export function createServer(): McpServer {
+  // Embedders own startup recovery; the stdio entry point runs it before connecting.
   const server = new McpServer(
     { name: PKG_NAME, version: PKG_VERSION },
     {
       capabilities: { tools: {} },
       instructions:
-        "Delegates work to the pi coding agent, keeping the delegate's context out of your own. " +
-        "CRITICAL: call `init` before anything else, since the other tools refuse until you do. " +
-        "It reports which models are reachable, which tools are permitted, and the recipes for " +
-        "spawning, steering, and answering a delegate.",
+        "Delegate to Pi with spawn and an absolute repo cwd. Omit model/tools for the configured model/read-only tools. " +
+        "Use wait with prior turns/toolCallCount as afterTurns/afterToolCalls; answer pending questions. " +
+        "Steer running work; follow_up finished work while retained. Memory sessions live in this server; " +
+        "durable:true saves across restarts. Use models to choose a model; init is optional setup diagnostics. " +
+        "Cancelling run stops its delegate; cancelling wait only ends the wait.",
     },
   );
   registerTools(server);
