@@ -277,7 +277,8 @@ export class PiWorker {
         name: ev.toolName, content: ev.result.content, details: ev.result.details, isError: ev.isError,
       };
       if (ev.type === "message_end" && ev.message.role === "toolResult") this.clearResults(ev.message.toolCallId);
-      if (["turn_start", "turn_end", "message_end", "tool_execution_start", "tool_execution_end", "agent_end"].includes(ev.type))
+      // MemoryJob.save is a no-op; avoid copying the session just to discard it.
+      if (this.durable && ["turn_start", "turn_end", "message_end", "tool_execution_start", "tool_execution_end", "agent_end"].includes(ev.type))
         await this.job!.save(this.checkpoint());
     });
     if (saved && !this.job.needsResume) {
@@ -299,7 +300,7 @@ export class PiWorker {
         if (this.suspended || !this.job) return { block: true, reason: "Delegate is suspended or has not entered its durable task." };
         // The nested start event has already updated the trace. This hook propagates
         // commit failures (ordinary extension event listeners only report them).
-        if (ev.parentToolCallId) await this.job.save(this.checkpoint());
+        if (this.durable && ev.parentToolCallId) await this.job.save(this.checkpoint());
         return undefined;
       });
       pi.on("tool_execution_start", (ev) => {
@@ -310,7 +311,7 @@ export class PiWorker {
         this.onEvent(ev);
         this.results[ev.toolCallId] = { name: ev.toolName, content: ev.result.content,
           details: ev.result.details, isError: ev.isError, parentToolCallId: ev.parentToolCallId };
-        await this.job!.save(this.checkpoint());
+        if (this.durable) await this.job!.save(this.checkpoint());
       });
     } };
   }
