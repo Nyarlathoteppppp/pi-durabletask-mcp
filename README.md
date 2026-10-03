@@ -33,7 +33,9 @@ The MCP tool names and `PI_DELEGATE_*` settings are retained. The original
 
 ## Install
 
-Requires Node.js 22.19+ and a globally installed Pi Coding Agent. The initial tested
+Requires Node.js 22.19+, `ripgrep` (`rg` on `PATH`), and a globally installed Pi Coding Agent.
+Install ripgrep with `brew install ripgrep` on macOS or `sudo apt-get install ripgrep`
+on Debian/Ubuntu. The initial tested
 SDK and durable versions are 1.0.0. Install Pi before the bridge so the install hook
 can link its SDK:
 

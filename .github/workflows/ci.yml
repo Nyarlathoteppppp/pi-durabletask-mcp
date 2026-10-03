@@ -19,6 +19,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
       - name: Install shared Pi SDK
         run: npm install -g @earendil-works/pi-coding-agent@1.0.0
       - run: npm ci
