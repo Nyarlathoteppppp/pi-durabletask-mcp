@@ -21,7 +21,8 @@ Background tasks · Live steering · Opt-in SQLite recovery · Native Pi MCP
 ## Give Pi the task.
 
 Your agent delegates to [Pi Coding Agent](https://pi.dev), checks progress, and collects
-the result. Steer live work or follow up in the same conversation.
+the result. Pi reads and searches in its own session, so that work stays out of your agent's
+context. Steer live work or follow up in the same conversation.
 
 | Delegate | Steer | Recover |
 | :--- | :--- | :--- |
@@ -68,8 +69,9 @@ Already connected? Update the existing entry and reconnect the MCP server.
 
 > Use Pi to review this repository and report the findings.
 
-Your agent calls `init` → `spawn` → `wait` / `status`. Pi uses your configured model and
-**read-only tools** by default. [Models & permissions →](docs/reference.md#configuration)
+Your agent calls `spawn` → `wait`. Pi uses your configured model and **read-only tools**
+by default. `init` is optional diagnostics; `models` lists alternatives.
+[Agent instructions →](docs/reference.md#agent-instructions) · [Models & permissions →](docs/reference.md#configuration)
 
 ## Usage
 
@@ -101,12 +103,14 @@ Delegates can also use selected **Pi native MCP servers** with an explicit tool 
 
 ## Key features
 
-- **Stay in control.** Run parallel delegates with `spawn_batch`, steer active work, and use `follow_up` to continue the same conversation.
-- **One owner per durable task.** Kernel-released SQLite locks let crashed owners' work recover without relying on PID identity or allowing two executors to claim it.
+- **Keep your agent's context small.** Pi does the reading and searching in its own session and your agent gets the result. Polling is cheap as well: `status` and `wait` return the latest five tool calls and a total (`verbose: true` for the full trace), and `wait` returns as soon as Pi asks a question.
+- **Run several delegates at once.** `spawn_batch` starts a batch in one call, each task with its own model if you like, for example a cheaper model for search or a second vendor's model to review the same change.
+- **Steer and continue.** `steer` redirects running work. `follow_up` continues a finished conversation with everything Pi already read. Turn and time limits are configurable; the time limit applies to each run, so a durable session can be continued days later, while turns count across the session.
+- **Ready for agents on connect.** Tools work right after connecting. `spawn` with a repo path uses your configured model and read-only tools. `init` is there to diagnose models, permissions and provider auth.
+- **Bad models and credentials fail early.** An explicit model and Pi's own default pass the same allowlist, denylist and scope checks. A provider whose auth cannot be resolved is refused before the run starts, and `init` lists it under `failingProviders`. Pi's automatic provider retries show up in status notices.
+- **Durable when it matters.** Tasks live in memory by default. `durable: true` saves one to SQLite so it survives a bridge restart. Each durable task has exactly one owner, held by a kernel-released lock, and any session can read a finished task's result. History is kept seven days by default, `retentionDays` sets it per task, and expired history is removed automatically; storage pressure can remove finished history earlier.
 - **Native Pi MCP.** Choose servers and exact tool permissions per delegate, including `codemode` and `tool_search`. Third-party extensions are a separate opt-in.
-- **Small polling responses.** `status` / `wait` show the latest five tool calls and the total count. Use `verbose: true` for the full trace.
-- **Budgets and retention.** Set turn and time limits. Durable history defaults to seven days; `retentionDays` customizes it, and storage pressure can remove finished history earlier.
-- **Your Pi setup.** Reuse your global Pi SDK and provider configuration; choose a model for each delegate. Provider retries are visible in status notices.
+- **Your Pi setup.** Reuse your global Pi SDK and provider configuration; choose a model for each delegate.
 
 [Configuration →](docs/reference.md#configuration) · [Ownership & retention →](docs/reference.md#ownership)
 
@@ -117,7 +121,8 @@ and pending steering. Unfinished tasks recover on restart; finished history stay
 retention removes it.
 
 Interrupted tools can have **unknown outcomes**. The bridge does not blindly replay their
-side effects; inspect external state before retrying. Original deadlines include downtime.
+side effects; inspect external state before retrying. Downtime counts against the current
+run's time limit.
 [Recovery & retention →](docs/reference.md#recovery-after-a-server-restart)
 
 <details>
@@ -132,7 +137,7 @@ The bridge shares your global Pi SDK; Pi Durable stays pinned separately.
 
 <div align="center">
 
-[Reference](docs/reference.md) · [Development](docs/reference.md#development) · [Changelog](CHANGELOG.md) · [Issues](https://github.com/Nyarlathoteppppp/pi-durabletask-mcp/issues)
+[Reference](docs/reference.md) · [Development](docs/reference.md#development) · [Handoff notes](CLAUDE.md) · [Changelog](CHANGELOG.md) · [Issues](https://github.com/Nyarlathoteppppp/pi-durabletask-mcp/issues)
 
 [MIT](LICENSE) · Built on [howznguyen/pi-delegate-mcp](https://github.com/howznguyen/pi-delegate-mcp) and Pi Durable.
 

@@ -21,6 +21,7 @@
 ## 把任务交给 Pi
 
 主代理把工作交给 [Pi Coding Agent](https://pi.dev)，查看进度并收取结果。
+Pi 在自己的会话里读文件、搜代码，这部分内容不占用主代理的上下文。
 执行中可以调整方向，结束后可以沿用同一会话继续提问。
 
 | 委派 | 转向 | 恢复 |
@@ -67,8 +68,9 @@ args = ["/absolute/path/pi-durabletask-mcp/dist/index.js"]
 
 > 让 Pi 审查这个仓库，报告发现的问题。
 
-主代理会调用 `init` → `spawn` → `wait` / `status`。
-Pi 默认使用你配置的模型和**只读工具**。[模型与权限 →](docs/reference.md#configuration)
+主代理直接调用 `spawn` → `wait`；`init` 是可选诊断，`models` 用于查询模型。
+Pi 默认使用你配置的模型和**只读工具**。
+[简短代理指令 →](docs/reference.md#agent-instructions) · [模型与权限 →](docs/reference.md#configuration)
 
 ## 使用方式
 
@@ -100,12 +102,14 @@ Pi 默认使用你配置的模型和**只读工具**。[模型与权限 →](doc
 
 ## 重点功能
 
-- **任务随时可控。** `spawn_batch` 批量启动子代理；`steer` 调整执行中的方向；`follow_up` 沿用同一会话继续工作。
-- **持久化任务只有一个执行者。** 使用由内核释放的 SQLite 锁。进程崩溃后可接管任务，不依赖 PID 身份，也不让两个执行者同时领取。
+- **主代理的上下文保持干净。** Pi 在自己的会话里读文件和搜索，主代理只拿回结果。轮询也省上下文，`status` 和 `wait` 只返回最近 5 次工具调用和总数，`verbose: true` 可查看完整轨迹；Pi 提问时，`wait` 会立即返回。
+- **一次启动多个子代理。** `spawn_batch` 一次调用就能启动一批任务，每个任务可以单独选模型，比如用便宜的模型做搜索，或让另一家的模型复审同一处改动。
+- **随时调整，随时接着聊。** `steer` 调整执行中的方向；`follow_up` 沿用已完成的会话，Pi 之前读过的内容都还在。轮次和时长都可以设上限。时长按每次运行计算，持久化会话几天后也能继续；轮次在整个会话内累计。
+- **代理接上就能用。** 连接后工具直接可用，不必先调 `init`。调用 `spawn` 时只给仓库路径，就会使用你配置的模型和只读工具。`init` 用来诊断模型、权限和供应商认证。
+- **模型和认证问题提前报错。** 显式指定的模型和 Pi 自选的默认模型，都要通过同一套白名单、黑名单和作用域检查。认证无法解析的供应商会在运行前被拒绝，`init` 会把它列在 `failingProviders` 中。供应商的自动重试会显示在状态通知里。
+- **需要时才持久化。** 任务默认只在内存中。传入 `durable: true` 后任务存入 SQLite，桥接服务重启后可以恢复。每个持久化任务只有一个执行者，由内核释放的锁保证；任何会话都能查看已完成任务的结果。历史默认保留 7 天，`retentionDays` 可以按任务调整，过期后自动清理；空间不足时可能提前清理已完成的历史。
 - **Pi 原生 MCP。** 每个子代理选择服务和具体工具权限，支持 `codemode`、`tool_search`；第三方扩展单独开启。
-- **轮询输出精简。** `status` / `wait` 默认只显示最近 5 次工具调用及总数；`verbose: true` 可查看完整轨迹。
-- **预算与自动清理。** 可设轮次、时长上限；持久化历史默认保留 7 天，`retentionDays` 可按任务调整，空间不足时可能提前清理已完成历史。
-- **复用你的 Pi 配置。** 共用全局 Pi SDK 和供应商配置，每个子代理可以选模型；供应商自动重试会显示在状态通知中。
+- **复用你的 Pi 配置。** 共用全局 Pi SDK 和供应商配置，每个子代理可以选模型。
 
 [配置项 →](docs/reference.md#configuration) · [任务归属与保留策略 →](docs/reference.md#ownership)
 
@@ -130,7 +134,7 @@ Pi 默认使用你配置的模型和**只读工具**。[模型与权限 →](doc
 
 <div align="center">
 
-[详细文档](docs/reference.md) · [开发说明](docs/reference.md#development) · [更新记录](CHANGELOG.md) · [问题反馈](https://github.com/Nyarlathoteppppp/pi-durabletask-mcp/issues)
+[详细文档](docs/reference.md) · [开发说明](docs/reference.md#development) · [交接结论](CLAUDE.md) · [更新记录](CHANGELOG.md) · [问题反馈](https://github.com/Nyarlathoteppppp/pi-durabletask-mcp/issues)
 
 [MIT](LICENSE) · 基于 [howznguyen/pi-delegate-mcp](https://github.com/howznguyen/pi-delegate-mcp) 和 Pi Durable。
 
