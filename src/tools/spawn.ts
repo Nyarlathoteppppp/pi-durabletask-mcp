@@ -3,34 +3,17 @@ import { z } from "zod";
 import {
   ALLOW_ALL,
   BATCH_MAX,
-  DEFAULT_MODEL,
   MAX_DURATION_MS,
   MAX_RETENTION_DAYS,
   MAX_TURNS,
   RETENTION_DAYS,
-  PROGRESS_MS,
-  RUN_DEFAULT_DURATION_MS,
-  RUN_DEFAULT_TURNS,
 } from "../config.js";
-import { PERMITTED, pickTools, READ_ONLY_TOOLS } from "../permissions.js";
-import { assertThinkingSupported, resolveModel } from "../pi/models.js";
-import { message } from "../pi/worker.js";
-import { claimId, evictHistory, launch, launchBatch } from "../registry.js";
-import { resolveDelegateCwd } from "../workspace.js";
-import { validateNativeMcp } from "../pi/native-mcp.js";
+import { PERMITTED, READ_ONLY_TOOLS } from "../permissions.js";
+import { runExecution, startBatch, startExecution } from "../core.js";
 import { gated, json } from "./shared.js";
 
-export function bindCancellation(
-  signal: AbortSignal,
-  abort: () => void | Promise<void>,
-): () => void {
-  const cancel = (): void => {
-    void abort();
-  };
-  if (signal.aborted) cancel();
-  else signal.addEventListener("abort", cancel, { once: true });
-  return () => signal.removeEventListener("abort", cancel);
-}
+// Preserve the existing helper import path for consumers.
+export { bindCancellation } from "../core.js";
 
 const DURABLE_HELP =
   "Default false: memory only, nothing written, gone when this MCP process exits; right for short, cheap, " +
@@ -122,18 +105,7 @@ export function registerSpawn(server: McpServer): void {
         "Use this for anything that might take more than a minute.",
       inputSchema: spawnShape,
     },
-    async (args) => {
-      const w = await launch(args);
-      return json({
-        sessionId: w.id,
-        label: w.label,
-        state: w.state,
-        model: w.model,
-        thinking: w.thinking,
-        activeTools: w.activeTools,
-        limits: { maxTurns: w.maxTurns, maxDurationMs: w.maxDurationMs },
-      });
-    },
+    async (args) => json(await startExecution(args)),
   );
 
   gated(
@@ -180,87 +152,10 @@ export function registerSpawn(server: McpServer): void {
           .describe('Names the tasks `<prefix>-01`, `<prefix>-02`, ... e.g. "audit" gives "audit-01"'),
       },
     },
-    async ({ tasks, model, thinking, cwd, tools, extensions, durable, nativeMcp, mcpServers, maxTurns, maxDurationMs, retentionDays, idPrefix }) => {
-      const width = Math.max(String(tasks.length).length, 2);
-      const merged = tasks.map((t, i) => ({
-        prompt: t.prompt,
-        label: t.label,
-        model: t.model ?? model,
-        thinking: t.thinking ?? thinking,
-        cwd: t.cwd ?? cwd,
-        tools: t.tools ?? tools,
-        extensions: t.extensions ?? extensions,
-        durable: t.durable ?? durable,
-        nativeMcp: t.nativeMcp ?? nativeMcp,
-        mcpServers: t.mcpServers ?? mcpServers,
-        maxTurns: t.maxTurns ?? maxTurns,
-        maxDurationMs: t.maxDurationMs ?? maxDurationMs,
-        retentionDays: t.retentionDays ?? retentionDays,
-        id: t.id ?? (idPrefix ? `${idPrefix}-${String(i + 1).padStart(width, "0")}` : undefined),
-      }));
-
-      // Validate the batch up front. Every check here is cheap and deterministic, and a
-      // half-started fan-out is the worst outcome: you pay for the delegates that launched
-      // and still have to work out which ones did not.
-      const seen = new Set<string>();
-      for (const [i, t] of merged.entries()) {
-        if (t.id) {
-          if (seen.has(t.id))
-            throw new Error(`tasks[${i}] reuses id "${t.id}" from earlier in the same batch. Ids must be unique.`);
-          seen.add(t.id);
-          claimId(t.id);
-        }
-        try {
-          pickTools(t.tools);
-          const taskCwd = await resolveDelegateCwd(t.cwd ?? cwd);
-          validateNativeMcp(t, taskCwd);
-          const taskModel = await resolveModel(t.model || DEFAULT_MODEL, taskCwd);
-          assertThinkingSupported(taskModel, t.thinking);
-        } catch (e) {
-          throw new Error(`tasks[${i}]${t.id ? ` (${t.id})` : ""}: ${message(e)}`);
-        }
-      }
-
-      const started: Array<{
-        index: number;
-        sessionId: string;
-        label?: string;
-        state: string;
-        model?: string;
-        thinking?: string;
-        limits: { maxTurns: number; maxDurationMs: number };
-      }> = [];
-      const failures: Array<{ index: number; id?: string; error: string }> = [];
-      const results = await launchBatch(merged);
-      results.forEach((result, index) => {
-        if (result.status === "fulfilled") {
-          const w = result.value;
-          started.push({
-            index,
-            sessionId: w.id,
-            label: w.label,
-            state: w.state,
-            model: w.model,
-            thinking: w.thinking,
-            limits: { maxTurns: w.maxTurns, maxDurationMs: w.maxDurationMs },
-          });
-        } else {
-          failures.push({ index, id: merged[index]?.id, error: message(result.reason) });
-        }
-      });
-      const byIndex = (a: { index: number }, b: { index: number }) => a.index - b.index;
-      started.sort(byIndex);
-      failures.sort(byIndex);
-
-      return json({
-        requested: merged.length,
-        started: started.length,
-        sessions: started,
-        // Only reachable if a session dies during construction, after validation passed.
-        ...(failures.length ? { failed: failures.length, failures } : {}),
-        next: "Poll with `sessions` (one call covers the whole batch). `steer` and `abort` stay per session.",
-      });
-    },
+    async (args) => json({
+      ...await startBatch(args),
+      next: "Poll with `sessions` (one call covers the whole batch). `steer` and `abort` stay per session.",
+    }),
   );
 
   gated(
@@ -273,35 +168,17 @@ export function registerSpawn(server: McpServer): void {
       inputSchema: spawnShape,
     },
     async (args, extra) => {
-      const w = await launch({
-        ...args,
-        maxTurns: args.maxTurns ?? RUN_DEFAULT_TURNS,
-        maxDurationMs: args.maxDurationMs ?? RUN_DEFAULT_DURATION_MS,
-      });
-      const unbindCancellation = bindCancellation(extra.signal, async () => {
-        await w.abort("caller_cancelled");
-      });
       // Progress notifications reset the MCP request timeout, which defaults to 60s.
       const token = extra?._meta?.progressToken;
-      const ticker = token
-        ? setInterval(() => {
-            void extra
-              ?.sendNotification?.({
-                method: "notifications/progress",
-                params: { progressToken: token, progress: w.turns, message: `${w.state}, turn ${w.turns}` },
-              })
-              ?.catch(() => {});
-          }, PROGRESS_MS)
-        : undefined;
-      try {
-        await w.run;
-      } finally {
-        if (ticker) clearInterval(ticker);
-        unbindCancellation();
-      }
-      const snap = w.snapshot();
-      evictHistory();
-      return json(snap);
+      return json(await runExecution(args, {
+        signal: extra.signal,
+        onProgress: token ? async ({ state, turns }) => {
+          await extra.sendNotification({
+            method: "notifications/progress",
+            params: { progressToken: token, progress: turns, message: `${state}, turn ${turns}` },
+          });
+        } : undefined,
+      }));
     },
   );
 }

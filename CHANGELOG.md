@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Extract a protocol-independent execution core; existing MCP tools preserve their schemas and behavior, with shared-state and cancellation/progress regressions.
 - Persist the model actually selected by Pi when a caller uses its configured default, so unfinished tasks recover with a resolvable model ID.
 - Recover exhausted deadlines and turn budgets without provider authentication; a saved final answer still takes precedence.
 - Reclaim orphan job directories left by interrupted deletion before applying storage pressure, protecting active owners and otherwise retainable history.

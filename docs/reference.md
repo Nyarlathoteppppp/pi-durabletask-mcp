@@ -572,15 +572,33 @@ are not part of the offline suite.
 | -------------------- | ---------------------------------------------------- |
 | `src/config.ts`      | Every environment variable, read in one place         |
 | `src/permissions.ts` | The tool allowlist and the gate that enforces it      |
+| `src/core.ts`        | Protocol-independent execution operations and waits   |
 | `src/registry.ts`    | Session map, id claiming, history eviction, recovery  |
 | `src/durable.ts`     | Durable task checkpoints, current task, catalog, recovery claims |
 | `src/ownership.ts`   | Kernel-lock ownership of durable stores                 |
-| `src/tools/`         | One module per group of MCP tools                     |
+| `src/tools/`         | MCP schemas, init gate, result formatting and notifications |
 | `src/pi/`            | Everything that touches the pi SDK                    |
 | `src/statusline/`    | State file publishing and the status line binary      |
 
 GitHub Actions runs the offline suite on Node.js 22 and 24 for pushes and pull requests.
 The workflow does not publish an npm package.
+
+### Execution core and MCP Tasks
+
+Custom execution tools delegate to `src/core.ts`; the registry and `PiWorker` still own
+sessions and lifecycle. The core returns ordinary data and accepts an `AbortSignal` and
+an optional progress callback. MCP request metadata, notification methods and JSON content
+wrappers stay in `src/tools/`. Storage, ownership, recovery and retention are unchanged.
+
+`sessionId` remains the conversation identity; `follow_up` starts another run in that
+conversation. Separate execution handles and their recovery mapping belong to the later
+Tasks adapter and are not implemented in this extraction.
+
+The installed MCP SDK is **1.30.0**. It exports the older `experimental/tasks` API tied
+to protocol `2025-11-25`, not the current `io.modelcontextprotocol/tasks` extension.
+The official extension's [TypeScript package](https://tasks.extensions.modelcontextprotocol.io/typescript/)
+targets SDK v2. Until a compatible server API is available, this project exposes only
+its existing custom tools. No Tasks wire protocol or dependency upgrade is added here.
 
 The checkpoint benchmark uses temporary state and makes no model calls. It reports JSON
 clone and end-to-end save median/P95 over 30 commits per size after 3 warmups. Save time

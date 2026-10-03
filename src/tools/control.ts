@@ -1,64 +1,14 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { HISTORY_LIMIT } from "../config.js";
-import { all, assertCapacity, forget, loaded, resolve } from "../registry.js";
-import { storedJobs, storedSnapshot } from "../durable.js";
-import { compactSnapshot } from "../pi/worker.js";
-import type { PiWorker } from "../pi/worker.js";
-import type { Snapshot } from "../types.js";
+import {
+  cancelExecution, followUp, forgetSession, getState, listSessions, resolveInteraction,
+  steerExecution, waitForState,
+} from "../core.js";
 import { gated, json } from "./shared.js";
 
-const TERMINAL = new Set(["done", "aborted", "error"]);
-
-/** Wait without owning the worker lifecycle. Cancelling this wait never aborts the delegate. */
-export async function waitForProgress(
-  worker: PiWorker,
-  timeoutMs: number,
-  signal?: AbortSignal,
-  afterTurns = worker.turns,
-  afterToolCalls = worker.toolCalls.length,
-): Promise<Snapshot> {
-  if (
-    TERMINAL.has(worker.state) ||
-    worker.turns > afterTurns ||
-    worker.toolCalls.length > afterToolCalls ||
-    signal?.aborted
-  )
-    return worker.snapshot();
-
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (): void => {
-      if (settled) return;
-      settled = true;
-      clearInterval(poll);
-      clearTimeout(timeout);
-      signal?.removeEventListener("abort", finish);
-      resolve(worker.snapshot());
-    };
-    const poll = setInterval(() => {
-      if (
-        TERMINAL.has(worker.state) ||
-        worker.turns > afterTurns ||
-        worker.toolCalls.length > afterToolCalls
-      )
-        finish();
-    }, 200);
-    const timeout = setTimeout(finish, timeoutMs);
-    signal?.addEventListener("abort", finish, { once: true });
-    if (signal?.aborted) finish();
-  });
-}
-
-/**
- * Reading a finished session needs no ownership: its final state is in the catalog. This keeps
- * sessions loaded by another process readable, and avoids loading a conversation just to look.
- */
-function stored(sessionId: string, verbose?: boolean): Snapshot | undefined {
-  if (loaded(sessionId)) return undefined;
-  const snapshot = storedSnapshot(sessionId);
-  return snapshot && (verbose ? snapshot : compactSnapshot(snapshot));
-}
+// Preserve the existing helper import path for consumers.
+export { waitForProgress } from "../core.js";
 
 export function registerControl(server: McpServer): void {
   gated(
@@ -76,7 +26,7 @@ export function registerControl(server: McpServer): void {
         verbose: z.boolean().optional().describe("Include tool results and call ids in the trace"),
       },
     },
-    async ({ sessionId, verbose }) => json(stored(sessionId, verbose) ?? (await resolve(sessionId)).snapshot({ verbose })),
+    async ({ sessionId, verbose }) => json(await getState(sessionId, verbose)),
   );
 
   gated(
@@ -88,7 +38,7 @@ export function registerControl(server: McpServer): void {
         "before the next model call. Use this instead of aborting when the agent is going the wrong way.",
       inputSchema: { sessionId: z.string(), message: z.string() },
     },
-    async ({ sessionId, message }) => json(await (await resolve(sessionId)).steer(message)),
+    async ({ sessionId, message }) => json(await steerExecution(sessionId, message)),
   );
 
   gated(
@@ -107,20 +57,7 @@ export function registerControl(server: McpServer): void {
         verbose: z.boolean().optional().describe("Include tool results and call ids in the returned trace"),
       },
     },
-    async ({ sessionId, timeoutMs = 30_000, afterTurns, afterToolCalls, verbose }, extra) => {
-      // A finished session elsewhere cannot progress; its recorded state is the answer.
-      const finished = stored(sessionId, verbose);
-      if (finished) return json(finished);
-      const worker = await resolve(sessionId);
-      await waitForProgress(
-        worker,
-        timeoutMs,
-        extra.signal,
-        afterTurns ?? worker.turns,
-        afterToolCalls ?? worker.toolCalls.length,
-      );
-      return json(worker.snapshot({ verbose }));
-    },
+    async ({ sessionId, ...options }, extra) => json(await waitForState(sessionId, { ...options, signal: extra.signal })),
   );
 
   gated(
@@ -138,7 +75,7 @@ export function registerControl(server: McpServer): void {
         value: z.union([z.string(), z.boolean()]).describe("Chosen option, text, or boolean for a confirm"),
       },
     },
-    async ({ sessionId, requestId, value }) => json((await resolve(sessionId)).answer(requestId, value)),
+    async ({ sessionId, requestId, value }) => json(await resolveInteraction(sessionId, requestId, value)),
   );
 
   gated(
@@ -155,12 +92,7 @@ export function registerControl(server: McpServer): void {
         prompt: z.string().describe("The next turn for this delegate"),
       },
     },
-    async ({ sessionId, prompt }) => {
-      const worker = await resolve(sessionId);
-      // Let the worker produce the more useful "use steer" error for a live session.
-      if (!worker.isActive) assertCapacity();
-      return json(await worker.followUp(prompt));
-    },
+    async ({ sessionId, prompt }) => json(await followUp(sessionId, prompt)),
   );
 
   gated(
@@ -170,7 +102,7 @@ export function registerControl(server: McpServer): void {
       description: "Stop a running pi session. Partial output stays readable via `status`.",
       inputSchema: { sessionId: z.string() },
     },
-    async ({ sessionId }) => json(await (await resolve(sessionId)).abort()),
+    async ({ sessionId }) => json(await cancelExecution(sessionId)),
   );
 
   gated(
@@ -186,30 +118,7 @@ export function registerControl(server: McpServer): void {
         verbose: z.boolean().optional().describe("Include full text and tool calls"),
       },
     },
-    async ({ state, verbose }) => {
-      const snaps = all().map((w) => w.snapshot());
-      const filtered = state ? snaps.filter((s) => s.state === state) : snaps;
-      const list = verbose
-        ? filtered
-        : filtered.map((s) => ({
-            sessionId: s.sessionId,
-            label: s.label,
-            state: s.state,
-            model: s.model,
-            thinking: s.thinking,
-            turns: s.turns,
-            elapsedMs: s.elapsedMs,
-            limits: s.limits,
-            termination: s.termination,
-            startedAt: s.startedAt,
-            finishedAt: s.finishedAt,
-            pendingQuestions: s.questions.length,
-            durable: s.durable,
-          }));
-      const loaded = new Set(snaps.map((s) => s.sessionId));
-      const stored = storedJobs().filter((job) => !loaded.has(job.sessionId));
-      return json({ count: list.length, sessions: list, stored });
-    },
+    async ({ state, verbose }) => json(listSessions(state, verbose)),
   );
 
   gated(
@@ -219,13 +128,6 @@ export function registerControl(server: McpServer): void {
       description: "Drop a finished session from the review history, freeing its id for reuse.",
       inputSchema: { sessionId: z.string() },
     },
-    async ({ sessionId }) => {
-      const w = all().find((worker) => worker.id === sessionId);
-      if (w?.isActive)
-        throw new Error(`Session ${sessionId} is still ${w.state}. Call abort first.`);
-      w?.dispose();
-      await forget(sessionId);
-      return json({ forgotten: sessionId });
-    },
+    async ({ sessionId }) => json(await forgetSession(sessionId)),
   );
 }

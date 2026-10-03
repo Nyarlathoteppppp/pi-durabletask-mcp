@@ -1,0 +1,155 @@
+import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { ProgressNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
+
+process.env.PI_DELEGATE_PROGRESS_MS = "10";
+const core = await import("../dist/core.js");
+const registry = await import("../dist/registry.js");
+const { PiWorker } = await import("../dist/pi/worker.js");
+const { Question } = await import("../dist/pi/ui.js");
+const { createServer } = await import("../dist/server.js");
+const { markInitialised } = await import("../dist/tools/shared.js");
+const { cleanup } = await import("../dist/statusline/state.js");
+const dir = await mkdtemp(join(tmpdir(), "pi-core-"));
+const originalStart = PiWorker.prototype.start;
+const runs = new Map();
+const server = createServer();
+const client = new Client({ name: "core-adapter", version: "1" });
+const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+// Keep the real worker lifecycle; only replace the SDK session with controllable prompts.
+PiWorker.prototype.start = async function (prompt) {
+  const steering = [];
+  this.session = {
+    prompt: async () => {
+      const run = Promise.withResolvers();
+      runs.set(this.id, run);
+      this.onEvent({ type: "turn_start" });
+      await run.promise;
+    },
+    waitForIdle: async () => {},
+    steer: async (text) => { steering.push(text); },
+    getSteeringMessages: () => steering,
+    abort: async () => { runs.get(this.id).resolve(); },
+    dispose: () => {},
+  };
+  void this.track(this.session, prompt);
+  return this;
+};
+const raw = (name, args = {}) => client.callTool({ name, arguments: args });
+const call = async (name, args = {}) => {
+  const response = await raw(name, args);
+  assert.ok(!response.isError, response.content[0].text);
+  return JSON.parse(response.content[0].text);
+};
+try {
+  await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+  assert.equal((await raw("sessions")).isError, true);
+  markInitialised(); // Init/auth itself is covered by the real-provider integration suite.
+
+  const started = await core.startExecution({ cwd: dir, id: "core-start", prompt: "work", tools: [] });
+  const w = registry.loaded(started.sessionId);
+  assert.equal((await call("status", { sessionId: w.id })).state, "running");
+  assert.equal((await call("steer", { sessionId: w.id, message: "focus" })).queued, 1);
+  assert.deepEqual(w.session.getSteeringMessages(), ["focus"]);
+  const q = new Question("confirm", "continue?");
+  w.questions.set(q.id, q);
+  assert.equal((await core.getState(w.id)).questions[0].id, q.id);
+  await call("answer", { sessionId: w.id, requestId: q.id, value: true });
+  assert.equal(await q.promise, true);
+  assert.equal((await core.getState(w.id)).questions.length, 0);
+
+  const cancelledWait = new AbortController();
+  const waiting = core.waitForState(w.id, { timeoutMs: 1000, signal: cancelledWait.signal });
+  cancelledWait.abort();
+  assert.equal((await waiting).state, "running");
+  assert.equal(w.isActive, true);
+  assert.equal((await raw("forget", { sessionId: w.id })).isError, true);
+  runs.get(w.id).resolve();
+  await w.run;
+  assert.equal((await call("wait", { sessionId: w.id, timeoutMs: 250 })).state, "done");
+  const turnsBefore = w.turns;
+  await call("follow_up", { sessionId: w.id, prompt: "another run" });
+  assert.equal(registry.loaded(w.id), w, "follow-up reuses the conversation's worker");
+  assert.equal((await core.getState(w.id)).turns, turnsBefore + 1);
+  await core.cancelExecution(w.id);
+  await w.run;
+  assert.equal((await call("status", { sessionId: w.id })).termination.reason, "manual_abort");
+  await call("forget", { sessionId: w.id });
+  await assert.rejects(() => core.getState(w.id), /Unknown sessionId/);
+
+  const fromMcp = await call("spawn", { cwd: dir, id: "mcp-start", prompt: "work", tools: [] });
+  assert.equal((await core.getState(fromMcp.sessionId)).state, "running");
+  assert.equal(core.listSessions("running").sessions[0].sessionId, fromMcp.sessionId);
+  assert.deepEqual(core.listSessions().sessions[0].limits, fromMcp.limits);
+  await call("abort", { sessionId: fromMcp.sessionId });
+  await registry.loaded(fromMcp.sessionId).run;
+  await core.forgetSession(fromMcp.sessionId);
+  assert.equal((await raw("status", { sessionId: fromMcp.sessionId })).isError, true);
+
+  // Sync throws and async rejections do not affect execution; progress stops on completion.
+  let notifications = 0;
+  const firstProgress = Promise.withResolvers();
+  const running = core.runExecution({ cwd: dir, id: "progress", prompt: "work", tools: [] }, {
+    onProgress: (progress) => {
+      assert.equal(progress.state, "running");
+      notifications++;
+      if (notifications === 1) throw new Error("synchronous sink failure");
+      firstProgress.resolve();
+      return Promise.reject(new Error("notification transport closed"));
+    },
+  });
+  await firstProgress.promise;
+  runs.get("progress").resolve();
+  assert.equal((await running).state, "done");
+  const countAtFinish = notifications;
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(notifications, countAtFinish);
+
+  // Exercise the MCP closure too: preserve the caller's token and forward cancellation.
+  const progressMessages = [];
+  const mcpProgress = Promise.withResolvers();
+  client.setNotificationHandler(ProgressNotificationSchema, (notification) => {
+    progressMessages.push(notification.params);
+    mcpProgress.resolve();
+  });
+  const mcpCaller = new AbortController();
+  const mcpRun = client.callTool({ name: "run", arguments: {
+    cwd: dir, id: "mcp-run", prompt: "work", tools: [],
+  }, _meta: { progressToken: "phase1-progress" } }, undefined, { signal: mcpCaller.signal });
+  const rejectedRun = assert.rejects(mcpRun, /abort/i);
+  await mcpProgress.promise;
+  assert.deepEqual(progressMessages[0], {
+    progressToken: "phase1-progress", progress: 1, message: "running, turn 1",
+  });
+  mcpCaller.abort();
+  await rejectedRun;
+  const mcpCancelled = await core.waitForState("mcp-run", { timeoutMs: 1000 });
+  assert.equal(mcpCancelled.state, "aborted");
+  assert.equal(mcpCancelled.termination.reason, "caller_cancelled");
+  await registry.loaded("mcp-run").run;
+  const progressAtCancel = progressMessages.length;
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(progressMessages.length, progressAtCancel, "MCP progress stops after cancellation");
+
+  // An already-cancelled caller still cancels a blocking run, preserving its reason.
+  const caller = new AbortController();
+  caller.abort();
+  const cancelled = await core.runExecution({ cwd: dir, id: "cancelled", prompt: "work", tools: [] }, { signal: caller.signal });
+  assert.equal(cancelled.state, "aborted");
+  assert.equal(cancelled.termination.reason, "caller_cancelled");
+  console.log("  OK -> core/custom MCP shared state, follow-up, interaction, cancel vs wait, progress cleanup");
+} finally {
+  for (const w of registry.all()) {
+    if (w.isActive) { await w.abort(); await w.run; }
+    await core.forgetSession(w.id);
+  }
+  PiWorker.prototype.start = originalStart;
+  await client.close();
+  await server.close();
+  cleanup();
+  await rm(dir, { recursive: true, force: true });
+}
