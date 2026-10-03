@@ -281,9 +281,6 @@ export class PiWorker {
       this.restoreSnapshot(saved);
       this.recordFinal();
     } else {
-      // Only work that is about to call the model needs working credentials; loading finished
-      // history must not depend on them, or an unrecorded finish could never be repaired.
-      if (model) await assertProviderReady(model.provider);
       await this.beginDurable(prompt, saved, Boolean(key));
     }
     return this;
@@ -353,8 +350,16 @@ export class PiWorker {
   private async beginDurable(prompt: string, saved?: Checkpoint, recover = false): Promise<void> {
     if (saved) this.restoreSnapshot(saved);
     else this.inputStarted = false;
-    if (!recover) this.runStartedAt = new Date().toISOString();
     const alreadyStopped = recover && saved && !["starting", "running"].includes(saved.snapshot.state);
+    // Check credentials only when this run will call the model: spawn, follow_up, or a recovery
+    // that still has work. A recovery that only records an answer already given must not fail
+    // because a provider's auth broke meanwhile.
+    const answered = recover && saved?.inputStarted && !this.steering.length &&
+      this.session!.messages.at(-1)?.role === "assistant" &&
+      (this.session!.messages.at(-1) as { stopReason?: string }).stopReason === "stop";
+    const provider = this.model?.includes("/") ? this.model.slice(0, this.model.indexOf("/")) : undefined;
+    if (!alreadyStopped && !answered && provider) await assertProviderReady(provider);
+    if (!recover) this.runStartedAt = new Date().toISOString();
     if (!alreadyStopped) {
       this.state = "running";
       this.finishedAt = undefined;
@@ -514,10 +519,15 @@ export class PiWorker {
       );
     }
     if (this.job) {
+      const previous = this.state;
       this.state = "starting";
       return this.beginDurable(prompt).then(() => {
         this.onChange?.();
         return { sessionId: this.id, state: this.state, turnsSoFar: this.turns };
+      }, (error: unknown) => {
+        // Refused before anything ran (for example, a provider whose credentials fail).
+        this.state = previous;
+        throw error;
       });
     }
     void this.track(this.session, prompt);
@@ -652,6 +662,9 @@ export class PiWorker {
     reason: TerminationReason = "manual_abort",
     detail: { limit?: number; observed?: number } = {},
   ): Promise<{ aborted: true; termination: Termination }> {
+    // A finished session has nothing to stop, and its recorded state must not change.
+    if (!this.isActive && ["done", "error", "aborted"].includes(this.state))
+      throw new Error(`Session ${this.id} is already ${this.state}; there is nothing to abort.`);
     if (!this.termination)
       this.termination = {
         reason,
@@ -689,7 +702,8 @@ export class PiWorker {
 
   /** Elapsed time of the current run, which the wall-clock limit applies to. */
   private elapsedMs(): number {
-    return Date.now() - Date.parse(this.runStartedAt);
+    const end = this.finishedAt && !this.isActive ? Date.parse(this.finishedAt) : Date.now();
+    return end - Date.parse(this.runStartedAt);
   }
 
   snapshot({ verbose = false }: { verbose?: boolean } = {}): Snapshot {

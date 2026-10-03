@@ -79,6 +79,7 @@ export class MemoryJob implements JobStore {
 }
 
 let catalog: DatabaseSync | undefined;
+let uniqueIds = true;
 function db(): DatabaseSync {
   if (catalog) return catalog;
   for (const dir of [DURABLE_DIR, JOBS_DIR]) { mkdirSync(dir, { recursive: true, mode: 0o700 }); chmodSync(dir, 0o700); }
@@ -113,9 +114,12 @@ function db(): DatabaseSync {
   // processes could both find an id free and insert it under different job keys.
   try {
     opened.exec("CREATE UNIQUE INDEX IF NOT EXISTS jobs_session ON jobs (agent_dir, json_extract(options, '$.id'))");
+    uniqueIds = true;
   } catch (error) {
-    // A catalog that already holds duplicate ids keeps working on the pre-check alone; refusing to
-    // start would strand every job in it. forget the duplicates to restore the guarantee.
+    // A catalog that already holds duplicate ids still opens, so its jobs stay readable and can be
+    // forgotten, but no durable job is created until the index exists: without it two processes
+    // could again insert the same id.
+    uniqueIds = false;
     process.stderr.write(`[pi-delegate] session ids are not unique in ${path}; forget duplicates to fix: ${String(error)}\n`);
   }
   chmodSync(path, 0o600);
@@ -264,6 +268,16 @@ export class DurableJob implements JobStore {
     let attempts = 0;
     let unfinished = false;
     if (!key) {
+      if (!uniqueIds) {
+        // Retry the index, in case the duplicates were forgotten since this process opened the catalog.
+        try {
+          catalog.exec("CREATE UNIQUE INDEX IF NOT EXISTS jobs_session ON jobs (agent_dir, json_extract(options, '$.id'))");
+          uniqueIds = true;
+        } catch {
+          throw new Error("The durable catalog holds duplicate session ids, so new durable delegates are refused. " +
+            "Use sessions to find them and forget the duplicates, or use durable: false.");
+        }
+      }
       if (!tryAcquire(job.key)) throw new Error(`Ownership lock for new job ${job.key} is already held`);
     } else if (!owns(key)) {
       throw new Error(`Durable job ${key} is not owned by this process`);

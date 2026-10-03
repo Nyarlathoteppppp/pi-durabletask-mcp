@@ -81,7 +81,7 @@ const spawnShape = {
     .min(1)
     .max(MAX_TURNS)
     .optional()
-    .describe(`Maximum model/tool turns for this run; server ceiling ${MAX_TURNS}.`),
+    .describe(`Maximum model/tool turns for the whole session, cumulative across follow_up; server ceiling ${MAX_TURNS}.`),
   maxDurationMs: z
     .number()
     .int()

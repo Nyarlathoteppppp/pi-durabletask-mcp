@@ -1,10 +1,15 @@
 // Fault injection belongs in the test process, not in the production server.
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { DurableJob } from "../dist/durable.js";
 const save = DurableJob.prototype.save;
 DurableJob.prototype.save = async function (checkpoint) {
   await save.call(this, checkpoint);
   if (process.env.TEST_CRASH_ON_RECOVERY && checkpoint.recoveryInput) {
+    process.kill(process.pid, "SIGKILL");
+    await new Promise(() => {});
+  }
+  // Die once the final answer is saved, before the task's terminal commit.
+  if (process.env.TEST_CRASH_AFTER_ANSWER && checkpoint.snapshot.lastText === process.env.TEST_CRASH_AFTER_ANSWER) {
     process.kill(process.pid, "SIGKILL");
     await new Promise(() => {});
   }
@@ -64,13 +69,17 @@ DurableJob.prototype.recordFinal = function (snapshot) {
   return recordFinal.call(this, snapshot);
 };
 
-// Make one provider's credentials fail to resolve, as an expired OAuth refresh would.
-if (process.env.TEST_BROKEN_PROVIDER) {
+// Make one provider's credentials fail to resolve, as an expired OAuth refresh would. The
+// provider is named by TEST_BROKEN_PROVIDER, or read on each call from TEST_BROKEN_PROVIDER_FILE
+// so a test can break auth while the server runs.
+if (process.env.TEST_BROKEN_PROVIDER || process.env.TEST_BROKEN_PROVIDER_FILE) {
   const { getRuntime } = await import("../dist/pi/runtime.js");
   const runtime = await getRuntime();
   const getAuth = runtime.getAuth.bind(runtime);
+  const broken = () => process.env.TEST_BROKEN_PROVIDER ??
+    (existsSync(process.env.TEST_BROKEN_PROVIDER_FILE) ? readFileSync(process.env.TEST_BROKEN_PROVIDER_FILE, "utf8").trim() : undefined);
   runtime.getAuth = async (provider, options) => {
-    if (provider === process.env.TEST_BROKEN_PROVIDER) throw new Error(`OAuth refresh failed for ${provider}: simulated`);
+    if (provider === broken()) throw new Error(`OAuth refresh failed for ${provider}: simulated`);
     return getAuth(provider, options);
   };
 }

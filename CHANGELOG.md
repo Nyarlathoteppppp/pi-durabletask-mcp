@@ -13,9 +13,11 @@
 - The secret path guard resolves symlinks in the nearest existing parent, so a new file under a symlink to a secret directory is blocked.
 - An existing catalog's ownership protocol is checked before its schema is migrated.
 - `PiWorker` defaults to non-durable, matching MCP callers; workers loaded from the catalog are always durable.
-- Provider credentials are checked only before a run starts, so loading finished history never depends on them.
 - A delegate aborted outside a run (a recovered task already past its budget) records when it finished.
-- A catalog that already holds duplicate session ids still starts, with a warning, instead of failing on the new index.
+- A catalog that already holds duplicate session ids still starts, with a warning, and stays readable, but refuses new durable delegates until the duplicates are forgotten, so the race cannot recur.
+- Provider credentials are checked when a run is about to call the model (spawn, follow_up, recovery with work left), not when a recovery only records an answer already given. A refused follow_up leaves the session unchanged.
+- abort is refused for a finished session instead of changing its state in memory only.
+- elapsedMs stops at the finish of a run.
 
 ## 0.3.0
 
