@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- `wait` takes `until: "settled"` to return only when a delegate finishes or asks a question, so one loop gets the result without waking on every tool call.
+- `wait` takes `sessionIds` to wait on several delegates, such as a `spawn_batch`: it returns when any settles (`settled`) or all do (`all_settled`), with settled and pending ids and a short summary per session that includes the final text of finished ones.
+
 ## 0.3.2 (2026-10-04)
 
 - Make `init` optional setup/auth diagnostics; tools work directly after connection, with short server and agent instructions.

@@ -24,6 +24,9 @@ const http = createServer(async (req, res) => {
   const request = JSON.parse(body);
   const encoded = JSON.stringify(request.messages);
   const toolResults = request.messages.filter((m) => m.role === "tool").length;
+  if (encoded.includes("SLOW")) await new Promise((resolve) => setTimeout(resolve, 1500));
+  // Paced replies make intermediate progress observable to a waiting caller.
+  if (encoded.includes("PACED")) await new Promise((resolve) => setTimeout(resolve, 150));
   if (encoded.includes("FAIL503")) {
     res.writeHead(503, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: { message: "service unavailable" } }));
@@ -96,6 +99,26 @@ try {
   assert.ok(full.toolCalls[0].args.length > 121);
   const waited = await host.call("wait", { sessionId: "many", timeoutMs: 250 });
   assert.equal(waited.toolCalls.length, 5, "wait is compact too");
+
+  // 1a. wait until settled returns once, with the result, instead of on every tool call.
+  await host.call("spawn", { cwd: directory, id: "many-settled", prompt: "MANY_CALLS PACED", tools: ["ls"] });
+  const settledOnce = await host.call("wait", { sessionId: "many-settled", until: "settled", timeoutMs: 15000 });
+  assert.equal(settledOnce.state, "done", "one wait call reaches the end");
+  assert.equal(settledOnce.toolCallCount, 7);
+
+  // 1aa. Several sessions: returns when one settles, with its answer; the others stay pending.
+  await host.call("spawn", { cwd: directory, id: "quick", prompt: "plain", tools: [] });
+  await host.call("spawn", { cwd: directory, id: "slow", prompt: "SLOW plain", tools: [] });
+  const first = await host.call("wait", { sessionIds: ["quick", "slow"], timeoutMs: 15000 });
+  assert.deepEqual(first.settled, ["quick"]);
+  assert.deepEqual(first.pending, ["slow"]);
+  assert.equal(first.sessions.find((x) => x.sessionId === "quick").lastText, "OK", "finished ones carry the answer");
+  assert.equal(first.sessions.find((x) => x.sessionId === "slow").lastText, undefined, "running ones do not");
+  const all = await host.call("wait", { sessionIds: ["quick", "slow"], until: "all_settled", timeoutMs: 15000 });
+  assert.deepEqual(all.settled.sort(), ["quick", "slow"]);
+  assert.deepEqual(all.pending, []);
+  await assert.rejects(() => host.call("wait", { sessionId: "quick", sessionIds: ["slow"] }), /exactly one/);
+  await assert.rejects(() => host.call("wait", { sessionIds: ["slow"], until: "progress" }), /settled/);
 
   // 1b. Without durable, a delegate is in memory only.
   assert.equal(host.init.durability.default, false);

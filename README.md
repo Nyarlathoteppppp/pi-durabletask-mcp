@@ -103,7 +103,7 @@ Delegates can also use selected **Pi native MCP servers** with an explicit tool 
 
 ## Key features
 
-- **Keep your agent's context small.** Pi does the reading and searching in its own session and your agent gets the result. Polling is cheap as well: `status` and `wait` return the latest five tool calls and a total (`verbose: true` for the full trace), and `wait` returns as soon as Pi asks a question.
+- **Keep your agent's context small.** Pi does the reading and searching in its own session and your agent gets the result. Polling is cheap as well: `status` and `wait` return the latest five tool calls and a total (`verbose: true` for the full trace), and `wait` returns as soon as Pi asks a question. `wait` can also hold until a delegate finishes, or until any or all of a batch do.
 - **Run several delegates at once.** `spawn_batch` starts a batch in one call, each task with its own model if you like, for example a cheaper model for search or a second vendor's model to review the same change.
 - **Steer and continue.** `steer` redirects running work. `follow_up` continues a finished conversation with everything Pi already read. Turn and time limits are configurable; the time limit applies to each run, so a durable session can be continued days later, while turns count across the session.
 - **Ready for agents on connect.** Tools work right after connecting. `spawn` with a repo path uses your configured model and read-only tools. `init` is there to diagnose models, permissions and provider auth.

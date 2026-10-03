@@ -218,26 +218,112 @@ export async function getState(sessionId: string, verbose?: boolean): Promise<Sn
   return stored(sessionId, verbose) ?? (await resolve(sessionId)).snapshot({ verbose });
 }
 
+/**
+ * progress: a new turn or tool call, as well as everything below. settled: finished or asking a
+ * question, so a caller can wait for the result in one loop. all_settled: with several sessions,
+ * every one of them settled (a question in any still returns at once).
+ */
+export type WaitUntil = "progress" | "settled" | "all_settled";
+
 export interface WaitOptions {
   timeoutMs?: number;
   afterTurns?: number;
   afterToolCalls?: number;
   verbose?: boolean;
+  until?: WaitUntil;
   signal?: AbortSignal;
+}
+
+/** A session being waited on: live in this process, or finished and read from the catalog. */
+type Watched = { id: string; worker?: PiWorker; finished?: Snapshot; turns: number; calls: number };
+
+const settledNow = (w: Watched): boolean =>
+  w.finished !== undefined || TERMINAL.has(w.worker!.state) || w.worker!.questions.size > 0;
+const progressed = (w: Watched): boolean =>
+  settledNow(w) || w.worker!.turns > w.turns || w.worker!.toolCalls.length > w.calls;
+
+async function watch(ids: string[], afterTurns?: number, afterToolCalls?: number): Promise<Watched[]> {
+  return Promise.all(ids.map(async (id) => {
+    // A finished session elsewhere cannot progress; its recorded state is the answer.
+    const finished = stored(id, true);
+    if (finished) return { id, finished, turns: finished.turns, calls: finished.toolCallCount };
+    const worker = await resolve(id);
+    return { id, worker, turns: afterTurns ?? worker.turns, calls: afterToolCalls ?? worker.toolCalls.length };
+  }));
+}
+
+function until(watched: Watched[], mode: WaitUntil, timeoutMs: number, signal?: AbortSignal): Promise<void> {
+  const done = (): boolean => mode === "progress" ? watched.some(progressed)
+    : mode === "settled" ? watched.some(settledNow)
+    : watched.every(settledNow) || watched.some((w) => w.worker !== undefined && w.worker.questions.size > 0);
+  if (done() || signal?.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    let over = false;
+    const finish = (): void => {
+      if (over) return;
+      over = true;
+      clearInterval(poll);
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", finish);
+      resolve();
+    };
+    const poll = setInterval(() => { if (done()) finish(); }, 200);
+    const timeout = setTimeout(finish, timeoutMs);
+    signal?.addEventListener("abort", finish, { once: true });
+  });
 }
 
 export async function waitForState(
   sessionId: string,
-  { timeoutMs = 30_000, afterTurns, afterToolCalls, verbose, signal }: WaitOptions = {},
+  { timeoutMs = 30_000, afterTurns, afterToolCalls, verbose, until: mode = "progress", signal }: WaitOptions = {},
 ): Promise<Snapshot> {
-  // A finished session elsewhere cannot progress; its recorded state is the answer.
-  const finished = stored(sessionId, verbose);
-  if (finished) return finished;
-  const worker = await resolve(sessionId);
-  await waitForProgress(
-    worker, timeoutMs, signal, afterTurns ?? worker.turns, afterToolCalls ?? worker.toolCalls.length,
-  );
-  return worker.snapshot({ verbose });
+  const [watched] = await watch([sessionId], afterTurns, afterToolCalls);
+  if (watched!.finished) return verbose ? watched!.finished : compactSnapshot(watched!.finished);
+  await until([watched!], mode, timeoutMs, signal);
+  return watched!.worker!.snapshot({ verbose });
+}
+
+/** One line per session: enough to decide what to read next, plus the answer once it is done. */
+export interface WaitSummary {
+  sessionId: string;
+  label: string | undefined;
+  state: string;
+  turns: number;
+  toolCallCount: number;
+  pendingQuestions: number;
+  lastText?: string;
+  error?: string;
+  termination?: Snapshot["termination"];
+}
+
+/**
+ * Wait on several sessions at once, for example a spawn_batch fan-out. Returns which are settled,
+ * which are still pending, and a summary of each; finished ones carry their final text.
+ */
+export async function waitForMany(
+  sessionIds: string[],
+  { timeoutMs = 30_000, until: mode = "settled", signal }: Omit<WaitOptions, "afterTurns" | "afterToolCalls" | "verbose"> = {},
+): Promise<{ settled: string[]; pending: string[]; sessions: WaitSummary[] }> {
+  const ids = [...new Set(sessionIds)];
+  const watched = await watch(ids);
+  await until(watched, mode, timeoutMs, signal);
+  const sessions = watched.map((w): WaitSummary => {
+    const s = w.finished ?? w.worker!.snapshot();
+    const done = TERMINAL.has(s.state);
+    return {
+      sessionId: s.sessionId, label: s.label, state: s.state, turns: s.turns, toolCallCount: s.toolCallCount,
+      pendingQuestions: s.questions.length,
+      ...(done ? { lastText: s.lastText } : {}),
+      ...(s.error ? { error: s.error } : {}),
+      ...(s.termination ? { termination: s.termination } : {}),
+    };
+  });
+  const isSettled = (s: WaitSummary): boolean => TERMINAL.has(s.state) || s.pendingQuestions > 0;
+  return {
+    settled: sessions.filter(isSettled).map((s) => s.sessionId),
+    pending: sessions.filter((s) => !isSettled(s)).map((s) => s.sessionId),
+    sessions,
+  };
 }
 
 export async function steerExecution(sessionId: string, text: string) {

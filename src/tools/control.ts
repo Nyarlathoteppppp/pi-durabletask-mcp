@@ -3,7 +3,7 @@ import { z } from "zod";
 import { HISTORY_LIMIT } from "../config.js";
 import {
   cancelExecution, followUp, forgetSession, getState, listSessions, resolveInteraction,
-  steerExecution, waitForState,
+  steerExecution, waitForMany, waitForState,
 } from "../core.js";
 import { json } from "./shared.js";
 
@@ -46,19 +46,34 @@ export function registerControl(server: McpServer): void {
     {
       annotations: { readOnlyHint: true, openWorldHint: false },
       description:
-        "Wait briefly for a background delegate to finish or make observable progress. Returns a " +
-        "fresh status snapshot after a new turn/tool call, pending question, terminal state, or timeout. " +
-        "Pass prior turns/toolCallCount as afterTurns/afterToolCalls. Answer questions before waiting again. " +
-        "Cancelling this wait leaves the delegate running; use `abort` to stop it.",
+        "Wait for delegates without polling in a loop. until: \"progress\" (default) returns after a new " +
+        "turn/tool call, a pending question, the end, or timeout; pass prior turns/toolCallCount as " +
+        "afterTurns/afterToolCalls. until: \"settled\" returns only when it finishes or asks a question, " +
+        "so loop on it to get the result. With sessionIds (e.g. a spawn_batch), returns when any one settles " +
+        "(\"settled\") or all do (\"all_settled\"): settled/pending ids plus a summary per session, with the " +
+        "final text of finished ones; wait again on the pending ids. Answer questions before waiting again. " +
+        "Cancelling this wait leaves delegates running; use `abort` to stop one.",
       inputSchema: {
-        sessionId: z.string(),
+        sessionId: z.string().optional().describe("One session; returns its status snapshot"),
+        sessionIds: z.array(z.string()).min(1).max(50).optional().describe("Several sessions; returns a summary of each"),
+        until: z.enum(["progress", "settled", "all_settled"]).optional()
+          .describe("Default progress for sessionId, settled for sessionIds"),
         timeoutMs: z.number().int().min(250).max(55_000).optional().describe("Default 30000; max 55000"),
         afterTurns: z.number().int().min(0).optional().describe("Prior snapshot's turn count"),
         afterToolCalls: z.number().int().min(0).optional().describe("Prior snapshot's `toolCallCount`"),
         verbose: z.boolean().optional().describe("Include tool results and call ids in the returned trace"),
       },
     },
-    async ({ sessionId, ...options }, extra) => json(await waitForState(sessionId, { ...options, signal: extra.signal })),
+    async ({ sessionId, sessionIds, ...options }, extra) => {
+      if ((sessionId === undefined) === (sessionIds === undefined))
+        throw new Error("Pass exactly one of sessionId or sessionIds.");
+      if (sessionIds) {
+        if (options.until === "progress") throw new Error('With sessionIds, until is "settled" or "all_settled".');
+        const { timeoutMs, until } = options;
+        return json(await waitForMany(sessionIds, { timeoutMs, until, signal: extra.signal }));
+      }
+      return json(await waitForState(sessionId!, { ...options, signal: extra.signal }));
+    },
   );
 
   server.registerTool(

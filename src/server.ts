@@ -10,7 +10,7 @@ export function createServer(): McpServer {
       capabilities: { tools: {} },
       instructions:
         "Delegate to Pi with spawn and an absolute repo cwd. Omit model/tools for the configured model/read-only tools. " +
-        "Use wait with prior turns/toolCallCount as afterTurns/afterToolCalls; answer pending questions. " +
+        "To get a result, loop wait with until:\"settled\"; for a batch, wait with sessionIds. Answer pending questions. " +
         "Steer running work; follow_up finished work while retained. Memory sessions live in this server; " +
         "durable:true saves across restarts. Use models to choose a model; init is optional setup diagnostics. " +
         "Cancelling run stops its delegate; cancelling wait only ends the wait.",
