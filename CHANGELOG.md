@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Match staged nested results by parent relationships, including deeper nesting, without relying on tool-call ID prefixes.
+- Add an isolated checkpoint benchmark using the real DurableJob and SQLite commit path.
+
 ## 0.2.0
 
 - Add independent `nativeMcp` and explicit `mcpServers` selection to single and batch tasks.

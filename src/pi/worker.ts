@@ -283,10 +283,9 @@ export class PiWorker {
   }
 
   private clearResults(parentId: string): void {
+    const nested = nestedResults(this.results, this.toolCalls, parentId);
     delete this.results[parentId];
-    for (const [id, result] of Object.entries(this.results)) {
-      if (result.parentToolCallId && id.startsWith(`${parentId}/`)) delete this.results[id];
-    }
+    for (const [id] of nested) delete this.results[id];
   }
 
   private checkpoint(): Checkpoint {
@@ -676,7 +675,7 @@ export function repairEntries(saved: Checkpoint): FileEntry[] {
     for (const part of message.content) {
       if (part.type !== "toolCall" || answered.has(part.id)) continue;
       const result = saved.results[part.id];
-      const nested = Object.entries(saved.results).filter(([id, value]) => value.parentToolCallId && id.startsWith(`${part.id}/`));
+      const nested = nestedResults(saved.results, saved.snapshot.toolCalls, part.id);
       const unknown = "Interrupted by MCP service restart. Execution outcome is unknown; inspect external state before retrying." +
         (nested.length ? "\nCommitted nested tool results (do not replay the interrupted script):\n" +
           JSON.stringify(nested.map(([id, value]) => ({ id, ...value }))) : "");
@@ -688,6 +687,27 @@ export function repairEntries(saved: Checkpoint): FileEntry[] {
     }
   }
   return [manager.getHeader()!, ...manager.getEntries()];
+}
+
+/** SDK calls can nest again; the trace retains parents whose result is still pending. */
+function nestedResults(results: Checkpoint["results"], calls: Snapshot["toolCalls"], parentId: string) {
+  const children = new Map<string, Set<string>>();
+  const add = (id: string, parent: string): void => {
+    let siblings = children.get(parent);
+    if (!siblings) children.set(parent, siblings = new Set());
+    siblings.add(id);
+  };
+  for (const call of calls) {
+    if ("id" in call && call.id && call.parentToolCallId) add(call.id, call.parentToolCallId);
+  }
+  for (const [id, result] of Object.entries(results)) {
+    if (result.parentToolCallId) add(id, result.parentToolCallId);
+  }
+  const descendants = new Set([parentId]);
+  for (const id of descendants) {
+    for (const child of children.get(id) ?? []) descendants.add(child);
+  }
+  return Object.entries(results).filter(([id]) => id !== parentId && descendants.has(id));
 }
 
 /** Errors reach us as `unknown`; this is the one place that decides how to read them. */

@@ -32,6 +32,7 @@
     "test:ci": "npm test",
     "test": "npm run typecheck && npm run build && node test/offline.mjs",
     "test:live": "npm run build && node test/live.mjs",
+    "bench:checkpoint": "npm run build && node scripts/benchmark-checkpoint.mjs",
     "prepublishOnly": "npm run test:ci"
   },
   "engines": {

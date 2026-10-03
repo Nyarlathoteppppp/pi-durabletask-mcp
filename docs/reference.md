@@ -460,6 +460,7 @@ npm run build       # tsc, src/*.ts -> dist/
 npm run typecheck   # tsc --noEmit, strict
 npm test            # typecheck, build, offline regressions and local-provider integration
 npm run test:ci     # same suite, used by prepublishOnly
+npm run bench:checkpoint # synthetic 0.1/1/5 MiB payloads, real DurableJob + SQLite
 PI_DELEGATE_MODEL=xai/grok-4.7 npm run test:live  # real provider call; consumes quota
 ```
 
@@ -488,6 +489,11 @@ are not part of the offline suite.
 
 GitHub Actions runs the offline suite on Node.js 22 and 24 for pushes and pull requests.
 The workflow does not publish an npm package.
+
+The checkpoint benchmark uses temporary state and makes no model calls. It reports JSON
+clone and end-to-end save median/P95 over 30 commits per size after 3 warmups. Save time
+includes cloning. This is a single-worker synthetic microbenchmark, not a concurrency
+or growing-history benchmark; use it to establish a baseline before changing storage.
 
 Issues and pull requests are welcome. If you are reporting a delegate that misbehaved, the
 `toolCalls` trace from `status` with `verbose: true` is the useful thing to attach.
