@@ -141,7 +141,7 @@ export function registerControl(server: McpServer): void {
       const worker = must(sessionId);
       // Let the worker produce the more useful "use steer" error for a live session.
       if (!worker.isActive) assertCapacity();
-      return json(worker.followUp(prompt));
+      return json(await worker.followUp(prompt));
     },
   );
 
@@ -202,7 +202,7 @@ export function registerControl(server: McpServer): void {
       if (w.isActive)
         throw new Error(`Session ${sessionId} is still ${w.state}. Call abort first.`);
       w.dispose();
-      forget(sessionId);
+      await forget(sessionId);
       return json({ forgotten: sessionId });
     },
   );

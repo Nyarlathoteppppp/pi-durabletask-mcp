@@ -7,7 +7,9 @@ import {
   type AgentSessionEvent,
   type ExtensionUIContext,
   type CreateAgentSessionResult,
+  type FileEntry,
 } from "@earendil-works/pi-coding-agent";
+import { DurableJob, forgetOwnedJob, type Checkpoint } from "../durable.js";
 import { AGENT_DIR } from "../config.js";
 import { secretPathGuard } from "../secrets.js";
 import { createProtectedGrepTool } from "./search.js";
@@ -40,6 +42,7 @@ export interface WorkerOptions {
   extensions?: boolean;
   maxTurns: number;
   maxDurationMs: number;
+  startedAt?: string;
 }
 
 const FINALIZE_PROMPT =
@@ -47,8 +50,8 @@ const FINALIZE_PROMPT =
   "the evidence already collected. Include concrete evidence, uncertainty, blockers, and the next action.";
 
 /**
- * One delegated pi session. Holds the live AgentSession in-process, which is what keeps
- * steering and questions available; a subprocess running `pi -p` can do neither.
+ * One delegated Pi session. The SDK remains live for steering and questions; durable
+ * checkpoints retain the conversation and task progress across process restarts.
  */
 export class PiWorker {
   readonly id: string;
@@ -90,14 +93,25 @@ export class PiWorker {
   /** pi reports provider failures as an assistant message with stopReason "error", not a throw. */
   private providerError: string | undefined;
   private abortPromise: Promise<void> | undefined;
+  private job: DurableJob | undefined;
+  recoveryKey: string | undefined;
+  private journalUnsubscribe: (() => void) | undefined;
+  private suspended = false;
+  private recordingStopped = false;
+  private settling = false;
+  private inputStarted = false;
+  private readonly results: Checkpoint["results"] = {};
+  private steering: string[] = [];
+  private recoveryInput: Checkpoint["recoveryInput"];
+  private options: WorkerOptions;
 
   /** Cancelling a session does not release its concurrency slot until the SDK becomes idle. */
   get isActive(): boolean {
-    return this.state === "starting" || this.state === "running" || this.abortPromise !== undefined;
+    return this.state === "starting" || this.state === "running" || this.abortPromise !== undefined || this.settling;
   }
 
-  private isAborted(): boolean {
-    return this.state === "aborted";
+  private isStopped(): boolean {
+    return this.state === "aborted" || this.suspended;
   }
 
   private clearQuestions(): void {
@@ -115,6 +129,7 @@ export class PiWorker {
     extensions = false,
     maxTurns,
     maxDurationMs,
+    startedAt,
   }: WorkerOptions) {
     this.id = id ?? randomUUID();
     this.label = label;
@@ -125,13 +140,15 @@ export class PiWorker {
     this.extensionsEnabled = extensions;
     this.maxTurns = maxTurns;
     this.maxDurationMs = maxDurationMs;
-    this.startedAt = new Date().toISOString();
+    this.startedAt = startedAt ?? new Date().toISOString();
+    this.options = { id: this.id, label, cwd, model, thinking, tools, extensions, maxTurns, maxDurationMs,
+      startedAt: this.startedAt };
   }
 
   private uiContext(): ExtensionUIContext {
     return createUiContext({
       ask: (kind, title, detail, options) => {
-        if (this.isAborted()) return Promise.resolve(undefined);
+        if (this.isStopped()) return Promise.resolve(undefined);
         const q = new Question(kind, title, detail, options);
         this.questions.set(q.id, q);
         this.onChange?.();
@@ -143,9 +160,9 @@ export class PiWorker {
     });
   }
 
-  async start(prompt: string): Promise<this> {
+  async start(prompt: string, saved?: Checkpoint, key?: string): Promise<this> {
     const model = await resolveModel(this.modelSpec, this.cwd);
-    if (this.isAborted()) return this;
+    if (this.isStopped()) return this;
 
     assertThinkingSupported(model, this.thinkingSpec);
 
@@ -164,20 +181,20 @@ export class PiWorker {
     // Always reload so the inline secret-path guard is installed even when third-party
     // extensions stay off. Failure must not leave the secret guard uninstalled.
     await resourceLoader.reload();
-    if (this.isAborted()) return this;
+    if (this.isStopped()) return this;
 
     const { session } = await createAgentSession({
       cwd: this.cwd,
       modelRuntime: await getRuntime(),
       model,
       thinkingLevel: this.thinkingSpec,
-      sessionManager: SessionManager.inMemory(),
+      sessionManager: SessionManager.inMemory(this.cwd, undefined, saved ? repairEntries(saved) : undefined),
       tools: this.toolNames,
       customTools: this.toolNames.includes("grep") ? [defineTool(createProtectedGrepTool(this.cwd))] : [],
       resourceLoader,
     });
     this.session = session;
-    if (this.isAborted()) {
+    if (this.isStopped()) {
       session.dispose();
       return this;
     }
@@ -187,17 +204,161 @@ export class PiWorker {
 
     this.unsubscribe = session.subscribe((ev) => this.onEvent(ev));
     await session.bindExtensions({ uiContext: this.uiContext(), mode: "rpc" });
-    if (this.isAborted()) return this;
-
-    this.track(session, prompt);
+    if (this.isStopped()) return this;
+    this.options = { ...this.options, model: this.model, thinking: this.thinking };
+    this.job = await DurableJob.open(this.options, prompt, key);
+    if (this.isStopped()) {
+      await this.job.close();
+      session.dispose();
+      return this;
+    }
+    this.journalUnsubscribe = session.agent.subscribe(async (ev) => {
+      if (this.recordingStopped) return;
+      if (ev.type === "message_end" && ev.message.role === "user") {
+        this.inputStarted = true;
+        const text = typeof ev.message.content === "string" ? ev.message.content :
+          ev.message.content.filter((p) => p.type === "text").map((p) => p.text).join("\n");
+        if (text === this.recoveryInput?.text) {
+          this.steering.splice(0, this.recoveryInput.steeringCount);
+          this.recoveryInput = undefined;
+        } else {
+          const index = this.steering.indexOf(text);
+          if (index >= 0) this.steering.splice(index, 1);
+        }
+      }
+      if (ev.type === "tool_execution_end") this.results[ev.toolCallId] = {
+        name: ev.toolName, content: ev.result.content, details: ev.result.details, isError: ev.isError,
+      };
+      if (ev.type === "message_end" && ev.message.role === "toolResult") delete this.results[ev.message.toolCallId];
+      if (["turn_start", "turn_end", "message_end", "tool_execution_start", "tool_execution_end", "agent_end"].includes(ev.type))
+        await this.job!.save(this.checkpoint());
+    });
+    if (saved && !this.job.needsResume) {
+      this.restoreSnapshot(saved);
+    } else await this.beginDurable(prompt, saved, Boolean(key));
     return this;
+  }
+
+  private checkpoint(): Checkpoint {
+    const manager = this.session!.sessionManager;
+    return { phase: "execute", entries: [manager.getHeader()!, ...manager.getEntries()],
+      snapshot: this.snapshot({ verbose: true }), inputStarted: this.inputStarted,
+      results: this.results, steering: this.steering,
+      ...(this.recoveryInput ? { recoveryInput: this.recoveryInput } : {}) };
+  }
+
+  private restoreSnapshot(saved: Checkpoint): void {
+    const snapshot = saved.snapshot;
+    this.state = snapshot.state;
+    this.turns = snapshot.turns;
+    this.lastText = snapshot.lastText;
+    this.error = snapshot.error;
+    this.finishedAt = snapshot.finishedAt;
+    this.termination = snapshot.termination;
+    this.toolCalls.splice(0, this.toolCalls.length, ...snapshot.toolCalls as ToolCall[]);
+    this.notices.splice(0, this.notices.length, ...snapshot.notices);
+    this.inputStarted = saved.inputStarted;
+    Object.assign(this.results, saved.results);
+    // repairEntries may have placed a saved result into the reconstructed transcript.
+    for (const message of this.session!.messages) {
+      if (message.role === "toolResult") delete this.results[message.toolCallId];
+    }
+    this.steering = [...saved.steering];
+    this.recoveryInput = saved.recoveryInput;
+  }
+
+  private async beginDurable(prompt: string, saved?: Checkpoint, recover = false): Promise<void> {
+    if (saved) this.restoreSnapshot(saved);
+    else this.inputStarted = false;
+    const alreadyStopped = recover && saved && !["starting", "running"].includes(saved.snapshot.state);
+    if (!alreadyStopped) {
+      this.state = "running";
+      this.finishedAt = undefined;
+      this.error = undefined;
+      this.termination = undefined;
+    }
+    this.settling = true;
+    const { done } = await this.job!.begin(prompt, this.checkpoint(), async (input, checkpoint, signal) => {
+      const suspend = (): void => {
+        this.suspended = true;
+        if (this.deadlineTimer) clearTimeout(this.deadlineTimer);
+        this.clearQuestions();
+        void this.session!.abort();
+      };
+      signal.addEventListener("abort", suspend, { once: true });
+      try {
+        if (alreadyStopped) return this.checkpoint();
+        if (recover && checkpoint.inputStarted) {
+          const last = this.session!.messages.at(-1);
+          if (last?.role === "assistant" && last.stopReason === "stop" && !this.steering.length) {
+            this.state = "done";
+            this.finishedAt = new Date().toISOString();
+            return this.checkpoint();
+          }
+          for (const call of this.toolCalls.filter((c) => c.state === "running")) {
+            call.state = "error";
+            call.result = "Service interrupted this call; its external effects may have completed. Inspect before retrying.";
+            delete call.startedAt;
+          }
+          this.notices.push({ type: "info", at: new Date().toISOString(), message: "Recovered saved conversation after MCP service restart." });
+          input = this.recoveryInput?.text ?? "The MCP service restarted. Continue the original task from the saved conversation. " +
+            "Do not repeat completed work. Interrupted tools may already have applied external effects; inspect before retrying." +
+            (this.steering.length ? "\nPending steering instructions:\n" + this.steering.join("\n") : "");
+          this.recoveryInput ??= { text: input, steeringCount: this.steering.length };
+        }
+        if (this.turns >= this.maxTurns || this.elapsedMs() >= this.maxDurationMs) {
+          await this.abort(this.turns >= this.maxTurns ? "max_turns" : "deadline");
+        } else await this.track(this.session!, input);
+        if (this.suspended) {
+          // suspend() first drains a checkpoint, then closes the Harness. If the SDK
+          // finishes between those steps, wait for close's cancellation instead of
+          // faulting a task which must remain recoverable.
+          if (!signal.aborted) await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+          signal.throwIfAborted();
+        }
+        return this.checkpoint();
+      } finally { signal.removeEventListener("abort", suspend); }
+    }, recover);
+    this.run = done.then(() => {}).catch((error: unknown) => {
+      if (this.suspended) return;
+      this.state = "error";
+      this.error = message(error);
+      this.finishedAt = new Date().toISOString();
+    }).finally(() => { this.settling = false; this.onChange?.(); });
+  }
+
+  static async recover(options: WorkerOptions, prompt: string, key: string, worker = new PiWorker(options)): Promise<PiWorker> {
+    // Read without scheduling. The journal is closed before start reopens it as executor.
+    const job = await DurableJob.open(options, prompt, key);
+    let saved: Checkpoint | undefined;
+    try { saved = await job.saved(); }
+    finally { await job.close(false); }
+    return worker.start(prompt, saved, key);
+  }
+
+  async suspend(): Promise<void> {
+    this.suspended = true;
+    if (this.deadlineTimer) clearTimeout(this.deadlineTimer);
+    // abort() synchronously signals the agent before waiting for idle. Keep the
+    // journal active while in-flight tools settle, including successful results.
+    this.clearQuestions();
+    await this.session?.abort();
+    if (this.job && this.session) await this.job.save(this.checkpoint());
+    this.recordingStopped = true;
+    await this.job?.close();
+    this.dispose();
+  }
+
+  async forgetPersistent(): Promise<void> {
+    if (this.job) await this.job.forget();
+    else if (this.recoveryKey) forgetOwnedJob(this.recoveryKey);
   }
 
   /**
    * Drive one prompt to completion and fold the outcome back into this worker. Shared by
    * `start` and `followUp` so a second turn behaves exactly like the first.
    */
-  private track(session: AgentSession, prompt: string): void {
+  private track(session: AgentSession, prompt: string): Promise<void> {
     this.state = "running";
     this.error = undefined;
     this.lastText = "";
@@ -211,18 +372,18 @@ export class PiWorker {
     this.deadlineTimer = setTimeout(() => {
       void this.abort("deadline", { limit: this.maxDurationMs, observed: this.elapsedMs() });
     }, remainingMs);
-    this.run = session
+    const run = session
       .prompt(prompt)
       .then(() => session.waitForIdle())
       .then(() => {
-        if (this.state === "aborted") return;
+        if (this.state === "aborted" || this.suspended) return;
         if (this.providerError !== undefined) {
           this.state = "error";
           this.error = this.providerError;
         } else this.state = "done";
       })
       .catch((e: unknown) => {
-        if (this.state !== "aborted") {
+        if (this.state !== "aborted" && !this.suspended) {
           this.state = "error";
           this.error = message(e);
         }
@@ -230,19 +391,21 @@ export class PiWorker {
       .finally(() => {
         if (this.deadlineTimer) clearTimeout(this.deadlineTimer);
         this.deadlineTimer = undefined;
-        this.finishedAt = new Date().toISOString();
+        if (!this.suspended) this.finishedAt = new Date().toISOString();
         // Unblock anything still waiting on an answer that will now never come.
         this.clearQuestions();
         this.onChange?.();
       });
+    if (!this.job) this.run = run;
+    return run;
   }
 
   /**
    * Send another prompt to a delegate that has already finished. pi keeps the session's
-   * history in memory, so the delegate still remembers everything it read and said. This
+   * history in durable checkpoints, so the delegate still remembers everything it read and said. This
    * is the difference between a conversation and re-explaining yourself to a fresh agent.
    */
-  followUp(prompt: string): { sessionId: string; state: SessionState; turnsSoFar: number } {
+  followUp(prompt: string): { sessionId: string; state: SessionState; turnsSoFar: number } | Promise<{ sessionId: string; state: SessionState; turnsSoFar: number }> {
     if (!this.session) throw new Error(`Session ${this.id} never started, nothing to follow up on.`);
     if (this.isActive)
       throw new Error(
@@ -258,7 +421,14 @@ export class PiWorker {
         `Session ${this.id} already reached its ${this.maxDurationMs}ms deadline. Spawn a new delegate instead of follow_up.`,
       );
     }
-    this.track(this.session, prompt);
+    if (this.job) {
+      this.state = "starting";
+      return this.beginDurable(prompt).then(() => {
+        this.onChange?.();
+        return { sessionId: this.id, state: this.state, turnsSoFar: this.turns };
+      });
+    }
+    void this.track(this.session, prompt);
     this.onChange?.();
     return { sessionId: this.id, state: this.state, turnsSoFar: this.turns };
   }
@@ -274,7 +444,7 @@ export class PiWorker {
       case "turn_end": {
         // A tool-free turn is normally the final answer. Budget only an agent that is
         // continuing the tool loop, so a conclusion at the limit is not thrown away.
-        if (this.state !== "running" || ev.toolResults.length === 0) break;
+        if (this.state !== "running" || this.suspended || ev.toolResults.length === 0) break;
         if (this.turns >= this.maxTurns) {
           void this.abort("max_turns", { limit: this.maxTurns, observed: this.turns });
           break;
@@ -364,9 +534,11 @@ export class PiWorker {
   }
 
   async steer(text: string): Promise<{ steered: true; queued: number }> {
-    if (this.state !== "running" || !this.session)
+    if (this.state !== "running" || !this.session || this.isStopped())
       throw new Error(`Session ${this.id} is ${this.state}, cannot steer`);
     await this.session.steer(text);
+    this.steering = [...this.session.getSteeringMessages()];
+    await this.job?.save(this.checkpoint());
     return { steered: true, queued: this.session.getSteeringMessages().length };
   }
 
@@ -385,6 +557,7 @@ export class PiWorker {
     // Extension dialogs do not automatically observe the agent's abort signal.
     this.clearQuestions();
     this.onChange?.();
+    if (this.job) await this.job.save(this.checkpoint());
     this.abortPromise ??= (async () => {
       await this.session?.abort().catch(NOOP);
     })().finally(() => {
@@ -398,6 +571,7 @@ export class PiWorker {
   dispose(): void {
     if (this.deadlineTimer) clearTimeout(this.deadlineTimer);
     this.unsubscribe?.();
+    this.journalUnsubscribe?.();
     this.session?.dispose?.();
   }
 
@@ -430,6 +604,26 @@ export class PiWorker {
       termination: this.termination,
     };
   }
+}
+
+/** Match committed results to calls; never blindly replay an interrupted side effect. */
+export function repairEntries(saved: Checkpoint): FileEntry[] {
+  const manager = SessionManager.inMemory(saved.snapshot.cwd, undefined, saved.entries);
+  const messages = manager.buildSessionContext().messages;
+  const answered = new Set(messages.filter((m) => m.role === "toolResult").map((m) => m.toolCallId));
+  for (const message of messages) {
+    if (message.role !== "assistant") continue;
+    for (const part of message.content) {
+      if (part.type !== "toolCall" || answered.has(part.id)) continue;
+      const result = saved.results[part.id];
+      manager.appendMessage({ role: "toolResult", toolCallId: part.id, toolName: part.name,
+        content: result ? result.content as never : [{ type: "text", text:
+          "Interrupted by MCP service restart. Execution outcome is unknown; inspect external state before retrying." }],
+        details: result?.details as never, isError: result?.isError ?? true, timestamp: Date.now() });
+      answered.add(part.id);
+    }
+  }
+  return [manager.getHeader()!, ...manager.getEntries()];
 }
 
 /** Errors reach us as `unknown`; this is the one place that decides how to read them. */

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { abortAll } from "./registry.js";
+import { recoverAbandoned, suspendAll } from "./registry.js";
 import { createServer } from "./server.js";
 import { cleanup } from "./statusline/state.js";
 
@@ -21,7 +21,7 @@ async function shutdown(): Promise<void> {
   if (stopping) return;
   stopping = true;
   await Promise.race([
-    abortAll(),
+    suspendAll(),
     new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
   ]).catch(() => {});
   process.exit(0);
@@ -42,4 +42,5 @@ setInterval(() => {
   }
 }, HOST_WATCH_MS).unref();
 
+await recoverAbandoned();
 await createServer().connect(new StdioServerTransport());

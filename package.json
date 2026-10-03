@@ -1,9 +1,10 @@
 {
-  "name": "pi-delegate-mcp",
+  "name": "pi-durabletask-mcp",
   "version": "0.1.0",
-  "description": "MCP server exposing the pi coding agent as a delegable, steerable worker",
+  "description": "Durable Pi Coding Agent tasks over MCP with background execution, steering, and crash recovery",
   "type": "module",
   "bin": {
+    "pi-durabletask-mcp": "dist/index.js",
     "pi-delegate-mcp": "dist/index.js",
     "pi-delegate-statusline": "dist/statusline/cli.js"
   },
@@ -18,10 +19,13 @@
     "dist",
     "!dist/**/*.map",
     "README.md",
+    "scripts/link-pi-sdk.mjs",
     "LICENSE"
   ],
   "scripts": {
     "build": "tsc",
+    "postinstall": "node scripts/link-pi-sdk.mjs",
+    "sdk:link": "node scripts/link-pi-sdk.mjs",
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit",
     "test:ci": "npm test",
@@ -32,15 +36,15 @@
   "engines": {
     "node": ">=22.19.0"
   },
-  "author": "howznguyen <howznguyen@knowns.dev>",
+  "author": "Nyarlathoteppppp",
   "license": "MIT",
-  "homepage": "https://github.com/howznguyen/pi-delegate-mcp#readme",
+  "homepage": "https://github.com/Nyarlathoteppppp/pi-durabletask-mcp#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/howznguyen/pi-delegate-mcp.git"
+    "url": "git+https://github.com/Nyarlathoteppppp/pi-durabletask-mcp.git"
   },
   "bugs": {
-    "url": "https://github.com/howznguyen/pi-delegate-mcp/issues"
+    "url": "https://github.com/Nyarlathoteppppp/pi-durabletask-mcp/issues"
   },
   "keywords": [
     "mcp",
@@ -59,7 +63,9 @@
     "codex"
   ],
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "^0.85.1",
+    "@earendil-works/chord": "1.0.0",
+    "@earendil-works/pi-coding-agent": "1.0.0",
+    "@earendil-works/pi-durable": "1.0.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "zod": "^4.4.3"
   },
@@ -67,5 +73,8 @@
   "devDependencies": {
     "@types/node": "^26.3.0",
     "typescript": "^7.0.2"
-  }
+  },
+  "contributors": [
+    "howznguyen <howznguyen@knowns.dev>"
+  ]
 }

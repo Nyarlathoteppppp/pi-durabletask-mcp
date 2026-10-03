@@ -10,11 +10,13 @@ import { PiWorker } from "./pi/worker.js";
 import { resolveDelegateCwd } from "./workspace.js";
 import type { PiThinkingLevel, TerminationReason } from "./types.js";
 import { publish } from "./statusline/state.js";
+import { claimAbandoned } from "./durable.js";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
 
 /** Live and finished delegates, newest last. Finished ones stay readable until evicted. */
 const sessions = new Map<string, PiWorker>();
+let shuttingDown = false;
 
 export const all = (): PiWorker[] => [...sessions.values()];
 export const count = (): number => sessions.size;
@@ -22,6 +24,7 @@ export const activeCount = (): number =>
   all().filter((worker) => worker.isActive).length;
 
 export function assertCapacity(additional = 1): void {
+  if (shuttingDown) throw new Error("MCP server is shutting down; reconnect before starting work.");
   const active = activeCount();
   if (active + additional > MAX_CONCURRENT)
     throw new Error(
@@ -52,8 +55,52 @@ export function must(id: string): PiWorker {
   return w;
 }
 
-export function forget(id: string): void {
+export async function forget(id: string): Promise<void> {
+  const worker = sessions.get(id);
   sessions.delete(id);
+  await worker?.forgetPersistent();
+}
+
+let recovering: Promise<void> | undefined;
+/** Called by init and when work settles; only abandoned stores can change owners. */
+export async function recoverAbandoned(): Promise<void> {
+  if (shuttingDown) return;
+  if (recovering) return recovering;
+  recovering = (async () => {
+    while (!shuttingDown && activeCount() < MAX_CONCURRENT) {
+      const records = claimAbandoned(new Set(sessions.keys()), Math.max(0, MAX_CONCURRENT - activeCount()));
+      if (!records.length) break;
+      // Reserve the entire claim before awaiting model/runtime initialization.
+      const claimed = records.map((record) => {
+        const worker = new PiWorker(record.options);
+        worker.recoveryKey = record.key;
+        sessions.set(worker.id, worker);
+        worker.onChange = () => publish(all());
+        return { record, worker };
+      });
+      for (const { record, worker } of claimed) {
+        try {
+          pickTools(record.options.tools);
+          await resolveDelegateCwd(record.options.cwd);
+          await PiWorker.recover(record.options, record.prompt, record.key, worker);
+          void worker.run?.then(() => { evictHistory(); setImmediate(() => void recoverAbandoned()); });
+        } catch (error) {
+          worker.state = "error";
+          worker.error = `Recovery failed: ${String(error)}`;
+          worker.finishedAt = new Date().toISOString();
+          process.stderr.write(`[pi-delegate] recovery failed for ${record.options.id}: ${String(error)}\n`);
+        }
+      }
+    }
+    evictHistory();
+    publish(all());
+  })().finally(() => { recovering = undefined; });
+  return recovering;
+}
+
+export async function suspendAll(): Promise<void> {
+  shuttingDown = true;
+  await Promise.all(all().map((worker) => worker.suspend()));
 }
 
 /** Stop every live delegate before the MCP server exits. */
@@ -67,12 +114,12 @@ export async function abortAll(reason: TerminationReason = "server_shutdown"): P
 
 /** Drop the oldest finished sessions once history is over budget. Running ones are safe. */
 export function evictHistory(): void {
-  const done = all().filter((w) => !w.isActive);
+  const done = all().filter((w) => !w.isActive).sort((a, b) => a.startedAt.localeCompare(b.startedAt));
   while (sessions.size > HISTORY_LIMIT && done.length) {
     const oldest = done.shift();
     if (!oldest) break;
     oldest.dispose();
-    sessions.delete(oldest.id);
+    void forget(oldest.id).catch((error) => process.stderr.write(`[pi-delegate] forget failed: ${String(error)}\n`));
   }
 }
 
@@ -114,10 +161,12 @@ async function startWorker(worker: PiWorker, prompt: string): Promise<PiWorker> 
     // A session that never started must not occupy its id.
     worker.dispose();
     sessions.delete(worker.id);
+    await worker.forgetPersistent();
     publish(all());
     throw e;
   }
   evictHistory();
+  void worker.run?.then(() => setImmediate(() => void recoverAbandoned()));
   publish(all());
   return worker;
 }

@@ -1,80 +1,17 @@
-```
-██████╗ ██╗    ██████╗ ███████╗██╗     ███████╗ ██████╗  █████╗ ████████╗███████╗
-██╔══██╗██║    ██╔══██╗██╔════╝██║     ██╔════╝██╔════╝ ██╔══██╗╚══██╔══╝██╔════╝
-██████╔╝██║    ██║  ██║█████╗  ██║     █████╗  ██║  ███╗███████║   ██║   █████╗
-██╔═══╝ ██║    ██║  ██║██╔══╝  ██║     ██╔══╝  ██║   ██║██╔══██║   ██║   ██╔══╝
-██║     ██║    ██████╔╝███████╗███████╗███████╗╚██████╔╝██║  ██║   ██║   ███████╗
-╚═╝     ╚═╝    ╚═════╝ ╚══════╝╚══════╝╚══════╝ ╚═════╝ ╚═╝  ╚═╝   ╚═╝   ╚══════╝
-                            ███╗   ███╗ ██████╗██████╗
-                            ████╗ ████║██╔════╝██╔══██╗
-                            ██╔████╔██║██║     ██████╔╝
-                            ██║╚██╔╝██║██║     ██╔═══╝
-                            ██║ ╚═╝ ██║╚██████╗██║
-                            ╚═╝     ╚═╝ ╚═════╝╚═╝
-```
+# pi-durabletask-mcp
 
-[![npm](https://img.shields.io/npm/v/pi-delegate-mcp.svg)](https://www.npmjs.com/package/pi-delegate-mcp)
-[![node](https://img.shields.io/node/v/pi-delegate-mcp.svg)](https://nodejs.org)
-[![license](https://img.shields.io/npm/l/pi-delegate-mcp.svg)](./LICENSE)
+Durable background tasks for [Pi Coding Agent](https://pi.dev), exposed over MCP to
+Claude Code, Codex, and other MCP clients.
 
-MCP server that exposes the [pi](https://pi.dev) coding agent as a **delegable, steerable** worker.
+- Delegate work in the background, inspect progress, steer it, and send follow-up prompts.
+- Save conversations, task state, tool results, and pending steering instructions in SQLite.
+- Recover abandoned tasks after a bridge restart; retain completed history and follow-ups.
+- Share the SDK from the global Pi installation, so new bridge processes follow Pi updates.
+- Keep the existing model selection, tool permissions, extension support, and status line.
 
-Point Claude Code (or any MCP host) at it and delegate work to any of pi's ~38 providers
-(DeepSeek, Grok, GLM, Kimi, Qwen, Codex, OpenRouter, local llama.cpp) with the sub-agent's
-context staying out of your main conversation.
-
-## What it's for
-
-Your main harness runs on an expensive model, with a context window you care about. A lot of what
-it does doesn't need that model, and actively damages that context: grepping a repo for every
-call site, reading a 2000-line file to answer one question, auditing what a refactor left behind.
-
-Hand that work to a delegate instead:
-
-- **Cost.** The grunt work runs on DeepSeek, GLM, Kimi, Qwen, or a local llama.cpp. You pay
-  frontier prices only for the reasoning that actually needs them.
-- **Context.** The delegate reads the files on its own budget and returns a result. The 200 KB it
-  read never enters your conversation.
-- **Blast radius.** Delegates are read-only by default (`read, grep, find, ls`), enforced at
-  session construction. A cheap model doing exploratory work cannot touch your tree unless you
-  opt it in.
-
-The delegate is always the pi agent. Codex, Grok, DeepSeek and the rest supply the _model_ behind
-it; this is not a wrapper around their CLIs.
-
-## Why pi, and not opencode or a CLI wrapper?
-
-A delegate is only steerable if two channels stay open: you must be able to redirect it mid-task,
-and it must be able to ask you something and block until you answer. Most ways of driving a coding
-agent from another program close both.
-
-|                             | `pi -p` / CLI wrappers | opencode SDK                         | this server                |
-| --------------------------- | ---------------------- | ------------------------------------ | -------------------------- |
-| Runs in-process             | no (subprocess)        | no (HTTP client to `opencode serve`) | yes (`createAgentSession`) |
-| Redirect a running turn     | no                     | `abort` only                         | `steer`                    |
-| Agent can ask you something | no (`ctx.hasUI` false) | not in the session API               | `status` → `answer` \*      |
-| Model per call              | no                     | yes                                  | `model` argument           |
-| Thinking per call           | no                     | provider-specific                    | `thinking` argument        |
-
-`pi -p` and `--mode json` set `ctx.hasUI = false`. A delegate started that way is fire-and-forget
-by construction: it cannot raise a question, and you cannot redirect it.
-
-opencode's SDK is a typed client for a **separate server process**: `createOpencode()` boots
-`opencode serve` and talks HTTP to it. Clean design, but it means a second process to supervise,
-and the session surface it exposes (`prompt`, `abort`, `revert`, `messages`) has no mid-turn
-steering and no path for the agent to ask the caller anything.
-
-pi ships `createAgentSession` as an embeddable library. This server holds the session object
-in-process, so `session.steer()` can land a message after the current tool call and before the
-next model call, and a synthetic `uiContext` catches the agent's questions and parks them for
-`answer`. Nothing is shelled out; nothing has to be supervised.
-
-\* Questions come from pi extensions, so that channel is open only for delegates spawned with
-`extensions: true`. See [Web search and other extension tools](#web-search-and-other-extension-tools).
-
-(The table compares the _delegation channel_, not sandboxing; opencode has its own permission
-config. See [Read-only by default](#read-only-by-default) for what this server does and does not
-enforce.)
+Based on [howznguyen/pi-delegate-mcp](https://github.com/howznguyen/pi-delegate-mcp).
+The MCP tool names and `PI_DELEGATE_*` settings are retained. The original
+`pi-delegate-mcp` binary name remains available alongside `pi-durabletask-mcp`.
 
 ## Tools
 
@@ -96,49 +33,60 @@ enforce.)
 
 ## Install
 
-Requires Node.js 22.19+ and a working [pi](https://pi.dev) install that has been logged in once
-(`pi`, then `/login`).
+Requires Node.js 22.19+ and a globally installed Pi Coding Agent. The initial tested
+SDK and durable versions are 1.0.0. Install Pi before the bridge so the install hook
+can link its SDK:
+
+```bash
+npm install -g @earendil-works/pi-coding-agent@1.0.0
+pi  # configure your provider or use /login
+
+git clone https://github.com/Nyarlathoteppppp/pi-durabletask-mcp.git
+cd pi-durabletask-mcp
+npm ci
+npm run build
+```
+
+This project is installed from GitHub. Use the absolute path to the built server;
+replace `/absolute/path/pi-durabletask-mcp` in the examples with your checkout.
 
 ### Claude Code
 
 ```bash
-claude mcp add pi -e PI_DELEGATE_MODEL=openrouter/stealth/ox-alpha -- npx -y pi-delegate-mcp
+claude mcp add --scope user pi -- node /absolute/path/pi-durabletask-mcp/dist/index.js
 ```
 
-### Any MCP host, via `.mcp.json`
+If you already have a server named `pi`, update that entry to this server and preserve
+its environment settings. Reconnect it through `/mcp`, or start a new Claude session.
+
+### Codex
+
+Add to your Codex MCP configuration:
+
+```toml
+[mcp_servers.pi]
+command = "node"
+args = ["/absolute/path/pi-durabletask-mcp/dist/index.js"]
+```
+
+### Other MCP clients
 
 ```json
 {
   "mcpServers": {
     "pi": {
-      "command": "npx",
-      "args": ["-y", "pi-delegate-mcp"],
-      "env": { "PI_DELEGATE_MODEL": "openrouter/stealth/ox-alpha" },
-      "timeout": 1800000
+      "type": "stdio",
+      "command": "node",
+      "args": ["/absolute/path/pi-durabletask-mcp/dist/index.js"]
     }
   }
 }
 ```
 
-`npx` resolves the package on every launch. To pin it, install globally and call the binary
-directly:
-
-```bash
-npm install -g pi-delegate-mcp
-```
-
-```json
-{ "mcpServers": { "pi": { "command": "pi-delegate-mcp", "timeout": 1800000 } } }
-```
-
-Keep the server key short, since it prefixes every tool name (`mcp__pi__spawn`).
-
-### From source
-
-```bash
-git clone https://github.com/howznguyen/pi-delegate-mcp && cd pi-delegate-mcp
-npm install && npm run build && npm link
-```
+The server uses Pi's configured default model unless `PI_DELEGATE_MODEL` or the call's
+`model` selects another one. If your client launches without a Node.js `PATH`, use the
+absolute path to `node` in its `command`. Keep the server key short because it prefixes
+tool names, for example `mcp__pi__spawn`.
 
 ## First run
 
@@ -203,7 +151,7 @@ dropped length recorded, so one `read` of a large file cannot flood your context
 
 ## Giving a delegate another turn
 
-A finished delegate is not spent. pi keeps its session in memory, so `follow_up` re-prompts
+A finished delegate is not spent. Pi keeps its session in durable checkpoints, so `follow_up` re-prompts
 the same agent with everything it already read still in context:
 
 ```json
@@ -296,7 +244,7 @@ has a broad catalog but the MCP host should only route delegates to a small appr
 
 ```json
 "env": {
-  "PI_DELEGATE_MODEL_ALLOWLIST": "litellm-local/deepseek-flash,litellm-local/or-gpt-5.6-luna"
+  "PI_DELEGATE_MODEL_ALLOWLIST": "your-provider/model-a,your-provider/model-b"
 }
 ```
 
@@ -378,6 +326,67 @@ on its list. Refusing those two while allowing `bash` records your intent; it do
 anything. Claude Code's permission prompts and hooks never see what pi does. If you need a real
 boundary, run this server inside a container.
 
+## Recovery after a server restart
+
+### SDK updates on this machine
+
+The install hook links the bridge's SDK dependency to the globally installed Pi package
+from `npm root -g`. `pi update --all` therefore updates the SDK a new bridge process will
+load, without a separate bridge SDK update. Reconnect the MCP server after updating;
+already running Node processes must not hot-swap their loaded modules. `init.pi.sdkVersion`
+and `init.pi.sdkPath` report the code actually loaded. `npm run sdk:link` restores the link
+if an install was run with lifecycle scripts disabled. Install global Pi before the bridge.
+
+`@earendil-works/pi-durable` remains an independent package; it is not updated by the Pi CLI.
+After updating global Pi, run `npm test` in the bridge checkout, then reconnect the MCP
+process. This checks the awaited event-callback contract used by the tool execution barriers.
+`@earendil-works/pi-durable` stays pinned separately in `package.json`.
+
+### Task recovery
+
+The bridge uses Pi 1.0's `@earendil-works/pi-durable` with a custom SDK task. It preserves
+the existing AgentSession model configuration, extensions, tools, and secret-path guard.
+Each significant agent event commits one atomic checkpoint containing the full SDK session
+entries, worker status, completed tool results, and queued steering instructions.
+The tool-start checkpoint is committed before the SDK executes the tool.
+Completed results are held separately only until their `toolResult` message is saved;
+the same commit then removes the temporary copy. A Session document tracks the current
+task ID, committed atomically with each initial/follow-up task creation. Existing stores
+without that pointer are migrated once by selecting their latest task.
+
+State is stored under `PI_DELEGATE_STATE_DIR/durable/` (by default
+`~/.local/state/pi-delegate-mcp/durable/`). It contains conversation and tool output data.
+Directories are private and SQLite files are mode 600. Each delegate has its own SQLite
+store; a shared catalog uses conditional ownership updates so only one MCP process can
+claim an abandoned store. Stores whose owning process is still alive are not claimed.
+Recovery is local to this machine and Pi agent directory.
+
+New server processes automatically recover abandoned delegates. `init` also checks for
+abandoned work. Original session IDs, history, model selection, turn budgets, and start
+times are retained; downtime counts toward the original wall-clock deadline. Additional
+abandoned tasks are recovered as concurrency slots become available. Use `sessions`,
+`status`, and `follow_up` as usual. `forget` and history eviction remove persisted records.
+
+Shutdown signals the SDK first, records in-flight tool completions until it becomes idle,
+then saves the final checkpoint and closes storage. Recovery steering is retained until
+its user message and queue removal are committed together, including a second crash
+before that message is admitted. Explicit `abort` and caller cancellation remain terminal across
+restart. Already committed tool results are reused. If a crash happens after a tool effect
+but before its result is committed, recovery inserts an unknown-outcome error instead of
+automatically replaying the call, and asks Pi to inspect external state before retrying.
+This is not an exactly-once guarantee for external effects. In-flight model streams restart
+from committed history, and extension dialogs interrupted by restart may need to be asked
+again; arbitrary extension timers and private runtime state are not restored.
+
+Sessions created by an older bridge process before this feature are not recoverable.
+Reconnect the MCP server to load the new build. Normal terminal Pi sessions are unaffected.
+
+`npm test` includes local fake-provider tests that kill the bridge with SIGKILL, restart
+it, and verify committed results, interrupted effects, concurrent claimers, live owners,
+queued steering, graceful shutdown, terminal aborts, deadlines, persistent forget, and follow-up.
+They also cover running/completed follow-up restarts, a second crash before steering
+admission, successful tool results during pause, and the awaited tool-start callback contract.
+
 ## Web search and other extension tools
 
 pi's own tools are `read`, `grep`, `find`, `ls`, `bash`, `powershell`, `write`, `edit`. There is no
@@ -405,9 +414,12 @@ and nothing else, and it passes through the same allowlist as every other tool, 
 default is unchanged for calls that do not ask for it.
 
 Which tools exist depends on what the user running the server has installed. `pi-web-access` provides
-`web_search`, `fetch_content`, `source_check` and `get_search_content`. `pi-mcp-adapter` bridges the
-MCP servers in `~/.pi/agent/mcp.json` and exposes them as `mcp`. pi has no MCP client of its own, so
-that extension is the only route to one.
+`web_search`, `fetch_content`, `source_check` and `get_search_content`. `pi-mcp-adapter` can expose configured MCP servers through an installed extension.
+Pi 1.0 also has built-in MCP support in its CLI. SDK sessions require explicit
+`createMcpExtension()`, `createCodemodeExtension()`, and `createToolSearchExtension()`
+resource-loader factories; this bridge currently loads installed extensions when requested
+and does not add those native MCP factories. Native downstream MCP support is separate
+from this server's MCP transport to Claude Code or Codex.
 
 **`extensions: true` trusts every installed extension, not just the one you wanted.** They load as a
 set, they run with the full privileges of this server's process, and some open sockets and timers
@@ -435,7 +447,7 @@ on by default. It also costs real startup time, which is why it is off unless as
 | `PI_DELEGATE_SPAWN_TURNS`     | `30`             | Default turn budget for `spawn` and `spawn_batch`                        |
 | `PI_DELEGATE_SPAWN_DURATION_MS` | `600000`       | Default deadline for `spawn` and `spawn_batch`                           |
 | `PI_DELEGATE_LIST_CAP`        | `60`             | Above this, `init` summarises models by provider instead of listing them |
-| `PI_DELEGATE_STATE_DIR`       | XDG state dir    | Where status-line state is published                                     |
+| `PI_DELEGATE_STATE_DIR`       | XDG state dir    | Status-line state and durable task storage                               |
 | `PI_DELEGATE_STATUSLINE_WRAP` | unset            | Status line command to wrap and append to                                |
 | `PI_DELEGATE_STATUSLINE_LOG`  | unset            | File to append a timestamp to on every status line render, for debugging |
 | `PI_DELEGATE_PROGRESS_MS`     | `15000`          | Progress notification interval during `run`                              |
@@ -483,6 +495,9 @@ PI_DELEGATE_MODEL=xai/grok-4.7 npm run test:live  # real provider call; consumes
 need no account credentials and make no external model calls. The suite covers concurrent
 reservations, duplicate IDs, cancellation during questions, complete replies, tool selection,
 recursive secret exclusion, status publication, and actual MCP-to-Pi SDK session calls.
+Recovery tests cover follow-ups interrupted or completed before restart, a second crash
+before steering reaches the transcript, tool results completed during suspension, and the
+awaited checkpoint barrier before tool execution.
 
 `test:live` is a separate opt-in smoke test. Set `PI_DELEGATE_MODEL` to the exact registered
 provider/model to test. It makes one tool-free completion and requires usable Pi credentials.
@@ -493,23 +508,17 @@ are not part of the offline suite.
 | -------------------- | ---------------------------------------------------- |
 | `src/config.ts`      | Every environment variable, read in one place         |
 | `src/permissions.ts` | The tool allowlist and the gate that enforces it      |
-| `src/registry.ts`    | Session map, id claiming, history eviction            |
+| `src/registry.ts`    | Session map, id claiming, history eviction, recovery  |
+| `src/durable.ts`     | Durable task checkpoints, current task, process ownership |
 | `src/tools/`         | One module per group of MCP tools                     |
 | `src/pi/`            | Everything that touches the pi SDK                    |
 | `src/statusline/`    | State file publishing and the status line binary      |
 
-Releases are tag-driven. `npm version patch && git push --follow-tags` runs the build and tests,
-then publishes over OIDC trusted publishing, so no npm token is stored anywhere in the repository.
+GitHub Actions runs the offline suite on Node.js 22 and 24 for pushes and pull requests.
+The workflow does not publish an npm package.
 
 Issues and pull requests are welcome. If you are reporting a delegate that misbehaved, the
 `toolCalls` trace from `status` with `verbose: true` is the useful thing to attach.
-
-## Prior art
-
-[`abatilo/pi-mcp-bridge`](https://github.com/abatilo/pi-mcp-bridge) takes the simpler route:
-spawn `pi --mode json -p --session-id <uuid>` and let pi persist sessions on disk, so the bridge
-holds no state at all. Elegant, and worth reading. It trades away steering, questions, and tool
-control to get there.
 
 ## License
 

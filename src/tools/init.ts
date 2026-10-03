@@ -20,6 +20,9 @@ import {
 import { PERMITTED, READ_ONLY_TOOLS } from "../permissions.js";
 import { modelScope, preflight, scopedModels } from "../pi/models.js";
 import { json, markInitialised } from "./shared.js";
+import { recoverAbandoned } from "../registry.js";
+import { DURABLE_DIR } from "../durable.js";
+import { VERSION as PI_SDK_VERSION, getPackageDir } from "@earendil-works/pi-coding-agent";
 
 export function registerInit(server: McpServer): void {
   server.registerTool(
@@ -41,6 +44,7 @@ export function registerInit(server: McpServer): void {
       // Throws if pi is missing, unauthenticated, or scoped down to nothing. The gate stays
       // shut in that case, so the other tools remain closed rather than half-working.
       const health = await preflight(cwd);
+      await recoverAbandoned();
       markInitialised();
       const scope = modelScope(cwd);
       const all = (await scopedModels(cwd)).map((m) => m.ref);
@@ -59,7 +63,9 @@ export function registerInit(server: McpServer): void {
       return json({
         // Deliberately does not report pi's total authenticated model count. Advertising 396
         // models when 15 are in scope invites the caller to pick one that is a hard error.
-        pi: { ok: true, usableModels: health.usable.length },
+        pi: { ok: true, usableModels: health.usable.length, sdkVersion: PI_SDK_VERSION, sdkPath: getPackageDir() },
+        durability: { enabled: true, storage: DURABLE_DIR,
+          recovery: "init resumes abandoned tasks from saved history. Completed tool calls are retained; interrupted calls get an unknown-outcome error and are not automatically replayed. Original deadlines and turn budgets still apply." },
         what:
           "pi-delegate-mcp hands a task to the pi coding agent. The delegate reads files and reasons " +
           "on its own budget, then returns a result. Its context never enters yours.",
