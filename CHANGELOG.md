@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
+
+- Initialize Pi HTTP networking in SDK hosts and test compressed TLS responses.
+- Cover retention timestamp changes between scanning and acquiring ownership.
 
 - Match staged nested results by parent relationships, including deeper nesting, without relying on tool-call ID prefixes.
 - Add an isolated checkpoint benchmark using the real DurableJob and SQLite commit path.
