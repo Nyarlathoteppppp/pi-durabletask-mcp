@@ -11,6 +11,7 @@ import { resolveDelegateCwd } from "./workspace.js";
 import type { PiThinkingLevel, TerminationReason } from "./types.js";
 import { publish } from "./statusline/state.js";
 import { claimAbandoned } from "./durable.js";
+import { validateNativeMcp, type NativeMcpOptions } from "./pi/native-mcp.js";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
 
@@ -123,7 +124,7 @@ export function evictHistory(): void {
   }
 }
 
-export interface LaunchRequest {
+export interface LaunchRequest extends NativeMcpOptions {
   prompt: string;
   model?: string | undefined;
   thinking?: PiThinkingLevel | undefined;
@@ -137,7 +138,9 @@ export interface LaunchRequest {
 }
 
 async function prepare(req: LaunchRequest): Promise<LaunchRequest & { cwd: string; tools: string[] }> {
-  return { ...req, cwd: await resolveDelegateCwd(req.cwd), tools: pickTools(req.tools) };
+  const cwd = await resolveDelegateCwd(req.cwd);
+  validateNativeMcp(req, cwd);
+  return { ...req, cwd, tools: pickTools(req.tools) };
 }
 
 function makeWorker(req: LaunchRequest & { cwd: string; tools: string[] }): PiWorker {
@@ -149,6 +152,8 @@ function makeWorker(req: LaunchRequest & { cwd: string; tools: string[] }): PiWo
     thinking: req.thinking,
     tools: req.tools,
     extensions: req.extensions ?? false,
+    nativeMcp: req.nativeMcp ?? false,
+    mcpServers: req.mcpServers,
     maxTurns: req.maxTurns ?? SPAWN_DEFAULT_TURNS,
     maxDurationMs: req.maxDurationMs ?? SPAWN_DEFAULT_DURATION_MS,
   });

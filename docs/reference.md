@@ -314,6 +314,9 @@ it, and verify committed results, interrupted effects, concurrent claimers, live
 queued steering, graceful shutdown, terminal aborts, deadlines, persistent forget, and follow-up.
 They also cover running/completed follow-up restarts, a second crash before steering
 admission, successful tool results during pause, and the awaited tool-start callback contract.
+Native tests cover exact tool permissions, direct/codemode/deferred exposure, explicit
+server selection, batch inheritance, transport cleanup, parallel nested results, and
+the execution barrier and reconnection after a crash.
 
 ## Web search and other extension tools
 
@@ -343,16 +346,57 @@ default is unchanged for calls that do not ask for it.
 
 Which tools exist depends on what the user running the server has installed. `pi-web-access` provides
 `web_search`, `fetch_content`, `source_check` and `get_search_content`. `pi-mcp-adapter` can expose configured MCP servers through an installed extension.
-Pi 1.0 also has built-in MCP support in its CLI. SDK sessions require explicit
-`createMcpExtension()`, `createCodemodeExtension()`, and `createToolSearchExtension()`
-resource-loader factories; this bridge currently loads installed extensions when requested
-and does not add those native MCP factories. Native downstream MCP support is separate
-from this server's MCP transport to Claude Code or Codex.
+Pi's native MCP support is available independently through `nativeMcp`; see below.
 
 **`extensions: true` trusts every installed extension, not just the one you wanted.** They load as a
 set, they run with the full privileges of this server's process, and some open sockets and timers
 that outlive the session. Turn it on per call, for the delegates that need it, rather than leaving it
 on by default. It also costs real startup time, which is why it is off unless asked for.
+
+## Native MCP
+
+Pass `nativeMcp: true` and an explicit `mcpServers` list to `spawn`, `run`, or
+`spawn_batch`. This works with `extensions: false`: only Pi's official MCP,
+codemode, and tool-search factories are loaded. Unselected servers are not connected.
+Server entries come from the Pi agent directory's `mcp.json`, with project entries
+used only when Pi trusts that project. Disabled or unknown selections are rejected.
+
+Authorize exact tool names in the bridge's environment, then request them in `tools`:
+
+```json
+"env": { "PI_DELEGATE_ALLOW_TOOLS": "codemode,tool_search,mcp__docs__search" }
+```
+
+```json
+{
+  "prompt": "Search the documentation for the timeout setting.",
+  "cwd": "/path/to/repo",
+  "nativeMcp": true,
+  "mcpServers": ["docs"],
+  "extensions": false,
+  "tools": ["codemode", "mcp__docs__search"]
+}
+```
+
+Use the names Pi assigns (`mcp__<server>__<tool>`); Pi sanitizes characters and may
+shorten long names. For `direct` exposure, name the MCP tool in `tools`. For
+`codemode` exposure, also name `codemode`; for `deferred` exposure, name `tool_search`.
+The existing server permission list and SDK tool restriction apply to direct,
+searched, and nested calls. `tools: []` starts no native transports and remains tool-free.
+MCP annotations do not grant permission. A permitted MCP tool may write or act outside
+`cwd`; select its capabilities deliberately. Codemode's separate model API is disabled
+so scripts cannot bypass the delegate's model selection policy.
+
+Nested calls commit intent before execution and full results before returning to the
+script. Parent transcript commits remove the temporary child results atomically.
+After a crash, the bridge reconnects selected servers and preserves committed child
+results in the interrupted parent's error message. It does not replay the script;
+unknown external effects require inspection. Remote server state is not checkpointed.
+`forget` and shutdown close native transports. Host shutdown pauses execution; the
+next bridge process resumes it.
+
+Batch tasks inherit `nativeMcp` and `mcpServers` unless overridden. To disable native
+MCP for one task in an enabled batch, pass `nativeMcp: false, mcpServers: []`.
 
 ## Configuration
 

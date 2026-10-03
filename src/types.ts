@@ -37,6 +37,7 @@ export interface Notice {
 
 /** One entry in the ordered trace of tools a delegate ran. */
 export interface ToolCall {
+  parentToolCallId?: string;
   seq: number;
   id: string | undefined;
   name: string;

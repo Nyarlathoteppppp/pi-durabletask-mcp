@@ -15,6 +15,7 @@ import { assertThinkingSupported, resolveModel } from "../pi/models.js";
 import { message } from "../pi/worker.js";
 import { claimId, evictHistory, launch, launchBatch } from "../registry.js";
 import { resolveDelegateCwd } from "../workspace.js";
+import { validateNativeMcp } from "../pi/native-mcp.js";
 import { gated, json } from "./shared.js";
 
 export function bindCancellation(
@@ -52,6 +53,8 @@ const spawnShape = {
       `Tool allowlist for this delegate. Omit for ${READ_ONLY_TOOLS.join(", ")}; [] disables all tools. ` +
         `Permitted on this server: ${ALLOW_ALL ? "any" : [...PERMITTED].join(", ")}.`,
     ),
+  nativeMcp: z.boolean().optional().describe("Enable Pi native MCP independently of third-party extensions. Requires explicit mcpServers and authorized exact tool names, including codemode/tool_search if used."),
+  mcpServers: z.array(z.string()).optional().describe("Names from Pi mcp.json to connect. Required with nativeMcp; other servers are not loaded."),
   extensions: z
     .boolean()
     .optional()
@@ -84,6 +87,8 @@ const taskShape = z.object({
   cwd: z.string().optional().describe("Overrides the batch `cwd` for this task alone"),
   tools: z.array(z.string()).optional().describe("Overrides the batch `tools` for this task alone"),
   extensions: z.boolean().optional(),
+  nativeMcp: z.boolean().optional(),
+  mcpServers: z.array(z.string()).optional(),
   maxTurns: z.number().int().min(1).max(MAX_TURNS).optional(),
   maxDurationMs: z.number().int().min(1_000).max(MAX_DURATION_MS).optional(),
 });
@@ -133,6 +138,8 @@ export function registerSpawn(server: McpServer): void {
         cwd: z.string().optional().describe("Default working directory for every task in this batch"),
         tools: z.array(z.string()).optional().describe("Default tool allowlist for every task in this batch"),
         extensions: z.boolean().optional().describe("Default extensions setting for every task in this batch"),
+        nativeMcp: z.boolean().optional().describe("Default native MCP setting for this batch"),
+        mcpServers: z.array(z.string()).optional().describe("Default native MCP server selection for this batch"),
         maxTurns: z
           .number()
           .int()
@@ -153,7 +160,7 @@ export function registerSpawn(server: McpServer): void {
           .describe('Names the tasks `<prefix>-01`, `<prefix>-02`, ... e.g. "audit" gives "audit-01"'),
       },
     },
-    async ({ tasks, model, thinking, cwd, tools, extensions, maxTurns, maxDurationMs, idPrefix }) => {
+    async ({ tasks, model, thinking, cwd, tools, extensions, nativeMcp, mcpServers, maxTurns, maxDurationMs, idPrefix }) => {
       const width = Math.max(String(tasks.length).length, 2);
       const merged = tasks.map((t, i) => ({
         prompt: t.prompt,
@@ -163,6 +170,8 @@ export function registerSpawn(server: McpServer): void {
         cwd: t.cwd ?? cwd,
         tools: t.tools ?? tools,
         extensions: t.extensions ?? extensions,
+        nativeMcp: t.nativeMcp ?? nativeMcp,
+        mcpServers: t.mcpServers ?? mcpServers,
         maxTurns: t.maxTurns ?? maxTurns,
         maxDurationMs: t.maxDurationMs ?? maxDurationMs,
         id: t.id ?? (idPrefix ? `${idPrefix}-${String(i + 1).padStart(width, "0")}` : undefined),
@@ -182,6 +191,7 @@ export function registerSpawn(server: McpServer): void {
         try {
           pickTools(t.tools);
           const taskCwd = await resolveDelegateCwd(t.cwd ?? cwd);
+          validateNativeMcp(t, taskCwd);
           const taskModel = await resolveModel(t.model || DEFAULT_MODEL, taskCwd);
           assertThinkingSupported(taskModel, t.thinking);
         } catch (e) {

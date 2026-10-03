@@ -22,7 +22,7 @@ export interface Checkpoint {
   entries: FileEntry[];
   snapshot: Snapshot;
   inputStarted: boolean;
-  results: Record<string, { content: unknown; details?: unknown; isError: boolean; name: string }>;
+  results: Record<string, { content: unknown; details?: unknown; isError: boolean; name: string; parentToolCallId?: string }>;
   steering: string[];
   recoveryInput?: { text: string; steeringCount: number };
 }

@@ -5,6 +5,7 @@ Tasks run in the background and recover from saved checkpoints after a server re
 
 - **Delegate:** inspect progress, steer running tasks, and send follow-ups with shared context.
 - **Recover:** persist conversation history, tool results, and pending instructions in SQLite.
+- **Connect:** use [Pi native MCP tools](docs/reference.md#native-mcp) with explicit server and tool selection.
 - **Update:** use the SDK from your global Pi installation.
 
 ## Install

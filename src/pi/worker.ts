@@ -8,11 +8,13 @@ import {
   type ExtensionUIContext,
   type CreateAgentSessionResult,
   type FileEntry,
+  type InlineExtension,
 } from "@earendil-works/pi-coding-agent";
 import { DurableJob, forgetOwnedJob, type Checkpoint } from "../durable.js";
 import { AGENT_DIR } from "../config.js";
 import { secretPathGuard } from "../secrets.js";
 import { createProtectedGrepTool } from "./search.js";
+import { nativeMcpFactories, validateNativeMcp, type NativeMcpOptions } from "./native-mcp.js";
 import type {
   Notice,
   PiThinkingLevel,
@@ -32,7 +34,7 @@ type AgentSession = CreateAgentSessionResult["session"];
 
 const NOOP = (): void => {};
 
-export interface WorkerOptions {
+export interface WorkerOptions extends NativeMcpOptions {
   id?: string | undefined;
   label?: string | undefined;
   cwd: string;
@@ -82,6 +84,9 @@ export class PiWorker {
   onChange: (() => void) | undefined;
 
   private readonly extensionsEnabled: boolean;
+  private readonly nativeMcp: boolean;
+  private readonly mcpServers: string[];
+  private nativeClose: Promise<void> | undefined;
   private readonly modelSpec: string | undefined;
   private readonly thinkingSpec: PiThinkingLevel | undefined;
   private readonly openCalls = new Map<string, ToolCall>();
@@ -127,6 +132,8 @@ export class PiWorker {
     thinking,
     tools,
     extensions = false,
+    nativeMcp = false,
+    mcpServers = [],
     maxTurns,
     maxDurationMs,
     startedAt,
@@ -138,10 +145,12 @@ export class PiWorker {
     this.thinkingSpec = thinking;
     this.toolNames = tools;
     this.extensionsEnabled = extensions;
+    this.nativeMcp = nativeMcp;
+    this.mcpServers = [...mcpServers];
     this.maxTurns = maxTurns;
     this.maxDurationMs = maxDurationMs;
     this.startedAt = startedAt ?? new Date().toISOString();
-    this.options = { id: this.id, label, cwd, model, thinking, tools, extensions, maxTurns, maxDurationMs,
+    this.options = { id: this.id, label, cwd, model, thinking, tools, extensions, nativeMcp, mcpServers: this.mcpServers, maxTurns, maxDurationMs,
       startedAt: this.startedAt };
   }
 
@@ -161,6 +170,7 @@ export class PiWorker {
   }
 
   async start(prompt: string, saved?: Checkpoint, key?: string): Promise<this> {
+    validateNativeMcp(this.options, this.cwd);
     const model = await resolveModel(this.modelSpec, this.cwd);
     if (this.isStopped()) return this;
 
@@ -174,7 +184,9 @@ export class PiWorker {
       noExtensions: !this.extensionsEnabled,
       noSkills: true,
       noContextFiles: true,
-      extensionFactories: [secretPathGuard(this.cwd)],
+      extensionFactories: [secretPathGuard(this.cwd),
+        ...(this.nativeMcp && this.toolNames.length ? nativeMcpFactories(this.cwd, this.mcpServers) : []),
+        ...(this.nativeMcp ? [this.nativeExecutionJournal()] : [])],
     });
 
     // The loader is lazy: getExtensions() returns nothing until reload() has run.
@@ -204,12 +216,17 @@ export class PiWorker {
 
     this.unsubscribe = session.subscribe((ev) => this.onEvent(ev));
     await session.bindExtensions({ uiContext: this.uiContext(), mode: "rpc" });
-    if (this.isStopped()) return this;
+    if (this.isStopped()) {
+      this.dispose();
+      await this.nativeClose;
+      return this;
+    }
     this.options = { ...this.options, model: this.model, thinking: this.thinking };
     this.job = await DurableJob.open(this.options, prompt, key);
     if (this.isStopped()) {
       await this.job.close();
-      session.dispose();
+      this.dispose();
+      await this.nativeClose;
       return this;
     }
     this.journalUnsubscribe = session.agent.subscribe(async (ev) => {
@@ -229,7 +246,7 @@ export class PiWorker {
       if (ev.type === "tool_execution_end") this.results[ev.toolCallId] = {
         name: ev.toolName, content: ev.result.content, details: ev.result.details, isError: ev.isError,
       };
-      if (ev.type === "message_end" && ev.message.role === "toolResult") delete this.results[ev.message.toolCallId];
+      if (ev.type === "message_end" && ev.message.role === "toolResult") this.clearResults(ev.message.toolCallId);
       if (["turn_start", "turn_end", "message_end", "tool_execution_start", "tool_execution_end", "agent_end"].includes(ev.type))
         await this.job!.save(this.checkpoint());
     });
@@ -237,6 +254,39 @@ export class PiWorker {
       this.restoreSnapshot(saved);
     } else await this.beginDurable(prompt, saved, Boolean(key));
     return this;
+  }
+
+  /** SDK nested events bypass Agent.subscribe; awaited extension hooks persist them. */
+  private nativeExecutionJournal(): InlineExtension {
+    return { name: "delegate-native-journal", hidden: true, factory: (pi) => {
+      pi.on("before_agent_start", () => {
+        this.activeTools = pi.getActiveTools();
+      });
+      pi.on("tool_call", async (ev) => {
+        if (this.suspended || !this.job) return { block: true, reason: "Delegate is suspended or has not entered its durable task." };
+        // The nested start event has already updated the trace. This hook propagates
+        // commit failures (ordinary extension event listeners only report them).
+        if (ev.parentToolCallId) await this.job.save(this.checkpoint());
+        return undefined;
+      });
+      pi.on("tool_execution_start", (ev) => {
+        if (ev.parentToolCallId) this.onEvent(ev);
+      });
+      pi.on("tool_execution_end", async (ev) => {
+        if (!ev.parentToolCallId || this.recordingStopped) return;
+        this.onEvent(ev);
+        this.results[ev.toolCallId] = { name: ev.toolName, content: ev.result.content,
+          details: ev.result.details, isError: ev.isError, parentToolCallId: ev.parentToolCallId };
+        await this.job!.save(this.checkpoint());
+      });
+    } };
+  }
+
+  private clearResults(parentId: string): void {
+    delete this.results[parentId];
+    for (const [id, result] of Object.entries(this.results)) {
+      if (result.parentToolCallId && id.startsWith(`${parentId}/`)) delete this.results[id];
+    }
   }
 
   private checkpoint(): Checkpoint {
@@ -261,7 +311,7 @@ export class PiWorker {
     Object.assign(this.results, saved.results);
     // repairEntries may have placed a saved result into the reconstructed transcript.
     for (const message of this.session!.messages) {
-      if (message.role === "toolResult") delete this.results[message.toolCallId];
+      if (message.role === "toolResult") this.clearResults(message.toolCallId);
     }
     this.steering = [...saved.steering];
     this.recoveryInput = saved.recoveryInput;
@@ -347,9 +397,11 @@ export class PiWorker {
     this.recordingStopped = true;
     await this.job?.close();
     this.dispose();
+    await this.nativeClose;
   }
 
   async forgetPersistent(): Promise<void> {
+    await this.nativeClose;
     if (this.job) await this.job.forget();
     else if (this.recoveryKey) forgetOwnedJob(this.recoveryKey);
   }
@@ -469,6 +521,7 @@ export class PiWorker {
       }
 
       case "tool_execution_start": {
+        if (ev.toolCallId && this.toolCalls.some((call) => call.id === ev.toolCallId)) break;
         const call: ToolCall = {
           seq: this.toolCalls.length + 1,
           id: ev.toolCallId,
@@ -476,6 +529,7 @@ export class PiWorker {
           args: clipArgs(ev.args),
           state: "running",
           startedAt: Date.now(),
+          ...("parentToolCallId" in ev ? { parentToolCallId: ev.parentToolCallId as string } : {}),
         };
         this.toolCalls.push(call);
         if (ev.toolCallId) this.openCalls.set(ev.toolCallId, call);
@@ -486,11 +540,11 @@ export class PiWorker {
         // pi does not always echo the call id back, so fall back to the newest open call
         // of the same name rather than losing the timing entirely.
         const call =
-          (ev.toolCallId ? this.openCalls.get(ev.toolCallId) : undefined) ??
+          (ev.toolCallId ? this.openCalls.get(ev.toolCallId) ?? this.toolCalls.find((c) => c.id === ev.toolCallId) : undefined) ??
           [...this.toolCalls].reverse().find((c) => c.state === "running" && c.name === ev.toolName);
         if (call) {
           call.state = ev.isError ? "error" : "ok";
-          call.ms = Date.now() - (call.startedAt ?? Date.now());
+          call.ms = call.startedAt === undefined ? call.ms ?? 0 : Date.now() - call.startedAt;
           call.result = flatten(ev.result);
           delete call.startedAt;
           if (ev.toolCallId) this.openCalls.delete(ev.toolCallId);
@@ -572,7 +626,13 @@ export class PiWorker {
     if (this.deadlineTimer) clearTimeout(this.deadlineTimer);
     this.unsubscribe?.();
     this.journalUnsubscribe?.();
-    this.session?.dispose?.();
+    const session = this.session;
+    if (this.nativeMcp && session) {
+      // dispose() does not emit session_shutdown; native transports need that event.
+      this.nativeClose ??= session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" })
+        .then(() => {}).finally(() => session.dispose());
+      void this.nativeClose.catch(NOOP);
+    } else session?.dispose?.();
   }
 
   private elapsedMs(): number {
@@ -616,9 +676,13 @@ export function repairEntries(saved: Checkpoint): FileEntry[] {
     for (const part of message.content) {
       if (part.type !== "toolCall" || answered.has(part.id)) continue;
       const result = saved.results[part.id];
+      const nested = Object.entries(saved.results).filter(([id, value]) => value.parentToolCallId && id.startsWith(`${part.id}/`));
+      const unknown = "Interrupted by MCP service restart. Execution outcome is unknown; inspect external state before retrying." +
+        (nested.length ? "\nCommitted nested tool results (do not replay the interrupted script):\n" +
+          JSON.stringify(nested.map(([id, value]) => ({ id, ...value }))) : "");
       manager.appendMessage({ role: "toolResult", toolCallId: part.id, toolName: part.name,
         content: result ? result.content as never : [{ type: "text", text:
-          "Interrupted by MCP service restart. Execution outcome is unknown; inspect external state before retrying." }],
+          unknown }],
         details: result?.details as never, isError: result?.isError ?? true, timestamp: Date.now() });
       answered.add(part.id);
     }

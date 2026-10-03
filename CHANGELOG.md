@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.0
+
+- Add independent `nativeMcp` and explicit `mcpServers` selection to single and batch tasks.
+- Reuse the server tool allowlist and Pi SDK restrictions for direct and nested MCP tools.
+- Persist nested call intent and results; preserve completed child results after script interruption.
+- Close native MCP transports on forget and shutdown; reconnect on recovery.
+- Add native direct, codemode, deferred, batch, permission, and crash integration tests.
+
 ## 0.1.0
 
 Initial durable task edition, based on pi-delegate-mcp.

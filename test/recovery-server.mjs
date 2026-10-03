@@ -10,6 +10,12 @@ DurableJob.prototype.save = async function (checkpoint) {
     process.kill(process.pid, "SIGKILL");
     await new Promise(() => {});
   }
+  const nestedBarrier = process.env.TEST_NESTED_TOOL_BARRIER;
+  if (nestedBarrier && checkpoint.snapshot.toolCalls.some(call => call.parentToolCallId && call.state === "running") &&
+      !existsSync(nestedBarrier + ".started")) {
+    writeFileSync(nestedBarrier + ".started", "committed");
+    while (!existsSync(nestedBarrier + ".release")) await new Promise(resolve => setTimeout(resolve, 10));
+  }
   const barrier = process.env.TEST_TOOL_BARRIER;
   if (barrier && checkpoint.snapshot.toolCalls.some((call) => call.state === "running") &&
     !existsSync(barrier + ".started")) {

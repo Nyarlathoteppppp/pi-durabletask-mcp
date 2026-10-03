@@ -66,6 +66,11 @@ export function registerInit(server: McpServer): void {
         pi: { ok: true, usableModels: health.usable.length, sdkVersion: PI_SDK_VERSION, sdkPath: getPackageDir() },
         durability: { enabled: true, storage: DURABLE_DIR,
           recovery: "init resumes abandoned tasks from saved history. Completed tool calls are retained; interrupted calls get an unknown-outcome error and are not automatically replayed. Original deadlines and turn budgets still apply." },
+        nativeMcp: {
+          supported: true, default: false,
+          usage: "Pass nativeMcp: true and explicit mcpServers names from Pi mcp.json. Authorize exact MCP tool names plus codemode/tool_search through PI_DELEGATE_ALLOW_TOOLS and the call's tools list. tools: [] stays tool-free; native MCP does not require third-party extensions.",
+          recovery: "Connections are reopened on recovery. Interrupted scripts are not replayed; committed nested tool results are preserved.",
+        },
         what:
           "pi-delegate-mcp hands a task to the pi coding agent. The delegate reads files and reasons " +
           "on its own budget, then returns a result. Its context never enters yours.",
