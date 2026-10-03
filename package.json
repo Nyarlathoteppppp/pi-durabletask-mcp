@@ -19,6 +19,7 @@
     "dist",
     "!dist/**/*.map",
     "README.md",
+    "docs",
     "scripts/link-pi-sdk.mjs",
     "LICENSE"
   ],
