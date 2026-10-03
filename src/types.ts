@@ -61,7 +61,9 @@ export interface Snapshot {
   cwd: string;
   activeTools: string[] | undefined;
   turns: number;
+  /** Every call when verbose; otherwise the most recent few. `toolCallCount` is the total. */
   toolCalls: Array<ToolCall | ToolCallSummary>;
+  toolCallCount: number;
   lastText: string;
   questions: QuestionJson[];
   notices: Notice[];

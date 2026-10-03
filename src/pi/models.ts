@@ -3,6 +3,7 @@ import { join } from "node:path";
 import {
   AGENT_DIR,
   IGNORE_SCOPE,
+  MAX_DURATION_MS,
   MODEL_ALLOWLIST,
   MODEL_DENYLIST,
   STRICT_SCOPE,
@@ -103,6 +104,34 @@ export async function scopedModels(cwd?: string): Promise<ScopedModel[]> {
 export interface Health {
   available: number;
   usable: string[];
+  /** Providers whose credentials could not be resolved, with the reason. Their models are left out of `usable`. */
+  failing: Record<string, string>;
+}
+
+/** An OAuth token that would expire during the longest delegate run is refreshed up front. */
+const AUTH_VALIDITY_MS = MAX_DURATION_MS + 5 * 60_000;
+const AUTH_TIMEOUT_MS = 15_000;
+
+/**
+ * Resolve a provider's credentials as a request would, refreshing OAuth tokens that would
+ * expire mid-run. Returns the failure, if any. API keys are checked for presence, not validity.
+ */
+async function providerProblem(provider: string): Promise<string | undefined> {
+  const rt = await getRuntime();
+  try {
+    const auth = await rt.getAuth(provider, { minOAuthValidityMs: AUTH_VALIDITY_MS, signal: AbortSignal.timeout(AUTH_TIMEOUT_MS) });
+    return auth ? undefined : "no credentials configured";
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
+/** Fail at spawn, before a session exists, rather than on the delegate's first model call. */
+export async function assertProviderReady(provider: string): Promise<void> {
+  const problem = await providerProblem(provider);
+  if (problem)
+    throw new Error(`Provider ${provider} is not usable right now: ${problem}. ` +
+      `Choose a model from another provider, or re-authenticate ${provider} in pi.`);
 }
 
 /**
@@ -145,7 +174,12 @@ export async function preflight(cwd?: string): Promise<Health> {
         : "No usable model: pi reports authenticated providers but none carry a usable model.",
     );
   }
-  return { available: available.length, usable: usable.map((m) => m.ref) };
+  const failing: Record<string, string> = {};
+  await Promise.all([...new Set(usable.map((m) => m.provider))].map(async (provider) => {
+    const problem = await providerProblem(provider);
+    if (problem) failing[provider] = problem;
+  }));
+  return { available: available.length, usable: usable.filter((m) => !(m.provider in failing)).map((m) => m.ref), failing };
 }
 
 /**

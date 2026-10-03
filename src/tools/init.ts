@@ -18,10 +18,11 @@ import {
   TRACE_RESULT,
 } from "../config.js";
 import { PERMITTED, READ_ONLY_TOOLS } from "../permissions.js";
-import { modelScope, preflight, scopedModels } from "../pi/models.js";
+import { modelScope, preflight } from "../pi/models.js";
 import { json, markInitialised } from "./shared.js";
 import { recoverAbandoned } from "../registry.js";
 import { DURABLE_DIR } from "../durable.js";
+import { ripgrepPath, RIPGREP_MISSING } from "../pi/search.js";
 import { RETENTION_MS, STORAGE_LIMIT_BYTES } from "../config.js";
 import { VERSION as PI_SDK_VERSION, getPackageDir } from "@earendil-works/pi-coding-agent";
 
@@ -48,7 +49,8 @@ export function registerInit(server: McpServer): void {
       await recoverAbandoned();
       markInitialised();
       const scope = modelScope(cwd);
-      const all = (await scopedModels(cwd)).map((m) => m.ref);
+      // Models of providers whose credentials failed to resolve are already left out.
+      const all = health.usable;
       const hits = filter ? all.filter((m) => m.toLowerCase().includes(filter.toLowerCase())) : all;
 
       // enabledModels alone does not explain the list: inScope() also lets through every
@@ -65,6 +67,11 @@ export function registerInit(server: McpServer): void {
         // Deliberately does not report pi's total authenticated model count. Advertising 396
         // models when 15 are in scope invites the caller to pick one that is a hard error.
         pi: { ok: true, usableModels: health.usable.length, sdkVersion: PI_SDK_VERSION, sdkPath: getPackageDir() },
+        ...(Object.keys(health.failing).length ? { failingProviders: {
+          note: "Credentials for these providers could not be resolved just now, so their models are not offered. Re-authenticate them in pi, then call init again.",
+          ...health.failing,
+        } } : {}),
+        search: { ripgrep: ripgrepPath() ?? RIPGREP_MISSING },
         durability: { enabled: true, storage: DURABLE_DIR,
           recovery: "init resumes abandoned tasks from saved history. Completed tool calls are retained; interrupted calls get an unknown-outcome error and are not automatically replayed. Original deadlines and turn budgets still apply.",
           optOut: "Pass durable: false for short, cheap, re-runnable work (reviews, searches, model comparisons): nothing is written and it is gone when this MCP process exits. Keep the default for long work, external side effects, or later follow_up.",

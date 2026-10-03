@@ -1,6 +1,7 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { createInterface } from "node:readline";
-import { basename, relative, resolve } from "node:path";
+import { basename, join, relative, resolve } from "node:path";
 import {
   createGrepToolDefinition,
   DEFAULT_MAX_BYTES,
@@ -8,7 +9,23 @@ import {
   truncateHead,
   truncateLine,
 } from "@earendil-works/pi-coding-agent";
+import { AGENT_DIR } from "../config.js";
 import { assertToolPathsAllowed, blockedSecretPath, SECRET_SEARCH_EXCLUDES } from "../secrets.js";
+
+let ripgrep: string | null | undefined;
+/**
+ * Pi's own tool directory first, as Pi's grep does, then PATH. MCP hosts often start servers
+ * without the login shell's PATH, and an interactive `rg` may be only a shell function.
+ */
+export function ripgrepPath(): string | undefined {
+  if (ripgrep === undefined) {
+    const local = join(AGENT_DIR, "bin", process.platform === "win32" ? "rg.exe" : "rg");
+    ripgrep = existsSync(local) ? local : spawnSync("rg", ["--version"], { stdio: "ignore" }).error ? null : "rg";
+  }
+  return ripgrep ?? undefined;
+}
+export const RIPGREP_MISSING = `ripgrep (rg) was not found in ${join(AGENT_DIR, "bin")} or on this MCP server's PATH. ` +
+  "Run `pi` once and use its grep so it downloads rg there, or install ripgrep where the MCP host's PATH can see it.";
 
 /** Keep Pi's grep schema and output limits, but exclude secrets before ripgrep visits them. */
 export function createProtectedGrepTool(cwd: string): ReturnType<typeof createGrepToolDefinition> {
@@ -30,8 +47,10 @@ export function createProtectedGrepTool(cwd: string): ReturnType<typeof createGr
       args.push("--", input.pattern, searchPath);
       const limit = Math.max(1, input.limit ?? 100);
 
+      const rg = ripgrepPath();
+      if (!rg) throw new Error(RIPGREP_MISSING);
       return new Promise((done, reject) => {
-        const child = spawn("rg", args, { cwd: workingDir, stdio: ["ignore", "pipe", "pipe"] });
+        const child = spawn(rg, args, { cwd: workingDir, stdio: ["ignore", "pipe", "pipe"] });
         const lines = createInterface({ input: child.stdout });
         let stderr = "";
         let matches = 0;

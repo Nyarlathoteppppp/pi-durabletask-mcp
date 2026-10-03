@@ -25,7 +25,7 @@ import type {
   ToolCall,
   ToolCallSummary,
 } from "../types.js";
-import { assertThinkingSupported, resolveModel } from "./models.js";
+import { assertProviderReady, assertThinkingSupported, resolveModel } from "./models.js";
 import { getRuntime } from "./runtime.js";
 import { clipArgs, flatten } from "./trace.js";
 import { createUiContext, Question } from "./ui.js";
@@ -48,6 +48,9 @@ export interface WorkerOptions extends NativeMcpOptions {
   maxDurationMs: number;
   startedAt?: string;
 }
+
+const RECENT_CALLS = 5;
+const COMPACT_ARGS = 120;
 
 const FINALIZE_PROMPT =
   "Stop expanding the investigation and do not call more tools. Return the best conclusion now from " +
@@ -99,6 +102,8 @@ export class PiWorker {
   private finishSteerSent = false;
   /** pi reports provider failures as an assistant message with stopReason "error", not a throw. */
   private providerError: string | undefined;
+  /** Attempts Pi made before giving up on the provider in this run, if it did. */
+  private retriesExhausted: number | undefined;
   private abortPromise: Promise<void> | undefined;
   private job: JobStore | undefined;
   recoveryKey: string | undefined;
@@ -182,6 +187,7 @@ export class PiWorker {
     if (this.isStopped()) return this;
 
     assertThinkingSupported(model, this.thinkingSpec);
+    if (model) await assertProviderReady(model.provider);
 
     // Third-party pi extensions start timers and sockets that outlive dispose() and then
     // throw against a stale ctx. A delegate does not need them.
@@ -433,6 +439,7 @@ export class PiWorker {
     this.runTurns = 0;
     this.finishSteerSent = false;
     this.providerError = undefined;
+    this.retriesExhausted = undefined;
     if (this.deadlineTimer) clearTimeout(this.deadlineTimer);
     const remainingMs = Math.max(1, this.maxDurationMs - this.elapsedMs());
     this.deadlineTimer = setTimeout(() => {
@@ -445,7 +452,9 @@ export class PiWorker {
         if (this.state === "aborted" || this.suspended) return;
         if (this.providerError !== undefined) {
           this.state = "error";
-          this.error = this.providerError;
+          this.error = this.retriesExhausted
+            ? `${this.providerError} (after ${this.retriesExhausted} automatic retries; consider another provider)`
+            : this.providerError;
         } else this.state = "done";
       })
       .catch((e: unknown) => {
@@ -566,6 +575,18 @@ export class PiWorker {
         break;
       }
 
+      case "auto_retry_start":
+        // Pi retries transient provider failures itself; record it so a caller can tell a flaky
+        // provider from a broken prompt, and switch provider instead of retrying blindly.
+        this.notices.push({ type: "warning", at: new Date().toISOString(),
+          message: `provider retry ${ev.attempt}/${ev.maxAttempts} in ${ev.delayMs}ms: ${ev.errorMessage}` });
+        this.onChange?.();
+        break;
+
+      case "auto_retry_end":
+        if (!ev.success) this.retriesExhausted = ev.attempt;
+        break;
+
       case "message_end":
         // Only the latest assistant message counts, so a turn that recovers after a retry is not failed.
         if (ev.message.role === "assistant") {
@@ -654,9 +675,11 @@ export class PiWorker {
   }
 
   snapshot({ verbose = false }: { verbose?: boolean } = {}): Snapshot {
-    const trace: Array<ToolCall | ToolCallSummary> = this.toolCalls.map((c) =>
-      verbose ? c : { seq: c.seq, name: c.name, state: c.state, ms: c.ms, args: c.args },
-    );
+    // Polling a delegate must stay cheap for the caller's context: compact snapshots carry only
+    // the last few calls, with short arguments, and the newest notices.
+    const trace: Array<ToolCall | ToolCallSummary> = verbose ? this.toolCalls
+      : this.toolCalls.slice(-RECENT_CALLS).map((c) => ({ seq: c.seq, name: c.name, state: c.state, ms: c.ms,
+        args: c.args && c.args.length > COMPACT_ARGS ? `${c.args.slice(0, COMPACT_ARGS)}…` : c.args }));
     return {
       sessionId: this.id,
       label: this.label,
@@ -667,9 +690,10 @@ export class PiWorker {
       activeTools: this.activeTools,
       turns: this.turns,
       toolCalls: trace,
+      toolCallCount: this.toolCalls.length,
       lastText: this.lastText,
       questions: this.pendingQuestions(),
-      notices: this.notices,
+      notices: verbose ? this.notices : this.notices.slice(-RECENT_CALLS),
       error: this.error,
       startedAt: this.startedAt,
       finishedAt: this.finishedAt,

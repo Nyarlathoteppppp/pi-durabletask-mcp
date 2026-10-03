@@ -56,11 +56,13 @@ Ids are `[A-Za-z0-9._:-]`, 1-64 chars, must start alphanumeric, and must be uniq
 sessions. Omit for a UUID.
 
 Finished sessions stay readable via `status` and `sessions` instead of vanishing, so you can go
-back and check what a delegate actually did. The newest `PI_DELEGATE_HISTORY` (default 50) are
-kept; `forget` drops one early.
+back and check what a delegate actually did. The newest `PI_DELEGATE_HISTORY` (default 50) stay
+loaded; durable ones beyond that stay on disk until retention removes them; `forget` drops one early.
 
-`status` returns an ordered `toolCalls` trace: every tool the delegate ran, with arguments and
-timing. Add `verbose: true` for call ids and results:
+Polling must not cost the caller much context, so `status` and `wait` are compact by default:
+`toolCalls` holds the last 5 calls with arguments cut to 120 characters, `toolCallCount` is the
+total, and `notices` holds the newest 5. Pass `afterToolCalls: <toolCallCount>` to `wait`.
+`verbose: true` returns the full ordered trace, every notice, and call ids and results:
 
 ```json
 {
@@ -76,6 +78,25 @@ timing. Add `verbose: true` for call ids and results:
 
 Arguments and results are clipped (`PI_DELEGATE_TRACE_ARGS`, `PI_DELEGATE_TRACE_RESULT`) with the
 dropped length recorded, so one `read` of a large file cannot flood your context.
+
+### Provider failures
+
+Pi retries transient provider failures itself (stream drops, 429/5xx, timeouts), following
+`retry` in Pi's settings (default 3 retries with backoff). Each retry appears as a notice,
+`provider retry 1/3 in 2000ms: <error>`, and a run that fails after retrying says so in `error`.
+Retrying the same provider by hand rarely helps after that; choose another.
+
+`init` resolves the credentials of every provider a delegate may use, as a request would,
+refreshing OAuth tokens that would expire within the longest delegate run. Providers that fail
+are listed under `failingProviders` with the reason and their models are not offered; `spawn`,
+`run` and `spawn_batch` refuse a model of such a provider before starting anything. API keys
+are checked for presence only, so a revoked key still surfaces on the first request.
+
+### Search
+
+The delegate's `grep` uses ripgrep from Pi's tool directory (`<agent dir>/bin/rg`, where Pi
+downloads it) or else from the MCP server's PATH, which MCP hosts often start without the login
+shell's PATH. `init` reports which one under `search.ripgrep`, or how to fix a missing one.
 
 ## Giving a delegate another turn
 

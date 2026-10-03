@@ -12,6 +12,10 @@
 - Retain finished durable delegates for `PI_DELEGATE_RETENTION_DAYS` (default 7) under a `PI_DELEGATE_STORAGE_LIMIT_MB` cap (default 1024); unfinished delegates are never deleted.
 - History eviction now only unloads from memory; finished delegates stay on disk, are listed under `stored`, and load on first use by id.
 - Startup recovery resumes only unfinished delegates instead of loading every finished one.
+- `status` and `wait` are compact by default: the last 5 tool calls with shortened arguments, `toolCallCount`, and the newest notices. `verbose: true` returns everything.
+- Record Pi's automatic provider retries as notices, and say in `error` when a run failed after them.
+- `init` resolves each provider's credentials, refreshing OAuth tokens that would expire mid-run, reports failures under `failingProviders`, and stops offering their models; spawning one fails before anything starts.
+- `grep` finds ripgrep in Pi's tool directory before PATH, and reports a missing one clearly in `init` and in the tool result.
 
 ## 0.2.0
 

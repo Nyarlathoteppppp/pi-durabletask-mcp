@@ -57,7 +57,9 @@ export function registerControl(server: McpServer): void {
       description:
         "Check a background pi session. Returns state, turn count, tools used, latest text, and any " +
         "pending questions the agent is waiting on. A non-empty `questions` array means it is blocked " +
-        "until you call `answer`. `toolCalls` traces every tool the delegate ran, in order.",
+        "until you call `answer`. `toolCalls` holds the last 5 calls with shortened arguments and " +
+        "`toolCallCount` the total; pass `verbose: true` for every call with ids and results. " +
+        "Notices include Pi's automatic provider retries.",
       inputSchema: {
         sessionId: z.string(),
         verbose: z.boolean().optional().describe("Include tool results and call ids in the trace"),
@@ -90,7 +92,7 @@ export function registerControl(server: McpServer): void {
         sessionId: z.string(),
         timeoutMs: z.number().int().min(250).max(55_000).optional().describe("Default 30000; max 55000"),
         afterTurns: z.number().int().min(0).optional().describe("Prior snapshot's turn count"),
-        afterToolCalls: z.number().int().min(0).optional().describe("Prior snapshot's tool-call count"),
+        afterToolCalls: z.number().int().min(0).optional().describe("Prior snapshot's `toolCallCount`"),
         verbose: z.boolean().optional().describe("Include tool results and call ids in the returned trace"),
       },
     },

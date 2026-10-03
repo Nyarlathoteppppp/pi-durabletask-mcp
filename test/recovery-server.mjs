@@ -55,4 +55,14 @@ DurableJob.prototype.close = async function (release = true) {
     while (!existsSync(closeBarrier + ".release")) await new Promise((resolve) => setTimeout(resolve, 10));
   }
 };
+// Make one provider's credentials fail to resolve, as an expired OAuth refresh would.
+if (process.env.TEST_BROKEN_PROVIDER) {
+  const { getRuntime } = await import("../dist/pi/runtime.js");
+  const runtime = await getRuntime();
+  const getAuth = runtime.getAuth.bind(runtime);
+  runtime.getAuth = async (provider, options) => {
+    if (provider === process.env.TEST_BROKEN_PROVIDER) throw new Error(`OAuth refresh failed for ${provider}: simulated`);
+    return getAuth(provider, options);
+  };
+}
 await import("../dist/index.js");
