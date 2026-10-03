@@ -4,6 +4,8 @@
 
 <div align="center">
 
+**English** · [简体中文](README.zh-CN.md)
+
 **Pi agents for Claude Code, Codex, and any MCP client.**
 
 Background tasks · Live steering · Opt-in SQLite recovery · Native Pi MCP
@@ -12,7 +14,7 @@ Background tasks · Live steering · Opt-in SQLite recovery · Native Pi MCP
 [![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A5%2022.19-30343b?logo=nodedotjs&logoColor=white)](package.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-e78260.svg)](LICENSE)
 
-[Get started](#quick-start) · [How it works](#usage) · [Reference](docs/reference.md)
+[Get started](#quick-start) · [Features](#key-features) · [Reference](docs/reference.md)
 
 </div>
 
@@ -96,6 +98,17 @@ For a task that should recover after a bridge restart, ask for a **durable task*
 
 Delegates can also use selected **Pi native MCP servers** with an explicit tool allowlist.
 [Native MCP setup →](docs/reference.md#native-mcp)
+
+## Key features
+
+- **Stay in control.** Run parallel delegates with `spawn_batch`, steer active work, and use `follow_up` to continue the same conversation.
+- **One owner per durable task.** Kernel-released SQLite locks let crashed owners' work recover without relying on PID identity or allowing two executors to claim it.
+- **Native Pi MCP.** Choose servers and exact tool permissions per delegate, including `codemode` and `tool_search`. Third-party extensions are a separate opt-in.
+- **Small polling responses.** `status` / `wait` show the latest five tool calls and the total count. Use `verbose: true` for the full trace.
+- **Budgets and retention.** Set turn and time limits. Durable history defaults to seven days; `retentionDays` customizes it, and storage pressure can remove finished history earlier.
+- **Your Pi setup.** Reuse your global Pi SDK and provider configuration; choose a model for each delegate. Provider retries are visible in status notices.
+
+[Configuration →](docs/reference.md#configuration) · [Ownership & retention →](docs/reference.md#ownership)
 
 ## What recovery means
 

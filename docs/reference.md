@@ -1,6 +1,6 @@
 # Reference
 
-[Quick start](../README.md) · Tools, configuration, recovery, and development details.
+[Quick start](../README.md) · [简体中文](../README.zh-CN.md) · Tools, configuration, recovery, and development details.
 
 ## Tools
 
