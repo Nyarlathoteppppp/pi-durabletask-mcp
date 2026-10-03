@@ -142,8 +142,8 @@ export function registerInit(server: McpServer): void {
           "5. `answer` when `status` shows a non-empty `questions` array, which blocks the delegate " +
             "until you reply. Only extensions can ask, so this never fires unless you spawned with " +
             "`extensions: true`.",
-          "6. `follow_up` to give a finished delegate another turn on the same session. Turns and " +
-            "wall-clock already spent still count toward the original budget.",
+          "6. `follow_up` to give a finished delegate another turn on the same session. Turns are " +
+            "cumulative against maxTurns; the wall-clock limit applies to each run, so a durable session can be continued days later.",
           "7. `sessions` lists everything including finished runs; `forget` drops one.",
           "`spawn_batch` fans out several delegates at once. `run` blocks until done, so keep it for " +
             "questions that finish in under a minute.",

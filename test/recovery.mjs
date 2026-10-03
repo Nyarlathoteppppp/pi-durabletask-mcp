@@ -210,6 +210,7 @@ try {
   const expired = await finish(host, "expired");
   assert.equal(expired.state, "aborted");
   assert.equal(expired.termination.reason, "deadline");
+  assert.ok(expired.finishedAt, "an abort outside a run still records when it finished");
   assert.equal(requests.length, countBeforeExpiry, "downtime counts toward the original deadline");
 
   await host.call("forget", { sessionId: "complete" });

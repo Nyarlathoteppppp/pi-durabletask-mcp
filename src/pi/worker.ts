@@ -42,7 +42,7 @@ export interface WorkerOptions extends NativeMcpOptions {
   thinking?: PiThinkingLevel | undefined;
   tools: string[];
   extensions?: boolean;
-  /** False keeps the delegate in memory only: no storage, no recovery. Default true. */
+  /** True saves and recovers the delegate. Default false: memory only, as for MCP callers. */
   durable?: boolean;
   /** Days to keep a finished durable delegate; RETENTION_DAYS when absent. */
   retentionDays?: number | undefined;
@@ -68,6 +68,12 @@ export class PiWorker {
   readonly cwd: string;
   readonly toolNames: string[];
   readonly startedAt: string;
+  /**
+   * Start of the current run: the spawn, or the latest follow_up. The wall-clock limit applies
+   * per run, so a session can be continued days later; turns stay cumulative. Downtime during a
+   * run still counts, since recovery keeps this value.
+   */
+  private runStartedAt: string;
   readonly maxTurns: number;
   readonly maxDurationMs: number;
 
@@ -150,7 +156,7 @@ export class PiWorker {
     thinking,
     tools,
     extensions = false,
-    durable = true,
+    durable = false,
     retentionDays,
     nativeMcp = false,
     mcpServers = [],
@@ -170,6 +176,7 @@ export class PiWorker {
     this.maxTurns = maxTurns;
     this.maxDurationMs = maxDurationMs;
     this.startedAt = startedAt ?? new Date().toISOString();
+    this.runStartedAt = this.startedAt;
     this.options = { id: this.id, label, cwd, model, thinking, tools, extensions, durable, retentionDays, nativeMcp, mcpServers: this.mcpServers, maxTurns, maxDurationMs,
       startedAt: this.startedAt };
   }
@@ -195,7 +202,6 @@ export class PiWorker {
     if (this.isStopped()) return this;
 
     assertThinkingSupported(model, this.thinkingSpec);
-    if (model) await assertProviderReady(model.provider);
 
     // Third-party pi extensions start timers and sockets that outlive dispose() and then
     // throw against a stale ctx. A delegate does not need them.
@@ -274,7 +280,12 @@ export class PiWorker {
     if (saved && !this.job.needsResume) {
       this.restoreSnapshot(saved);
       this.recordFinal();
-    } else await this.beginDurable(prompt, saved, Boolean(key));
+    } else {
+      // Only work that is about to call the model needs working credentials; loading finished
+      // history must not depend on them, or an unrecorded finish could never be repaired.
+      if (model) await assertProviderReady(model.provider);
+      await this.beginDurable(prompt, saved, Boolean(key));
+    }
     return this;
   }
 
@@ -320,6 +331,7 @@ export class PiWorker {
 
   private restoreSnapshot(saved: Checkpoint): void {
     const snapshot = saved.snapshot;
+    this.runStartedAt = snapshot.runStartedAt ?? snapshot.startedAt;
     this.state = snapshot.state;
     this.turns = snapshot.turns;
     this.lastText = snapshot.lastText;
@@ -341,6 +353,7 @@ export class PiWorker {
   private async beginDurable(prompt: string, saved?: Checkpoint, recover = false): Promise<void> {
     if (saved) this.restoreSnapshot(saved);
     else this.inputStarted = false;
+    if (!recover) this.runStartedAt = new Date().toISOString();
     const alreadyStopped = recover && saved && !["starting", "running"].includes(saved.snapshot.state);
     if (!alreadyStopped) {
       this.state = "running";
@@ -498,11 +511,6 @@ export class PiWorker {
     if (this.turns >= this.maxTurns) {
       throw new Error(
         `Session ${this.id} already used ${this.turns}/${this.maxTurns} turns. Spawn a new delegate instead of follow_up.`,
-      );
-    }
-    if (this.elapsedMs() >= this.maxDurationMs) {
-      throw new Error(
-        `Session ${this.id} already reached its ${this.maxDurationMs}ms deadline. Spawn a new delegate instead of follow_up.`,
       );
     }
     if (this.job) {
@@ -679,8 +687,9 @@ export class PiWorker {
     } else session?.dispose?.();
   }
 
+  /** Elapsed time of the current run, which the wall-clock limit applies to. */
   private elapsedMs(): number {
-    return Date.now() - Date.parse(this.startedAt);
+    return Date.now() - Date.parse(this.runStartedAt);
   }
 
   snapshot({ verbose = false }: { verbose?: boolean } = {}): Snapshot {
@@ -700,6 +709,7 @@ export class PiWorker {
       notices: this.notices,
       error: this.error,
       startedAt: this.startedAt,
+      runStartedAt: this.runStartedAt,
       finishedAt: this.finishedAt,
       elapsedMs: this.elapsedMs(),
       limits: { maxTurns: this.maxTurns, maxDurationMs: this.maxDurationMs },
@@ -712,7 +722,11 @@ export class PiWorker {
 
   /** Keep the finished state readable by any process without loading the session. */
   private recordFinal(): void {
-    if (this.suspended || this.isActive) return;
+    // Not isActive: an abort may still be draining the SDK when the task has already ended.
+    if (this.suspended || !["done", "aborted", "error"].includes(this.state)) return;
+    // An abort outside a run (a recovered task already past its budget) never reached the run's
+    // own completion stamp.
+    this.finishedAt ??= new Date().toISOString();
     this.job?.recordFinal(this.snapshot({ verbose: true }));
   }
 }

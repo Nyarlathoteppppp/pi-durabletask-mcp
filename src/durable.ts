@@ -87,7 +87,17 @@ function db(): DatabaseSync {
   const opened = new DatabaseSync(path);
   // pid is diagnostic only; ownership is the lock. attempts counts claims since the job last
   // made progress, so a job that kills its host on recovery cannot crash every host in turn.
-  opened.exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;
+  opened.exec("PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;");
+  // Check an existing catalog's protocol before touching its schema.
+  const hasMeta = opened.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta'").get() !== undefined;
+  const existing = hasMeta
+    ? (opened.prepare("SELECT value FROM meta WHERE name = 'ownership_protocol'").get() as { value: string } | undefined)?.value
+    : undefined;
+  if (existing !== undefined && existing !== String(OWNERSHIP_PROTOCOL)) {
+    opened.close();
+    throw new Error(`${path} uses ownership protocol ${existing}; this build speaks ${OWNERSHIP_PROTOCOL}`);
+  }
+  opened.exec(`
     CREATE TABLE IF NOT EXISTS meta (name TEXT PRIMARY KEY, value TEXT NOT NULL);
     INSERT OR IGNORE INTO meta VALUES ('ownership_protocol', '${OWNERSHIP_PROTOCOL}');
     CREATE TABLE IF NOT EXISTS jobs (key TEXT PRIMARY KEY, pid INTEGER NOT NULL, agent_dir TEXT NOT NULL,
@@ -99,12 +109,16 @@ function db(): DatabaseSync {
   const columns = new Set((opened.prepare("PRAGMA table_info(jobs)").all() as { name: string }[]).map((c) => c.name));
   if (!columns.has("finished_at")) opened.exec("ALTER TABLE jobs ADD COLUMN finished_at INTEGER");
   if (!columns.has("snapshot")) opened.exec("ALTER TABLE jobs ADD COLUMN snapshot TEXT");
-  chmodSync(path, 0o600);
-  const protocol = (opened.prepare("SELECT value FROM meta WHERE name = 'ownership_protocol'").get() as { value: string }).value;
-  if (protocol !== String(OWNERSHIP_PROTOCOL)) {
-    opened.close();
-    throw new Error(`${path} uses ownership protocol ${protocol}; this build speaks ${OWNERSHIP_PROTOCOL}`);
+  // Session ids are unique per agent dir across every process. A pre-check alone races: two
+  // processes could both find an id free and insert it under different job keys.
+  try {
+    opened.exec("CREATE UNIQUE INDEX IF NOT EXISTS jobs_session ON jobs (agent_dir, json_extract(options, '$.id'))");
+  } catch (error) {
+    // A catalog that already holds duplicate ids keeps working on the pre-check alone; refusing to
+    // start would strand every job in it. forget the duplicates to restore the guarantee.
+    process.stderr.write(`[pi-delegate] session ids are not unique in ${path}; forget duplicates to fix: ${String(error)}\n`);
   }
+  chmodSync(path, 0o600);
   return catalog = opened;
 }
 
@@ -178,6 +192,12 @@ export function storedJobs(): { sessionId: string; label: string | undefined; fi
     const options = JSON.parse(row.options) as WorkerOptions;
     return { sessionId: options.id ?? row.key, label: options.label, finishedAt: new Date(row.finished_at).toISOString() };
   });
+}
+
+/** Bytes of all job stores. The catalog is not counted. */
+export function storageBytes(): number {
+  db();
+  return readdirSync(JOBS_DIR).reduce((sum, key) => sum + bytes(join(JOBS_DIR, key)), 0);
 }
 
 const bytes = (dir: string): number => {
@@ -295,10 +315,10 @@ export class DurableJob implements JobStore {
       const current = job.taskId ? await job.harness.getTask(job.taskId, context) : undefined;
       job.needsResume = Boolean(current && current.state.status !== "terminal");
       if (key && !job.needsResume && (job.attemptsPending || unfinished)) {
-        // Loading finished history is not a recovery attempt. A crash between the terminal commit
-        // and its catalog update leaves finished_at unset; record it now.
+        // Loading finished history is not a recovery attempt. A crash after the terminal commit but
+        // before recordFinal leaves the row unfinished; the worker records it once loaded.
         job.attemptsPending = false;
-        catalog.prepare("UPDATE jobs SET attempts = 0, finished_at = coalesce(finished_at, ?) WHERE key = ?").run(Date.now(), key);
+        catalog.prepare("UPDATE jobs SET attempts = 0 WHERE key = ?").run(key);
       }
       // Judged only here, where the task is known to be unfinished, so finished history is never
       // reported as exhausted. The caller keeps the lock, so no other host retries it either.
@@ -310,6 +330,8 @@ export class DurableJob implements JobStore {
     } catch (error) {
       await job.harness?.close(context);
       if (!key) forgetOwnedJob(job.key);
+      if (!key && /UNIQUE constraint failed/.test(String(error)))
+        throw new Error(`Session id "${options.id}" is already in use. Pick another or call abort/forget first.`);
       throw error;
     }
   }
@@ -331,7 +353,7 @@ export class DurableJob implements JobStore {
       // Unfinished first: a crash before the task commits leaves an unfinished row whose current
       // task is terminal, which recovery reopens and marks finished again. The reverse order would
       // leave a running task marked finished, skipped by recovery and open to the sweep.
-      db().prepare("UPDATE jobs SET finished_at = NULL WHERE key = ?").run(this.key);
+      db().prepare("UPDATE jobs SET finished_at = NULL, snapshot = NULL WHERE key = ?").run(this.key);
       const root = await this.harness.root(context);
       this.taskId = await root.commit(async (tx) => {
         const id = await tx.createTask(this.task, { prompt, checkpoint }, { ownership: { kind: "conversation" } });
@@ -343,13 +365,19 @@ export class DurableJob implements JobStore {
   }
   private async wait(): Promise<Checkpoint> {
     const task = await this.harness.waitForTask(this.taskId!, context);
-    db().prepare("UPDATE jobs SET finished_at = ? WHERE key = ?").run(Date.now(), this.key);
     if (task.state.outcome.status !== "completed") throw new Error(`Durable task ${task.state.outcome.status}: ` +
       ("error" in task.state.outcome ? JSON.stringify(task.state.outcome.error) : "no result"));
     return task.state.outcome.result;
   }
+  /**
+   * Mark the job finished together with its final state, in one statement. Until this runs the
+   * row stays unfinished, so a crash after the terminal commit is repaired by recovery instead of
+   * leaving a finished row with a previous run's snapshot.
+   */
   recordFinal(snapshot: Snapshot): void {
-    if (owns(this.key)) db().prepare("UPDATE jobs SET snapshot = ? WHERE key = ?").run(JSON.stringify(snapshot), this.key);
+    if (!owns(this.key)) return;
+    const at = Date.parse(snapshot.finishedAt ?? "") || Date.now();
+    db().prepare("UPDATE jobs SET finished_at = ?, snapshot = ? WHERE key = ?").run(at, JSON.stringify(snapshot), this.key);
   }
   save(checkpoint: Checkpoint): Promise<void> {
     if (this.closing || !this.runtime) return Promise.resolve();

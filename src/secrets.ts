@@ -1,6 +1,6 @@
 import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { ExtensionAPI, InlineExtension } from "@earendil-works/pi-coding-agent";
 
 const SENSITIVE_DIRS = [".codex", ".ssh", ".aws", ".gnupg", ".claude"] as const;
@@ -22,11 +22,20 @@ function isInside(parent: string, child: string): boolean {
   return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !rel.startsWith(".."));
 }
 
+/**
+ * Resolve symlinks in the deepest existing ancestor, then append the rest. A path that does not
+ * exist yet, such as a file about to be written, must not hide a symlinked parent directory.
+ */
 function canonicalize(path: string): string {
-  try {
-    return realpathSync(path);
-  } catch {
-    return resolve(path);
+  const absolute = resolve(path);
+  const missing: string[] = [];
+  for (let current = absolute; ; current = dirname(current)) {
+    try {
+      return join(realpathSync(current), ...missing.reverse());
+    } catch {
+      if (dirname(current) === current) return absolute;
+      missing.push(basename(current));
+    }
   }
 }
 

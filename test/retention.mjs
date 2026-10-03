@@ -190,6 +190,64 @@ try {
   assert.ok(row("new").finished_at > 0);
   await close(host);
 
+  // 10. Two processes spawning the same durable id at once: exactly one gets it.
+  const [hostA, hostB] = await Promise.all([connect(), connect()]);
+  const raced = await Promise.allSettled([hostA, hostB].map((h) => h.call("spawn", { cwd: directory, id: "same-id", prompt: "plain", tools: [] })));
+  assert.equal(raced.filter((r) => r.status === "fulfilled").length, 1, "one spawn wins");
+  assert.match(String(raced.find((r) => r.status === "rejected").reason), /already in use/);
+  assert.equal(catalog("SELECT count(*) AS n FROM jobs WHERE json_extract(options, '$.id') = 'same-id'")[0].n, 1);
+  await close(hostA); await close(hostB);
+
+  // 11. A crash after a follow-up's terminal commit but before its final state is recorded must not
+  //     leave the previous run's state marked finished: the row stays unfinished, and recovery
+  //     records the new state.
+  host = await connect();
+  await host.call("spawn", { cwd: directory, id: "two-runs", prompt: "plain", tools: [] });
+  await done(host, "two-runs");
+  await close(host);
+  host = await connect({ server: "test/recovery-server.mjs", TEST_CRASH_BEFORE_FINAL: "2" });
+  await assert.rejects(async () => {
+    await host.call("follow_up", { sessionId: "two-runs", prompt: "again" });
+    await waitUntil(() => false);
+  });
+  clients.delete(host);
+  assert.equal(row("two-runs").finished_at, null, "not marked finished with the old snapshot");
+  host = await connect();
+  await waitUntil(() => row("two-runs")?.finished_at > 0);
+  assert.equal((await host.call("status", { sessionId: "two-runs" })).turns, 2, "the recorded state is the second run's");
+  await close(host);
+
+  // 12. Retention is fixed when the session is created, whatever default a later process has.
+  host = await connect({ PI_DELEGATE_RETENTION_DAYS: "30" });
+  await host.call("spawn", { cwd: directory, id: "env-default", prompt: "plain", tools: [] });
+  await done(host, "env-default");
+  await close(host);
+  catalog("UPDATE jobs SET finished_at = ? WHERE key = ?", Date.now() - 8 * 86_400_000, row("env-default").key);
+  host = await connect();
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.ok(row("env-default"), "kept 30 days, not this process's 7");
+  await close(host);
+
+  // 13. Over the size limit, finished sessions this process still has loaded are deleted too.
+  host = await connect({ PI_DELEGATE_STORAGE_LIMIT_MB: "0.001", PI_DELEGATE_HISTORY: "50" });
+  await host.call("spawn", { cwd: directory, id: "loaded-big", prompt: "plain", tools: [] });
+  assert.ok(row("loaded-big"), "stored while it runs");
+  await waitUntil(() => row("loaded-big") === undefined);
+  await close(host);
+
+  // 14. A catalog that already holds duplicate ids (from before the index) still starts.
+  host = await connect();
+  await host.call("spawn", { cwd: directory, id: "dup-src", prompt: "plain", tools: [] });
+  await done(host, "dup-src");
+  await close(host);
+  catalog("DROP INDEX jobs_session");
+  catalog("INSERT INTO jobs (key, pid, agent_dir, options, prompt, finished_at) SELECT ?, 0, agent_dir, options, prompt, finished_at FROM jobs WHERE key = ?",
+    "00000000-0000-4000-8000-0000000000dd", row("dup-src").key);
+  host = await connect();
+  assert.equal((await host.call("status", { sessionId: "dup-src" })).state, "done", "starts despite duplicates");
+  await close(host);
+  catalog("DELETE FROM jobs WHERE key = ?", "00000000-0000-4000-8000-0000000000dd");
+
   console.log("  OK -> non-durable writes nothing, eviction keeps disk, lazy load and cross-host hold, retention and tombstones, size limit spares unfinished, forget stored, policy on load, LRU keeps loaded history, follow-up crash window");
 } finally {
   for (const host of clients) await host.client.close().catch(() => {});

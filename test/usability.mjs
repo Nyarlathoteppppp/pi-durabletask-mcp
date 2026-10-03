@@ -107,6 +107,15 @@ try {
   await assert.rejects(() => host.call("spawn", { cwd: directory, id: "keep", prompt: "plain", tools: [], retentionDays: 30 }),
     /retentionDays applies only to durable delegates/);
 
+  // 1c. The wall-clock limit applies per run: a session finished long ago can still be followed up.
+  await host.call("spawn", { cwd: directory, id: "short-clock", prompt: "plain", tools: [], maxDurationMs: 1000 });
+  await settle(host, "short-clock");
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  await host.call("follow_up", { sessionId: "short-clock", prompt: "again" });
+  const second = await settle(host, "short-clock");
+  assert.equal(second.state, "done");
+  assert.equal(second.turns, 2);
+
   // 2. A provider whose credentials fail is reported by init, not offered, and refused at spawn.
   assert.match(host.init.failingProviders.broken, /OAuth refresh failed/);
   assert.ok(!JSON.stringify(host.init.models).includes("broken/one"), "its models are not offered");

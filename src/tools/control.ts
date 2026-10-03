@@ -147,8 +147,9 @@ export function registerControl(server: McpServer): void {
     {
       description:
         "Send another prompt to a delegate that has already finished, keeping everything it read " +
-        "and said. Turns and wall-clock already spent still count toward the original budget; " +
-        "follow_up is refused once that budget is exhausted. For a live session, use `steer`.",
+        "and said. Turns are cumulative: follow_up is refused once maxTurns is used up. The " +
+        "wall-clock limit applies to each run, so a durable session can be continued days later. " +
+        "For a live session, use `steer`.",
       inputSchema: {
         sessionId: z.string(),
         prompt: z.string().describe("The next turn for this delegate"),

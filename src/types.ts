@@ -69,6 +69,8 @@ export interface Snapshot {
   notices: Notice[];
   error: string | undefined;
   startedAt: string;
+  /** Start of the current run (spawn or latest follow_up); the wall-clock limit applies from here. */
+  runStartedAt?: string;
   finishedAt: string | undefined;
   elapsedMs: number;
   limits: { maxTurns: number; maxDurationMs: number };

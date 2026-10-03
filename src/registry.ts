@@ -1,6 +1,8 @@
 import {
   DAY_MS,
   DEFAULT_MODEL,
+  RETENTION_DAYS,
+  STORAGE_LIMIT_BYTES,
   HISTORY_LIMIT,
   MAX_CONCURRENT,
   SPAWN_DEFAULT_DURATION_MS,
@@ -11,7 +13,7 @@ import { PiWorker, type WorkerOptions } from "./pi/worker.js";
 import { resolveDelegateCwd } from "./workspace.js";
 import type { PiThinkingLevel, TerminationReason } from "./types.js";
 import { publish } from "./statusline/state.js";
-import { claimAbandoned, claimStored, forgetOwnedJob, releaseJob, storedIdInUse, sweep } from "./durable.js";
+import { claimAbandoned, claimStored, forgetOwnedJob, releaseJob, storageBytes, storedIdInUse, sweep } from "./durable.js";
 import { validateNativeMcp, type NativeMcpOptions } from "./pi/native-mcp.js";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
@@ -85,12 +87,12 @@ export async function resolve(id: string): Promise<PiWorker> {
     throw new Error(`Session ${id} is loaded by another running MCP process. Use it from there, or stop that process.`);
   if (!record) throw new Error(`Unknown sessionId: ${id}`);
   const load = (async () => {
-    const worker = new PiWorker(record.options);
+    const worker = new PiWorker({ ...record.options, durable: true });
     worker.recoveryKey = record.key;
     worker.onChange = () => publish(all());
     try {
       await checkStoredPolicy(record.options);
-      await PiWorker.recover(record.options, record.prompt, record.key, worker);
+      await PiWorker.recover({ ...record.options, durable: true }, record.prompt, record.key, worker);
     } catch (error) { worker.dispose(); releaseJob(record.key); throw error; }
     sessions.set(worker.id, worker);
     touch(worker.id);
@@ -126,8 +128,11 @@ export function sweepStorage(force = false): void {
   const now = Date.now();
   if (!force && now - lastSweep < 60_000) return;
   lastSweep = now;
+  // Over the size limit, every finished durable session here is unloaded too, so the sweep can
+  // delete the oldest; unloaded ones stay readable and reload on follow_up if they survive.
+  const over = storageBytes() > STORAGE_LIMIT_BYTES;
   const expired = all().filter((w) => w.retentionDays !== undefined && !w.isActive && w.finishedAt &&
-    Date.parse(w.finishedAt) + w.retentionDays * DAY_MS < now);
+    (over || Date.parse(w.finishedAt) + w.retentionDays * DAY_MS < now));
   void Promise.all(expired.map(unload))
     .then(() => sweep(now))
     .catch((error) => process.stderr.write(`[pi-delegate] storage sweep failed: ${String(error)}\n`))
@@ -145,7 +150,7 @@ export async function recoverAbandoned(): Promise<void> {
       if (!records.length) break;
       // Reserve the entire claim before awaiting model/runtime initialization.
       const claimed = records.map((record) => {
-        const worker = new PiWorker(record.options);
+        const worker = new PiWorker({ ...record.options, durable: true });
         worker.recoveryKey = record.key;
         sessions.set(worker.id, worker);
         worker.onChange = () => publish(all());
@@ -154,7 +159,7 @@ export async function recoverAbandoned(): Promise<void> {
       for (const { record, worker } of claimed) {
         try {
           await checkStoredPolicy(record.options);
-          await PiWorker.recover(record.options, record.prompt, record.key, worker);
+          await PiWorker.recover({ ...record.options, durable: true }, record.prompt, record.key, worker);
           void worker.run?.then(() => { evictHistory(); sweepStorage(); setImmediate(() => void recoverAbandoned()); });
         } catch (error) {
           worker.state = "error";
@@ -236,7 +241,8 @@ function makeWorker(req: LaunchRequest & { cwd: string; tools: string[] }): PiWo
     mcpServers: req.mcpServers,
     maxTurns: req.maxTurns ?? SPAWN_DEFAULT_TURNS,
     maxDurationMs: req.maxDurationMs ?? SPAWN_DEFAULT_DURATION_MS,
-    retentionDays: req.retentionDays,
+    // Fixed at creation, so every process applies the same retention whatever its own default.
+    retentionDays: req.durable ? req.retentionDays ?? RETENTION_DAYS : undefined,
   });
 }
 

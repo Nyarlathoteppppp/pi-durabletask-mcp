@@ -5,6 +5,17 @@
 - Delegates are in memory only by default; pass `durable: true` to save, recover and keep one.
 - `retentionDays` (1-365) on `spawn`, `run` and `spawn_batch` sets how long a durable delegate is kept; `PI_DELEGATE_RETENTION_DAYS` remains the default.
 - The final state of a finished durable delegate is recorded in the catalog, so any process can read it with `status` or `wait` without loading it, even while another process has it loaded. Only `follow_up` takes ownership.
+- Session ids of durable delegates are unique in the catalog, so two processes spawning the same id at once cannot both succeed.
+- A finished delegate's completion and final state are recorded in one statement; a crash in between leaves it unfinished for recovery instead of showing a previous run's state.
+- The wall-clock limit applies to each run (spawn or follow_up); turns stay cumulative. Durable sessions kept for days can be followed up.
+- Default retention is fixed when a durable delegate is created, so processes with different defaults agree.
+- Over the storage limit, finished delegates loaded in this process are unloaded so they can be deleted. The limit covers job stores, not the catalog.
+- The secret path guard resolves symlinks in the nearest existing parent, so a new file under a symlink to a secret directory is blocked.
+- An existing catalog's ownership protocol is checked before its schema is migrated.
+- `PiWorker` defaults to non-durable, matching MCP callers; workers loaded from the catalog are always durable.
+- Provider credentials are checked only before a run starts, so loading finished history never depends on them.
+- A delegate aborted outside a run (a recovered task already past its budget) records when it finished.
+- A catalog that already holds duplicate session ids still starts, with a warning, instead of failing on the new index.
 
 ## 0.3.0
 

@@ -118,6 +118,11 @@ This is the cheap way to have a conversation with a delegate. Spawning a fresh o
 re-explaining the task and paying for it to re-read the same files, and its answer arrives
 with none of the reasoning that led there.
 
+Turns are cumulative across follow-ups, and `follow_up` is refused once `maxTurns` is used up.
+The wall-clock limit (`maxDurationMs`) applies to each run instead: the spawn and every
+`follow_up` get the full limit, so a durable delegate kept for days can still be continued.
+Time a run spends interrupted by a server restart counts against that run.
+
 `follow_up` refuses a delegate that is still working, because redirecting one mid-task is
 what `steer` is for. The two are not interchangeable: `steer` lands between tool calls on a
 running agent, `follow_up` starts a new turn on a finished one.
@@ -323,6 +328,9 @@ having two executors of one task. The catalog's `pid` column is diagnostic only.
   deleted. Deleting an open lock file would let the next opener lock a new file at the same
   path. `forget` removes the catalog row and store, then releases the lock, and leaves the
   small lock file behind.
+- A delegate that cannot be recovered (for example, its stored tools are no longer permitted)
+  is shown with `state: "error"` and the reason. Each new process that claims it shows it
+  again, rather than silently dropping it, until you `forget` it.
 - A claim of a task that has not finished a turn since its last claim counts as a recovery
   attempt. After `PI_DELEGATE_MAX_RECOVERY_ATTEMPTS` (default 3) such claims, the delegate is
   reported as an error instead of being resumed, so a task that crashes its host on recovery
@@ -350,9 +358,10 @@ Durable delegates are kept on disk after they finish, then deleted automatically
 - A finished delegate is deleted `retentionDays` after it last finished, or
   `PI_DELEGATE_RETENTION_DAYS` (default 7) when its spawn named none; `follow_up` restarts
   the clock.
-- When stored delegates exceed `PI_DELEGATE_STORAGE_LIMIT_MB` (default 1024), the oldest
-  finished ones are deleted early until the total is under the limit, whatever their
-  `retentionDays`.
+- When job stores exceed `PI_DELEGATE_STORAGE_LIMIT_MB` (default 1024), the oldest finished
+  delegates are unloaded and deleted early until the total is under the limit, whatever their
+  `retentionDays`. This is a soft limit on the job stores only: the shared catalog, which holds
+  each finished delegate's final state, is not counted.
 - Unfinished delegates are never deleted, under any pressure. Neither are delegates another
   live process has loaded; that process applies retention to them itself.
 - The check runs when a process starts and, at most once a minute, when a delegate finishes.
@@ -501,7 +510,7 @@ MCP for one task in an enabled batch, pass `nativeMcp: false, mcpServers: []`.
 | `PI_DELEGATE_STATE_DIR`       | XDG state dir    | Status-line state and durable task storage (local filesystem only)       |
 | `PI_DELEGATE_MAX_RECOVERY_ATTEMPTS` | `3`        | Claims without progress before a delegate is reported instead of resumed |
 | `PI_DELEGATE_RETENTION_DAYS`  | `7`              | Days a finished durable delegate is kept when its spawn sets no `retentionDays` |
-| `PI_DELEGATE_STORAGE_LIMIT_MB` | `1024`          | Stored delegates above this are deleted early, oldest finished first     |
+| `PI_DELEGATE_STORAGE_LIMIT_MB` | `1024`          | Soft limit on job stores; above it the oldest finished are deleted early |
 | `PI_DELEGATE_STATUSLINE_WRAP` | unset            | Status line command to wrap and append to                                |
 | `PI_DELEGATE_STATUSLINE_LOG`  | unset            | File to append a timestamp to on every status line render, for debugging |
 | `PI_DELEGATE_PROGRESS_MS`     | `15000`          | Progress notification interval during `run`                              |

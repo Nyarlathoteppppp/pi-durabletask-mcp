@@ -55,6 +55,15 @@ DurableJob.prototype.close = async function (release = true) {
     while (!existsSync(closeBarrier + ".release")) await new Promise((resolve) => setTimeout(resolve, 10));
   }
 };
+// Die after a run's terminal commit, before its finished state reaches the catalog.
+const recordFinal = DurableJob.prototype.recordFinal;
+DurableJob.prototype.recordFinal = function (snapshot) {
+  if (process.env.TEST_CRASH_BEFORE_FINAL && snapshot.turns >= Number(process.env.TEST_CRASH_BEFORE_FINAL)) {
+    process.kill(process.pid, "SIGKILL");
+  }
+  return recordFinal.call(this, snapshot);
+};
+
 // Make one provider's credentials fail to resolve, as an expired OAuth refresh would.
 if (process.env.TEST_BROKEN_PROVIDER) {
   const { getRuntime } = await import("../dist/pi/runtime.js");
