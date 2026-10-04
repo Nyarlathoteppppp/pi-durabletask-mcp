@@ -1,48 +1,80 @@
 <p align="center">
-  <img src="docs/assets/hero.png" alt="pi-durabletask-mcp — Delegate. Steer. Recover." width="900" />
+  <img src="https://raw.githubusercontent.com/Nyarlathoteppppp/pi-durabletask-mcp/main/docs/assets/hero.png" alt="pi-durabletask-mcp — Delegate. Steer. Recover." width="900" />
 </p>
 
 <div align="center">
 
 **English** · [简体中文](README.zh-CN.md)
 
-**Pi agents for Claude Code, Codex, and any MCP client.**
+# pi-durabletask-mcp
 
-Background tasks · Live steering · Opt-in SQLite recovery · Native Pi MCP
+Delegate work from Claude Code, Codex, or another MCP client to [Pi Coding Agent](https://pi.dev), in its own context.
 
+[![npm](https://img.shields.io/npm/v/pi-durabletask-mcp)](https://www.npmjs.com/package/pi-durabletask-mcp)
 [![CI](https://github.com/Nyarlathoteppppp/pi-durabletask-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Nyarlathoteppppp/pi-durabletask-mcp/actions/workflows/ci.yml)
 [![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A5%2022.19-30343b?logo=nodedotjs&logoColor=white)](package.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-e78260.svg)](LICENSE)
 
-[Get started](#quick-start) · [Features](#key-features) · [Reference](docs/reference.md)
+[Quick start](#quick-start) · [Reference](docs/reference.md)
 
 </div>
 
-## Give Pi the task.
+## Example workflow
 
-Your agent delegates to [Pi Coding Agent](https://pi.dev), checks progress, and collects
-the result. Pi reads and searches in its own session, so that work stays out of your agent's
-context. Steer live work or follow up in the same conversation.
+```text
+You: Use Pi to review authentication for missing permission checks. Don't edit files.
+     Explicitly set durable: true so we can continue in another window.
+  → spawn with the absolute repo cwd and durable: true
+While running: Focus on tenant isolation; skip style issues.
+  → steer
+After the review: Suggest a regression test for the most serious finding.
+  → follow_up in the same session
+Switching windows: Save findings and next steps → handoff save
+New window: Read this repo's handoff → handoff read; follow resumeHint
+```
 
-| Delegate | Steer | Recover |
-| :--- | :--- | :--- |
-| One task or a batch, in the background. | Redirect work in progress. | Resume after a restart with `durable: true`. |
+To collect results, the main agent loops `wait` with `until: "settled"`. If Pi asks a question, use `answer` with the question ID, then wait again.
+
+## What you can do
+
+- **Separate context:** Pi reads and searches; your main agent collects findings.
+- **Multiple models:** `spawn_batch` starts tasks with individually selected models.
+- **Live steering:** `steer` redirects work after the current tool call.
+- **Follow-ups:** `follow_up` keeps context in the same long-lived session; turns accumulate.
+- **Recovery:** explicit `durable: true` saves checkpoints to SQLite.
+- **Handoff:** leave a note for the next Claude/Codex window.
+- **Native MCP:** `nativeMcp` explicitly selects servers and tool permissions; third-party extensions are enabled separately.
 
 ## Quick start
 
-**Requires Node.js 22.19+ and Pi 1.0.0.** Search uses Pi's downloaded `rg` or ripgrep on PATH.
+**Requires Node.js 22.19+ and global Pi.** CI-tested with Pi **1.0.0 and 1.0.2**. Model calls use your own provider credentials and quota.
 
 ### 1 · Install
 
-```bash
-npm install -g @earendil-works/pi-coding-agent@1.0.0
-pi  # configure a provider or use /login
+Already configured Pi? Install the bridge:
 
+```bash
 npm install -g pi-durabletask-mcp
 ```
 
 <details>
+<summary>Install and configure Pi first</summary>
+
+The bridge links to the global Pi SDK, so install Pi before the bridge:
+
+```bash
+npm install -g @earendil-works/pi-coding-agent@1.0.0
+pi  # configure a provider or use /login
+```
+
+Search uses Pi's downloaded `rg` or ripgrep on PATH. [Authentication →](docs/reference.md#auth)
+
+</details>
+
+<details>
 <summary>Install from source</summary>
+
+Global Pi is still required.
 
 ```bash
 git clone https://github.com/Nyarlathoteppppp/pi-durabletask-mcp.git
@@ -51,103 +83,55 @@ npm ci
 npm run build
 ```
 
-For a source checkout, connect with `node /absolute/path/pi-durabletask-mcp/dist/index.js`.
+Connect with `node /absolute/path/pi-durabletask-mcp/dist/index.js` instead of the installed command.
 
 </details>
 
 ### 2 · Connect
 
-**Claude Code**
+<details>
+<summary>Claude Code</summary>
 
 ```bash
 claude mcp add --scope user pi -- pi-durabletask-mcp
 ```
 
-**Codex** — add to `~/.codex/config.toml`:
+</details>
+
+<details>
+<summary>Codex</summary>
+
+Add to `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.pi]
 command = "pi-durabletask-mcp"
 ```
 
-Already connected? Update the existing entry and reconnect the MCP server.
-[Other clients →](docs/reference.md#other-mcp-clients)
-
-### 3 · Delegate
-
-> Use Pi to review this repository and report the findings.
-
-Your agent calls `spawn` → `wait`. Pi uses your configured model and **read-only tools**
-by default. `init` is optional diagnostics; `models` lists alternatives.
-[Agent instructions →](docs/reference.md#agent-instructions) · [Models & permissions →](docs/reference.md#configuration)
-
-## Usage
-
-For a task that should recover after a bridge restart, ask for a **durable task**, or pass:
-
-```json
-{
-  "cwd": "/absolute/path/to/repo",
-  "prompt": "Review this repository and report the findings.",
-  "durable": true
-}
-```
-
-<details>
-<summary><strong>All 14 tools</strong></summary>
-
-| Want to… | Use |
-| :--- | :--- |
-| Start work | `spawn` · `spawn_batch` · `run` |
-| Check progress | `status` · `wait` · `sessions` |
-| Redirect or continue | `steer` · `follow_up` |
-| Answer, stop, or remove | `answer` · `abort` · `forget` |
-| Discover configuration | `init` · `models` |
-| Hand over to a new window | `handoff` |
-
 </details>
 
-Delegates can also use selected **Pi native MCP servers** with an explicit tool allowlist.
-[Native MCP setup →](docs/reference.md#native-mcp)
+Already connected? Update the existing entry and reconnect. [Other clients →](docs/reference.md#other-mcp-clients)
 
-## Key features
+### 3 · Try a review
 
-- **Keep your agent's context small.** Pi does the reading and searching in its own session and your agent gets the result. Polling is cheap as well: `status` and `wait` return the latest five tool calls and a total (`verbose: true` for the full trace), and `wait` returns as soon as Pi asks a question. `wait` can also hold until a delegate finishes, or until any or all of a batch do.
-- **Run several delegates at once.** `spawn_batch` starts a batch in one call, each task with its own model if you like, for example a cheaper model for search or a second vendor's model to review the same change.
-- **Steer and continue.** `steer` redirects running work. `follow_up` continues a finished conversation with everything Pi already read. Turn and time limits are configurable; the time limit applies to each run, so a durable session can be continued days later, while turns count across the session.
-- **Ready for agents on connect.** Tools work right after connecting. `spawn` with a repo path uses your configured model and read-only tools. `init` is there to diagnose models, permissions and provider auth.
-- **Bad models and credentials fail early.** An explicit model and Pi's own default pass the same allowlist, denylist and scope checks. A provider whose auth cannot be resolved is refused before the run starts, and `init` lists it under `failingProviders`. Pi's automatic provider retries show up in status notices.
-- **Durable when it matters.** Tasks live in memory by default. `durable: true` saves one to SQLite so it survives a bridge restart. Each durable task has exactly one owner, held by a kernel-released lock, and any session can read a finished task's result. History is kept seven days by default, `retentionDays` sets it per task, and expired history is removed automatically; storage pressure can remove finished history earlier.
-- **Native Pi MCP.** Choose servers and exact tool permissions per delegate, including `codemode` and `tool_search`. Third-party extensions are a separate opt-in.
-- **Your Pi setup.** Reuse your global Pi SDK and provider configuration; choose a model for each delegate.
+> Use Pi to review authentication for missing permission checks. Don't edit files. Report file locations and suggested regression tests.
 
-[Configuration →](docs/reference.md#configuration) · [Ownership & retention →](docs/reference.md#ownership)
+The agent uses `spawn` → `wait(until: "settled")`, answering questions with `answer`. Try the steering and follow-up prompts above. `init` is optional diagnostics; `models` lists available models.
 
-## What recovery means
+## Defaults & recovery
 
-Tasks are **in memory by default**. With `durable: true`, SQLite saves history, tool results,
-and pending steering. Unfinished tasks recover on restart; finished history stays until
-retention removes it.
+Tasks use your configured model, **read-only tools and memory storage by default**; memory sessions disappear when their MCP process exits.
+With explicit `durable: true`, recovery happens after a bridge restart: per-run time limits include downtime, and tools with unknown outcomes are not blindly replayed—verify external state before retrying.
+`handoff` stores notes written by the main agent; reading them does not take over execution.
+Cross-window continuation requires a durable task with its original history and note still retained; a live owner must release the task before another process can continue it.
 
-Interrupted tools can have **unknown outcomes**. The bridge does not blindly replay their
-side effects; inspect external state before retrying. Downtime counts against the current
-run's time limit.
-[Recovery & retention →](docs/reference.md#recovery-after-a-server-restart)
+## Documentation
 
-<details>
-<summary><strong>Updating Pi</strong></summary>
-
-After `pi update --all`, run `npm test` in this checkout, then reconnect the MCP server.
-The bridge shares your global Pi SDK; Pi Durable stays pinned separately.
-
-</details>
+- [Agent instructions](docs/reference.md#agent-instructions) · [Tools](docs/reference.md#tools) · [Configuration](docs/reference.md#configuration)
+- [Handoff](docs/reference.md#handing-over-between-windows) · [Native MCP](docs/reference.md#native-mcp)
+- [Recovery, ownership & retention](docs/reference.md#recovery-after-a-server-restart)
+- [Development](docs/reference.md#development) · [Changelog](CHANGELOG.md) · [Issues](https://github.com/Nyarlathoteppppp/pi-durabletask-mcp/issues)
 
 ---
 
-<div align="center">
-
-[Reference](docs/reference.md) · [Development](docs/reference.md#development) · [Handoff notes](CLAUDE.md) · [Changelog](CHANGELOG.md) · [Issues](https://github.com/Nyarlathoteppppp/pi-durabletask-mcp/issues)
-
 [MIT](LICENSE) · Built on [howznguyen/pi-delegate-mcp](https://github.com/howznguyen/pi-delegate-mcp) and Pi Durable.
-
-</div>
