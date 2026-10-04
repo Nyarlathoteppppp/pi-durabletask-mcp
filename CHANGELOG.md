@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.7 (2026-10-04)
 
 - Recovery could claim a durable job that its owner finished and released between recovery's scan and its lock, holding a finished session and counting an attempt. It now re-checks `finished_at` after locking.
 - Two calls that loaded the same stored session at once (for example two `follow_up`s) could fail the second with `Unknown sessionId`.
