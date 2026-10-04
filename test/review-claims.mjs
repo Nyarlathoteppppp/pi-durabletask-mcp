@@ -62,7 +62,7 @@ const connect = async (env = {}) => {
     if (result.isError) throw new Error(result.content?.[0]?.text);
     return JSON.parse(result.content[0].text);
   };
-  await host.call("init", { cwd: directory });
+  // No init: tools work without it, and several scenarios deliberately break every provider.
   return host;
 };
 const close = async (host) => { await host.client.close().catch(() => {}); clients.delete(host); };

@@ -203,14 +203,16 @@ export async function runExecution(
   request: LaunchRequest,
   { signal, onProgress }: RunOptions = {},
 ): Promise<Snapshot> {
+  // Bind cancellation as soon as the worker exists, before it starts: a caller that has already
+  // cancelled, or cancels during start, must not have Pi prompted at all.
+  let unbindCancellation = (): void => {};
   const w = await launch({
     ...request,
     maxTurns: request.maxTurns ?? RUN_DEFAULT_TURNS,
     maxDurationMs: request.maxDurationMs ?? RUN_DEFAULT_DURATION_MS,
+  }, (worker) => {
+    if (signal) unbindCancellation = bindCancellation(signal, async () => { await worker.abort("caller_cancelled"); });
   });
-  const unbindCancellation = signal ? bindCancellation(signal, async () => {
-    await w.abort("caller_cancelled");
-  }) : () => {};
   const ticker = onProgress
     ? setInterval(() => {
         // Progress is observational; both synchronous and async sink failures are ignored.

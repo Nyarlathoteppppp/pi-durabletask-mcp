@@ -4,6 +4,10 @@
 
 - `handoff` tool: `save` records which Pi session a repository's work is in, with the calling agent's goal, completed and next; `read` returns the newest note (or a named one) for a new Claude/Codex window, with a `resumeHint` computed from the session's live state. Notes live in a separate `handoff.sqlite`; reading never claims, loads, locks or recovers a session, and a note's recorded start time keeps a reused session id from being mistaken for the original.
 - Servers look for abandoned durable delegates every 30 seconds (`PI_DELEGATE_RECOVERY_INTERVAL_MS`), and when a caller asks for one waiting for recovery. Before, a delegate whose owner exited while this server was idle waited for the next restart.
+- A recovery claim that succeeded just as shutdown began registered its worker anyway; it is now handed back (lock released, attempt not counted).
+- A `run` whose caller had already cancelled, or cancelled during start, still prompted Pi before being aborted. Cancellation is now bound as soon as the worker exists, so such a run never starts.
+- `init` fails with the per-provider reasons when every provider in scope has failing credentials, instead of reporting ok with no usable model.
+- CI runs on Pi 1.0.0 and 1.0.2, each on Node 22 and 24.
 
 ## 0.3.4 (2026-10-04)
 

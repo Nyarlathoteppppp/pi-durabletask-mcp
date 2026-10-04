@@ -229,6 +229,13 @@ export function claimStored(id: string): JobRecord | "held" | "pending" | undefi
   return { key: row.key, options: JSON.parse(row.options) as WorkerOptions, prompt: row.prompt };
 }
 
+/** Hand back a claim that will not be used: release the lock and do not count the attempt. */
+export function unclaim(key: string): void {
+  if (!owns(key)) return;
+  db().prepare("UPDATE jobs SET pid = 0, attempts = max(attempts - 1, 0) WHERE key = ?").run(key);
+  releaseOwnership(key);
+}
+
 /** Let go of a job without deleting it, so another process may load it. */
 export function releaseJob(key: string): void {
   if (!owns(key)) return;

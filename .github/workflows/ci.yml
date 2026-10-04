@@ -9,11 +9,15 @@ permissions:
 
 jobs:
   test:
+    name: test (node ${{ matrix.node }}, pi ${{ matrix.pi }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         node: ["22", "24"]
+        # The bridge links the globally installed Pi SDK; cover the pinned version and the latest
+        # one known to work, whose pi-ai types differ from the pi-ai Pi Durable pins.
+        pi: ["1.0.0", "1.0.2"]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -22,6 +26,6 @@ jobs:
       - name: Install ripgrep
         run: sudo apt-get update && sudo apt-get install -y ripgrep
       - name: Install shared Pi SDK
-        run: npm install -g @earendil-works/pi-coding-agent@1.0.0
+        run: npm install -g @earendil-works/pi-coding-agent@${{ matrix.pi }}
       - run: npm ci
       - run: npm run test:ci

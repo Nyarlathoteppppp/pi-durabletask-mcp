@@ -14,7 +14,7 @@ import { PiWorker, type WorkerOptions } from "./pi/worker.js";
 import { resolveDelegateCwd } from "./workspace.js";
 import type { PiThinkingLevel, TerminationReason } from "./types.js";
 import { publish } from "./statusline/state.js";
-import { claimAbandonedSettled, claimStored, jitter, forgetOwnedJob, releaseJob, storageBytes, storedIdInUse, sweep } from "./durable.js";
+import { claimAbandonedSettled, claimStored, jitter, unclaim, forgetOwnedJob, releaseJob, storageBytes, storedIdInUse, sweep } from "./durable.js";
 import { validateNativeMcp, type NativeMcpOptions } from "./pi/native-mcp.js";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
@@ -168,6 +168,9 @@ export async function recoverAbandoned(): Promise<void> {
       const records = await claimAbandonedSettled(() => shuttingDown ? undefined
         : { excludeIds: new Set(sessions.keys()), limit: Math.max(0, MAX_CONCURRENT - activeCount()) });
       if (!records.length) break;
+      // Shutdown can begin while the claim's promise settles (in the same task). The claim then
+      // goes back unused: suspendAll has already taken its snapshot of the workers.
+      if (shuttingDown) { for (const record of records) unclaim(record.key); break; }
       // Reserve the entire claim before awaiting model/runtime initialization.
       const claimed = records.map((record) => {
         const worker = new PiWorker({ ...record.options, durable: true });
@@ -293,12 +296,17 @@ async function startWorker(worker: PiWorker, prompt: string): Promise<PiWorker> 
 }
 
 /** Reserve capacity and identity together, with no await between checking and insertion. */
-export async function launch(req: LaunchRequest): Promise<PiWorker> {
+/**
+ * onCreated runs once the worker exists and before it starts, so a caller can bind cancellation
+ * that also covers start: a worker aborted there never prompts Pi.
+ */
+export async function launch(req: LaunchRequest, onCreated?: (worker: PiWorker) => void): Promise<PiWorker> {
   const prepared = await prepare(req);
   assertCapacity();
   const worker = makeWorker(prepared);
   worker.onChange = () => publish(all());
   sessions.set(worker.id, worker);
+  onCreated?.(worker);
   return startWorker(worker, req.prompt);
 }
 

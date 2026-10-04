@@ -189,6 +189,11 @@ export async function preflight(cwd?: string): Promise<Health> {
     );
   }
   const healthy = await withHealthyProviders(usable);
+  // Models exist, but every provider behind them failed to resolve credentials: nothing can run.
+  if (healthy.models.length === 0)
+    throw new Error("No usable model: the credentials of every provider in scope failed to resolve. " +
+      Object.entries(healthy.failing).map(([provider, problem]) => `${provider}: ${problem}`).join("; ") +
+      ". Re-authenticate in pi, then call init again.");
   return { available: available.length, usable: healthy.models.map((m) => m.ref), failing: healthy.failing };
 }
 

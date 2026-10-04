@@ -228,6 +228,19 @@ try {
   await close(host);
   host = await connect({ TEST_BROKEN_PROVIDER: "broken" });
 
+  // init does not report ok when every usable provider's credentials fail.
+  {
+    const client = new Client({ name: "usability-test", version: "1" });
+    const transport = new StdioClientTransport({ command: process.execPath, args: ["test/recovery-server.mjs"], stderr: "ignore",
+      env: { ...process.env, PI_OFFLINE: "1", PI_CODING_AGENT_DIR: agentDir, PI_DELEGATE_STATE_DIR: join(directory, "state"),
+        PI_DELEGATE_MODEL: "test/one", PI_DELEGATE_IGNORE_SCOPE: "1", PI_DELEGATE_MODEL_DENYLIST: "broken/*", TEST_BROKEN_PROVIDER: "test" } });
+    await client.connect(transport);
+    const result = await client.callTool({ name: "init", arguments: { cwd: directory } });
+    assert.equal(result.isError, true, "init fails when no provider can serve a request");
+    assert.match(result.content[0].text, /No usable model[\s\S]*test/);
+    await client.close();
+  }
+
   // models agrees with spawn about a provider whose credentials fail.
   const offered = await host.call("models", { cwd: directory });
   assert.equal(offered.models.includes("broken/one"), false, "a failing provider's models are not offered");

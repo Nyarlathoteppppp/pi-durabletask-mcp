@@ -21,6 +21,7 @@ const client = new Client({ name: "core-adapter", version: "1" });
 const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
 // Keep the real worker lifecycle; only replace the SDK session with controllable prompts.
 PiWorker.prototype.start = async function (prompt) {
+  if (this.isStopped()) return this; // as the real start does at each step
   const steering = [];
   this.session = {
     prompt: async () => {
@@ -142,6 +143,7 @@ try {
   const cancelled = await core.runExecution({ cwd: dir, id: "cancelled", prompt: "work", tools: [] }, { signal: caller.signal });
   assert.equal(cancelled.state, "aborted");
   assert.equal(cancelled.termination.reason, "caller_cancelled");
+  assert.equal(runs.has(cancelled.sessionId), false, "a run cancelled before it began never prompts Pi");
   // A batch member waiting for an answer stays in the set the caller keeps waiting on.
   const asker = await core.startExecution({ cwd: dir, id: "batch-asker", prompt: "work", tools: [] });
   const quiet = await core.startExecution({ cwd: dir, id: "batch-quiet", prompt: "work", tools: [] });
