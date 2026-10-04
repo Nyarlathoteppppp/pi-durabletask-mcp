@@ -8,6 +8,9 @@
 - Recovery that retried after a busy lock reused the capacity and shutdown state from before its wait, so new work started meanwhile could push it past `PI_DELEGATE_MAX_CONCURRENT`, and it could still register work after shutdown began. Each claim attempt now reads both afresh.
 - `models` resolves the default the way `spawn` does, so a short id such as `grok-4.7` is no longer reported as unusable.
 - The claim-race test's claimer processes no longer fall through into the parent flow.
+- `spawn_batch` refuses a task when no model is named anywhere (no `model`, no `PI_DELEGATE_MODEL`, no Pi default), since Pi would only choose one after the siblings started.
+- A provider named like an `Object.prototype` member is no longer treated as failing.
+- Builds against Pi 1.0.2, whose pi-ai types differ from the pi-ai Pi Durable pins; the SDK runtime is passed to Pi Durable through an explicit cast at that boundary.
 
 ## 0.3.3 (2026-10-04)
 

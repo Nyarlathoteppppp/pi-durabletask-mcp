@@ -140,7 +140,13 @@ export async function startBatch({
       validateNativeMcp(t, taskCwd);
       // The model the task will really run on, including Pi's own default, and its credentials:
       // a task that would fail after its siblings started must stop the whole batch here.
-      const taskModel = await resolveModel(t.model || defaultModelRef(taskCwd), taskCwd);
+      const modelRef = t.model || defaultModelRef(taskCwd);
+      // With no model named anywhere, Pi would pick one only once the session exists, after the
+      // siblings started; a batch must know every model up front.
+      if (!modelRef)
+        throw new Error("no model is named and no default is configured; pass model for this task, " +
+          "or set PI_DELEGATE_MODEL or Pi's default model.");
+      const taskModel = await resolveModel(modelRef, taskCwd);
       assertThinkingSupported(taskModel, t.thinking);
       if (taskModel) await assertProviderReady(taskModel.provider);
     } catch (e) {

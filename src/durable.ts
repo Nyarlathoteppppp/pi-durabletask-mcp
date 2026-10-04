@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import {
   createRegistry, defineDoc, defineExtension, defineTask, Harness,
-  type Cursor, type TaskId, type TaskRuntime,
+  type Cursor, type HarnessOptions, type TaskId, type TaskRuntime,
 } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import type { FileEntry } from "@earendil-works/pi-coding-agent";
@@ -356,8 +356,12 @@ export class DurableJob implements JobStore {
       if (!key) catalog.prepare("INSERT INTO jobs (key, pid, agent_dir, options, prompt) VALUES (?, ?, ?, ?, ?)")
         .run(job.key, process.pid, AGENT_DIR, JSON.stringify(options), prompt);
       mkdirSync(directory, { recursive: true, mode: 0o700 });
+      // Pi Durable pins its own pi-ai, while the SDK runtime comes from the global Pi install, whose
+      // pi-ai may be newer (1.0.2 brands TranscriptContext). The types then differ, not the runtime:
+      // this Harness only stores our task's checkpoints and never runs its own model generations.
+      const models = (await getRuntime()) as unknown as HarnessOptions["models"];
       job.harness = await Harness.open(await openNodeSqliteStorage(join(directory, "session.sqlite")),
-        { models: await getRuntime(), registry }, context);
+        { models, registry }, context);
       chmodSync(join(directory, "session.sqlite"), 0o600);
       job.taskId = await job.harness.commit(async (tx) => {
         const current = await tx.doc(CurrentTask);

@@ -215,6 +215,19 @@ try {
   ] }), /Provider broken is not usable/);
   assert.equal(seen.some((m) => m.includes("BATCH_GOOD")), false, "no task of a refused batch ran");
 
+  // With no model named anywhere, a batch is refused up front instead of letting Pi pick later.
+  const noDefault = join(directory, "no-default");
+  await mkdir(join(noDefault, ".pi"), { recursive: true });
+  await writeFile(join(noDefault, ".pi", "settings.json"), JSON.stringify({ defaultProvider: "", defaultModel: "" }));
+  await close(host);
+  host = await connect({ PI_DELEGATE_MODEL: "" });
+  await assert.rejects(() => host.call("spawn_batch", { cwd: noDefault, tools: [], tasks: [
+    { id: "nd-explicit", prompt: "ND_EXPLICIT", model: "test/one" }, { id: "nd-implicit", prompt: "ND_IMPLICIT" },
+  ] }), /no model is named and no default is configured/);
+  assert.equal(seen.some((m) => m.includes("ND_EXPLICIT")), false, "no task of a refused batch ran");
+  await close(host);
+  host = await connect({ TEST_BROKEN_PROVIDER: "broken" });
+
   // models agrees with spawn about a provider whose credentials fail.
   const offered = await host.call("models", { cwd: directory });
   assert.equal(offered.models.includes("broken/one"), false, "a failing provider's models are not offered");

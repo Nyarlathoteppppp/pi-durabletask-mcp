@@ -199,7 +199,8 @@ async function withHealthyProviders(models: ScopedModel[]): Promise<{ models: Sc
     const problem = await providerProblem(provider);
     if (problem) failing[provider] = problem;
   }));
-  return { models: models.filter((m) => !(m.provider in failing)), failing };
+  // hasOwn, not `in`: a provider named like an Object.prototype member must not count as failing.
+  return { models: models.filter((m) => !Object.hasOwn(failing, m.provider)), failing };
 }
 
 /** The models a spawn could actually use right now: in scope and policy, with working credentials. */
