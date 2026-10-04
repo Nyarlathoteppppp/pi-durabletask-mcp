@@ -38,28 +38,36 @@ Pi 在自己的会话里读文件、搜代码，这部分内容不占用主代�
 npm install -g @earendil-works/pi-coding-agent@1.0.0
 pi  # 配置模型供应商，或通过 /login 登录
 
+npm install -g pi-durabletask-mcp
+```
+
+<details>
+<summary>从源码安装</summary>
+
+```bash
 git clone https://github.com/Nyarlathoteppppp/pi-durabletask-mcp.git
 cd pi-durabletask-mcp
 npm ci
 npm run build
 ```
 
-### 2 · 连接
+源码安装时，使用 `node /absolute/path/pi-durabletask-mcp/dist/index.js` 连接，将路径换成仓库的绝对路径。
 
-将 `/absolute/path/pi-durabletask-mcp` 换成仓库的绝对路径。
+</details>
+
+### 2 · 连接
 
 **Claude Code**
 
 ```bash
-claude mcp add --scope user pi -- node /absolute/path/pi-durabletask-mcp/dist/index.js
+claude mcp add --scope user pi -- pi-durabletask-mcp
 ```
 
 **Codex** — 在 `~/.codex/config.toml` 中加入：
 
 ```toml
 [mcp_servers.pi]
-command = "node"
-args = ["/absolute/path/pi-durabletask-mcp/dist/index.js"]
+command = "pi-durabletask-mcp"
 ```
 
 已配置过就更新原有条目，再重连 MCP 服务。[其他客户端 →](docs/reference.md#other-mcp-clients)

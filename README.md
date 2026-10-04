@@ -38,28 +38,36 @@ context. Steer live work or follow up in the same conversation.
 npm install -g @earendil-works/pi-coding-agent@1.0.0
 pi  # configure a provider or use /login
 
+npm install -g pi-durabletask-mcp
+```
+
+<details>
+<summary>Install from source</summary>
+
+```bash
 git clone https://github.com/Nyarlathoteppppp/pi-durabletask-mcp.git
 cd pi-durabletask-mcp
 npm ci
 npm run build
 ```
 
-### 2 · Connect
+For a source checkout, connect with `node /absolute/path/pi-durabletask-mcp/dist/index.js`.
 
-Replace `/absolute/path/pi-durabletask-mcp` with your checkout path.
+</details>
+
+### 2 · Connect
 
 **Claude Code**
 
 ```bash
-claude mcp add --scope user pi -- node /absolute/path/pi-durabletask-mcp/dist/index.js
+claude mcp add --scope user pi -- pi-durabletask-mcp
 ```
 
 **Codex** — add to `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.pi]
-command = "node"
-args = ["/absolute/path/pi-durabletask-mcp/dist/index.js"]
+command = "pi-durabletask-mcp"
 ```
 
 Already connected? Update the existing entry and reconnect the MCP server.
