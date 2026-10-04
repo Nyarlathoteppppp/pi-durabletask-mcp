@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.4 (2026-10-04)
+
+- Add `nextAction` (`wait`, `answer`, `finish`) to spawn, follow-up, status and wait responses, including per-session and top-level batch spawn/wait guidance. Keep existing `next`; `finish` means the run ended, not that it succeeded.
+- Single-session `wait` omits traces and diagnostic metadata by default, retaining results, questions, notices, errors, termination and progress counts. `verbose: true` still returns the full snapshot; `status` remains diagnostic and batch waits remain summaries.
+- Spawn, status and follow-up now use wait's state rule: a terminal worker still submitting its final result or cleaning up cancellation remains `running` to callers until that work ends.
+
 ## 0.4.3 (2026-10-04)
 
 - Add official MCP Registry metadata (`mcpName` and packaged `server.json`). No runtime logic changes.

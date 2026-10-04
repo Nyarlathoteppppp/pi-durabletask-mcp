@@ -24,10 +24,11 @@ PiWorker.prototype.start = async function (prompt) {
   if (this.isStopped()) return this; // as the real start does at each step
   const steering = [];
   this.session = {
-    prompt: async () => {
+    prompt: async (text) => {
       const run = Promise.withResolvers();
       runs.set(this.id, run);
       this.onEvent({ type: "turn_start" });
+      if (text === "instant") { this.lastText = "instant result"; run.resolve(); }
       await run.promise;
     },
     waitForIdle: async () => {},
@@ -37,6 +38,7 @@ PiWorker.prototype.start = async function (prompt) {
     dispose: () => {},
   };
   void this.track(this.session, prompt);
+  if (prompt === "instant") await this.run;
   return this;
 };
 const raw = (name, args = {}) => client.callTool({ name, arguments: args });
@@ -49,9 +51,22 @@ try {
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
   assert.equal((await call("sessions")).count, 0, "tools work without an init call");
 
+  const instant = await call("spawn", { cwd: dir, id: "instant", prompt: "instant", tools: [] });
+  assert.equal(instant.state, "done");
+  assert.equal(instant.nextAction, "wait", "start responses still need result collection if work finished immediately");
+  const instantResult = await call("wait", { sessionId: instant.sessionId });
+  assert.equal(instantResult.lastText, "instant result");
+  assert.equal(instantResult.nextAction, "finish");
+  const instantFollow = await call("follow_up", { sessionId: instant.sessionId, prompt: "instant" });
+  assert.equal(instantFollow.nextAction, "wait");
+  await call("forget", { sessionId: instant.sessionId });
+
   const started = await core.startExecution({ cwd: dir, id: "core-start", prompt: "work", tools: [] });
   const w = registry.loaded(started.sessionId);
   assert.equal((await call("status", { sessionId: w.id })).state, "running");
+  assert.equal((await call("status", { sessionId: w.id })).nextAction, "wait");
+  assert.equal((await call("wait", { sessionId: w.id, afterTurns: 0 })).nextAction, "wait");
+  assert.equal("nextAction" in await core.getState(w.id), false, "caller advice stays in the MCP adapter");
   assert.equal((await call("steer", { sessionId: w.id, message: "focus" })).queued, 1);
   assert.deepEqual(w.session.getSteeringMessages(), ["focus"]);
   const q = new Question("confirm", "continue?");
@@ -59,6 +74,8 @@ try {
   assert.equal((await core.getState(w.id)).questions[0].id, q.id);
   const questionSnapshot = await call("wait", { sessionId: w.id, timeoutMs: 1000 });
   assert.equal(questionSnapshot.questions[0].id, q.id);
+  assert.equal(questionSnapshot.nextAction, "answer");
+  assert.equal((await call("status", { sessionId: w.id })).nextAction, "answer");
   assert.equal(w.questions.has(q.id), true, "wait observes the question without answering");
   await call("answer", { sessionId: w.id, requestId: q.id, value: true });
   assert.equal(await q.promise, true);
@@ -73,6 +90,7 @@ try {
   runs.get(w.id).resolve();
   await w.run;
   assert.equal((await call("wait", { sessionId: w.id, timeoutMs: 250 })).state, "done");
+  assert.equal((await call("status", { sessionId: w.id })).nextAction, "finish");
   const turnsBefore = w.turns;
   await call("follow_up", { sessionId: w.id, prompt: "another run" });
   assert.equal(registry.loaded(w.id), w, "follow-up reuses the conversation's worker");
@@ -80,6 +98,10 @@ try {
   await core.cancelExecution(w.id);
   await w.run;
   assert.equal((await call("status", { sessionId: w.id })).termination.reason, "manual_abort");
+  const abortedWait = await call("wait", { sessionId: w.id, until: "settled" });
+  assert.equal(abortedWait.nextAction, "finish");
+  assert.equal(abortedWait.state, "aborted");
+  assert.equal(abortedWait.termination.reason, "manual_abort");
   await call("forget", { sessionId: w.id });
   await assert.rejects(() => core.getState(w.id), /Unknown sessionId/);
 
@@ -151,6 +173,9 @@ try {
   registry.loaded(asker.sessionId).questions.set(ask.id, ask);
   const seenBatch = await call("wait", { sessionIds: [asker.sessionId, quiet.sessionId], timeoutMs: 1000 });
   assert.deepEqual(seenBatch.settled, [asker.sessionId], "a question settles the wait");
+  assert.equal(seenBatch.nextAction, "answer");
+  assert.equal(seenBatch.sessions.find((s) => s.sessionId === quiet.sessionId).nextAction, "wait");
+  assert.equal(seenBatch.sessions.find((s) => s.sessionId === asker.sessionId).nextAction, "answer");
   assert.deepEqual(seenBatch.continueIds?.sort(), [asker.sessionId, quiet.sessionId].sort(),
     "both still need waiting on after the answer");
   assert.equal(seenBatch.sessions.find((x) => x.sessionId === asker.sessionId).questions[0].id, ask.id);
@@ -158,6 +183,8 @@ try {
   for (const id of [asker.sessionId, quiet.sessionId]) { runs.get(id).resolve(); await registry.loaded(id).run; }
   const doneBatch = await call("wait", { sessionIds: seenBatch.continueIds, until: "all_settled", timeoutMs: 1000 });
   assert.deepEqual(doneBatch.continueIds, []);
+  assert.equal(doneBatch.nextAction, "finish");
+  assert.ok(doneBatch.sessions.every((s) => s.nextAction === "finish"));
 
   console.log("  OK -> core/custom MCP shared state, follow-up, interaction, cancel vs wait, progress cleanup");
 } finally {

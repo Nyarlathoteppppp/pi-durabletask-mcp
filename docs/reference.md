@@ -114,10 +114,17 @@ Finished sessions stay readable via `status` and `sessions` instead of vanishing
 back and check what a delegate actually did. The newest `PI_DELEGATE_HISTORY` (default 50) stay
 loaded; durable ones beyond that stay on disk until retention removes them; `forget` drops one early.
 
-Polling must not cost the caller much context, so `status` and `wait` are compact by default:
-`toolCalls` holds the last 5 calls with arguments cut to 120 characters, `toolCallCount` is the
-total, and `notices` holds the newest 5. Pass `afterToolCalls: <toolCallCount>` to `wait`.
-`verbose: true` returns the full ordered trace, every notice, and call ids and results:
+Single-session `wait` keeps result collection compact: by default it returns `sessionId`,
+`label`, `state`, `turns`, `toolCallCount`, `lastText`, pending `questions`, the newest 5
+`notices`, and any `error` or `termination`, plus `nextAction`. It omits tool traces and
+configuration/timing metadata. For progress waits, pass the previous `turns` and
+`toolCallCount` as `afterTurns` and `afterToolCalls`.
+
+`status` remains the diagnostic view, including model, configuration and timing metadata.
+By default its `toolCalls` holds the last 5 calls with arguments cut to 120 characters;
+`toolCallCount` is the total and `notices` holds the newest 5. On `status` or single-session
+`wait`, `verbose: true` returns the full snapshot, including the full ordered trace,
+every notice, and call ids and results:
 
 ```json
 {
@@ -133,6 +140,16 @@ total, and `notices` holds the newest 5. Pass `afterToolCalls: <toolCallCount>` 
 
 Arguments and results are clipped (`PI_DELEGATE_TRACE_ARGS`, `PI_DELEGATE_TRACE_RESULT`) with the
 dropped length recorded, so one `read` of a large file cannot flood your context.
+
+`spawn`, `follow_up`, `status` and `wait` return `nextAction`: `wait` means keep collecting,
+`answer` means answer pending questions before waiting again, and `finish` means this run
+ended (`done`, `aborted` or `error`), not that the task succeeded. Check `state`, `error`,
+`termination` and the result before claiming success. Existing `next` guidance is retained.
+Launch responses (`spawn`, `follow_up`, and started `spawn_batch` members) contain no final
+text, so their `nextAction` is always `wait` to collect the result, even if `state` is already `done`.
+For a loaded worker, `spawn`, `follow_up` and `status` now follow `wait`'s state rule:
+while final-result submission or cancellation cleanup is still active, an internally
+terminal worker is shown as `running`, not finished.
 
 ### Provider failures
 
@@ -221,6 +238,14 @@ Wait for the whole batch with `wait` and the returned `sessionIds`: `until: "set
 each delegate finishes, with its final text, and `"all_settled"` once all have. A delegate asking
 a question also settles the wait; answer it, then wait again on `continueIds`, which lists every
 delegate not finished yet, including the one you answered. `steer` and `abort` stay per session.
+
+Batch `wait` returns per-session summaries, with final text for finished sessions and pending
+questions, not full snapshots; `verbose: true` does not expand these summaries. Use
+single-session `wait` or `status` with `verbose: true` for a full snapshot. Batch `wait`
+includes `nextAction` on each session and at the top level: `answer` if any session needs
+an answer, otherwise `wait` if any is unfinished, otherwise `finish`. In `spawn_batch`,
+every started member prompts `wait` to collect its result; the top-level `nextAction` is
+`wait` if any sessions started, or `finish` if all failed to start—check `failures`.
 
 ## Picking a model per call
 

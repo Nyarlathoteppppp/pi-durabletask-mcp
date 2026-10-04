@@ -105,7 +105,7 @@ export function registerSpawn(server: McpServer): void {
         "Use this for anything that might take more than a minute.",
       inputSchema: spawnShape,
     },
-    async (args) => json(await startExecution(args)),
+    async (args) => json({ ...await startExecution(args), nextAction: "wait" }),
   );
 
   server.registerTool(
@@ -152,11 +152,15 @@ export function registerSpawn(server: McpServer): void {
           .describe('Names the tasks `<prefix>-01`, `<prefix>-02`, ... e.g. "audit" gives "audit-01"'),
       },
     },
-    async (args) => json({
-      ...await startBatch(args),
-      next: "Call wait with these sessionIds (until \"settled\" returns as each finishes, \"all_settled\" when all have); " +
-        "answer any questions, then wait again on continueIds. `steer` and `abort` stay per session.",
-    }),
+    async (args) => {
+      const result = await startBatch(args);
+      const sessions = result.sessions.map((s) => ({ ...s, nextAction: "wait" }));
+      return json({
+        ...result, sessions, nextAction: sessions.length ? "wait" : "finish",
+        next: "Call wait with these sessionIds (until \"settled\" returns as each finishes, \"all_settled\" when all have); " +
+          "answer any questions, then wait again on continueIds. `steer` and `abort` stay per session.",
+      });
+    },
   );
 
   server.registerTool(

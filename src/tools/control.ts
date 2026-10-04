@@ -5,7 +5,7 @@ import {
   cancelExecution, followUp, forgetSession, getState, listSessions, resolveInteraction,
   steerExecution, waitForMany, waitForState,
 } from "../core.js";
-import { json } from "./shared.js";
+import { batchNextAction, json, waitResult, withNextAction } from "./shared.js";
 
 // Preserve the existing helper import path for consumers.
 export { waitForProgress } from "../core.js";
@@ -26,7 +26,7 @@ export function registerControl(server: McpServer): void {
         verbose: z.boolean().optional().describe("Include tool results and call ids in the trace"),
       },
     },
-    async ({ sessionId, verbose }) => json(await getState(sessionId, verbose)),
+    async ({ sessionId, verbose }) => json(withNextAction(await getState(sessionId, verbose))),
   );
 
   server.registerTool(
@@ -53,6 +53,8 @@ export function registerControl(server: McpServer): void {
         "(\"settled\") or all do (\"all_settled\"): settled/pending ids, continueIds (everything not finished, " +
         "including sessions waiting for an answer) and a summary per session, with the final text of finished " +
         "ones and any pending questions. Answer questions, then wait again on continueIds. " +
+        "Single-session results omit the tool trace and configuration by default; use verbose: true for the full snapshot. " +
+        "nextAction is wait, answer or finish; finish means this run ended, so check state/error/termination. " +
         "Cancelling this wait leaves delegates running; use `abort` to stop one.",
       inputSchema: {
         sessionId: z.string().optional().describe("One session; returns its status snapshot"),
@@ -62,7 +64,7 @@ export function registerControl(server: McpServer): void {
         timeoutMs: z.number().int().min(250).max(55_000).optional().describe("Default 30000; max 55000"),
         afterTurns: z.number().int().min(0).optional().describe("Prior snapshot's turn count"),
         afterToolCalls: z.number().int().min(0).optional().describe("Prior snapshot's `toolCallCount`"),
-        verbose: z.boolean().optional().describe("Include tool results and call ids in the returned trace"),
+        verbose: z.boolean().optional().describe("Single session: include the full snapshot, tool results and call ids"),
       },
     },
     async ({ sessionId, sessionIds, ...options }, extra) => {
@@ -71,9 +73,11 @@ export function registerControl(server: McpServer): void {
       if (sessionIds) {
         if (options.until === "progress") throw new Error('With sessionIds, until is "settled" or "all_settled".');
         const { timeoutMs, until } = options;
-        return json(await waitForMany(sessionIds, { timeoutMs, until, signal: extra.signal }));
+        const result = await waitForMany(sessionIds, { timeoutMs, until, signal: extra.signal });
+        const sessions = result.sessions.map((s) => withNextAction(s));
+        return json({ ...result, sessions, nextAction: batchNextAction(sessions) });
       }
-      return json(await waitForState(sessionId!, { ...options, signal: extra.signal }));
+      return json(waitResult(await waitForState(sessionId!, { ...options, signal: extra.signal }), options.verbose));
     },
   );
 
@@ -108,7 +112,7 @@ export function registerControl(server: McpServer): void {
         prompt: z.string().describe("The next turn for this delegate"),
       },
     },
-    async ({ sessionId, prompt }) => json(await followUp(sessionId, prompt)),
+    async ({ sessionId, prompt }) => json({ ...await followUp(sessionId, prompt), nextAction: "wait" }),
   );
 
   server.registerTool(

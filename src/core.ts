@@ -16,10 +16,13 @@ import { validateNativeMcp } from "./pi/native-mcp.js";
 const TERMINAL = new Set(["done", "aborted", "error"]);
 const hasFinished = (worker: PiWorker): boolean => TERMINAL.has(worker.state) && !worker.isActive;
 
+const observedState = (worker: PiWorker): Snapshot["state"] =>
+  TERMINAL.has(worker.state) && worker.isActive ? "running" : worker.state;
+
 /** A timed-out wait must keep the caller waiting while the final result is still committing. */
 function waitingSnapshot(worker: PiWorker, verbose?: boolean): Snapshot {
   const snapshot = worker.snapshot({ verbose });
-  if (TERMINAL.has(snapshot.state) && worker.isActive) snapshot.state = "running";
+  snapshot.state = observedState(worker);
   return snapshot;
 }
 
@@ -92,7 +95,7 @@ export async function startExecution(request: LaunchRequest) {
   return {
     sessionId: w.id,
     label: w.label,
-    state: w.state,
+    state: observedState(w),
     model: w.model,
     thinking: w.thinking,
     activeTools: w.activeTools,
@@ -183,7 +186,7 @@ export async function startBatch({
         index,
         sessionId: w.id,
         label: w.label,
-        state: w.state,
+        state: observedState(w),
         model: w.model,
         thinking: w.thinking,
         limits: { maxTurns: w.maxTurns, maxDurationMs: w.maxDurationMs },
@@ -242,7 +245,7 @@ export async function runExecution(
 }
 
 export async function getState(sessionId: string, verbose?: boolean): Promise<Snapshot> {
-  return stored(sessionId, verbose) ?? (await resolve(sessionId)).snapshot({ verbose });
+  return stored(sessionId, verbose) ?? waitingSnapshot(await resolve(sessionId), verbose);
 }
 
 /**
@@ -373,7 +376,7 @@ export async function followUp(sessionId: string, prompt: string) {
     throw new Error(`Session ${sessionId} was forgotten or unloaded while loading. Check status before follow_up.`);
   // Let the worker produce the more useful "use steer" error for a live session.
   if (!worker.isActive) assertCapacity();
-  return { ...await worker.followUp(prompt), next: WAIT_HINT };
+  return { ...await worker.followUp(prompt), state: observedState(worker), next: WAIT_HINT };
 }
 
 export async function cancelExecution(sessionId: string) {

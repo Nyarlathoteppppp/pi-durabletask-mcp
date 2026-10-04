@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
 const dir = await mkdtemp(join(tmpdir(), "pi-wait-finalization-"));
 Object.assign(process.env, { PI_OFFLINE: "1", PI_CODING_AGENT_DIR: join(dir, "agent"),
@@ -13,6 +15,15 @@ const { PiWorker } = await import("../dist/pi/worker.js");
 const { DurableJob } = await import("../dist/durable.js");
 const { SessionManager } = await import("@earendil-works/pi-coding-agent");
 const { cleanup } = await import("../dist/statusline/state.js");
+const { createServer } = await import("../dist/server.js");
+const server = createServer();
+const client = new Client({ name: "finalization-adapter", version: "1" });
+const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+const call = async (name, args) => {
+  const result = await client.callTool({ name, arguments: args });
+  assert.ok(!result.isError, result.content[0].text);
+  return JSON.parse(result.content[0].text);
+};
 const originalStart = PiWorker.prototype.start;
 const entered = Promise.withResolvers(), release = Promise.withResolvers();
 let worker;
@@ -34,11 +45,15 @@ PiWorker.prototype.start = async function (prompt) {
   return this;
 };
 try {
+  await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
   const { sessionId } = await core.startExecution({ cwd: dir, id: "finishing", prompt: "work",
     durable: true, tools: [], maxTurns: 5, maxDurationMs: 60000 });
   await entered.promise;
   assert.equal(worker.state, "done");
   assert.equal(worker.isActive, true, "the terminal commit is still pending");
+  assert.equal((await core.getState(sessionId)).state, "running", "status also waits for durable finalization");
+  assert.equal((await call("status", { sessionId })).nextAction, "wait");
+  assert.equal((await call("wait", { sessionId, until: "settled", timeoutMs: 250 })).nextAction, "wait");
   let returned = false;
   const waiting = core.waitForState(sessionId, { until: "settled", timeoutMs: 2000 })
     .then((result) => { returned = true; return result; });
@@ -55,6 +70,7 @@ try {
   assert.equal(batch.sessions[0].state, "running");
   release.resolve();
   assert.equal((await waiting).state, "done");
+  assert.equal((await call("status", { sessionId })).nextAction, "finish");
   await core.followUp(sessionId, "continue immediately");
   await worker.run;
   assert.equal(worker.state, "done");
@@ -64,6 +80,8 @@ try {
   release.resolve();
   if (worker) { await worker.run; if (registry.loaded(worker.id)) await core.forgetSession(worker.id); }
   PiWorker.prototype.start = originalStart;
+  await client.close();
+  await server.close();
   cleanup();
   await rm(dir, { recursive: true, force: true });
 }

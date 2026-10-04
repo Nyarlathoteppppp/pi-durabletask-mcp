@@ -14,6 +14,7 @@ Use the connected server's tools; names below omit client-specific prefixes.
 - For authorized implementation, select the needed server-permitted write tools and keep work within the user's scope.
 - Keep the returned `sessionId`; loop `wait` with `until: "settled"` until finished. Answer pending questions using `questions[].id` as `answer.requestId`, then wait again.
 - For independent tasks, use `spawn_batch`; wait with `sessionIds`, answer questions, then pass returned `continueIds` as the next wait's `sessionIds` until none remain.
+- Follow `nextAction`: `wait` to keep collecting, `answer` to resolve pending questions, `finish` when this run ends—not necessarily successfully; check `state`, `error`, `termination` and the result.
 - Use `steer` while running; use `follow_up` when finished to preserve context. Turns accumulate across follow-ups.
 - Cancelling `wait` only stops waiting; use `abort` to stop the delegate.
 

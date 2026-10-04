@@ -491,7 +491,7 @@ if (process.argv[2] === "fixture") {
       while (["starting", "running"].includes(status.state));
       assert.equal(status.state, "done");
       if (id === "batch-native") assert.match(status.lastText, /echo:direct:hello-direct/);
-      else assert.deepEqual(status.activeTools, []);
+      else assert.deepEqual((await call("status", { sessionId: id })).activeTools, []);
       await call("forget", { sessionId: id });
     }
     console.log("  OK -> native direct/codemode/deferred calls, opt-in, precise permissions, batch inheritance and transport cleanup");

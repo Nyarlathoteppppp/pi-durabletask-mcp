@@ -106,7 +106,13 @@ try {
   //    it over for follow_up needs that process to let go.
   const other = await connect();
   assert.equal((await other.call("status", { sessionId: "second" })).state, "done", "readable while loaded elsewhere");
-  assert.equal((await other.call("wait", { sessionId: "second", timeoutMs: 250 })).state, "done");
+  const storedWait = await other.call("wait", { sessionId: "second", timeoutMs: 250 });
+  assert.equal(storedWait.state, "done");
+  assert.equal(storedWait.nextAction, "finish");
+  assert.equal("toolCalls" in storedWait, false, "stored waits use the same minimal output");
+  const storedVerbose = await other.call("wait", { sessionId: "second", verbose: true, timeoutMs: 250 });
+  assert.equal(storedVerbose.durable, true);
+  assert.equal(storedVerbose.nextAction, "finish");
   await assert.rejects(() => other.call("follow_up", { sessionId: "second", prompt: "x" }), /running or loaded in another MCP process/);
   assert.equal((await other.call("status", { sessionId: "first" })).lastText, "OK", "stored session readable without loading");
   assert.equal((await other.call("sessions")).sessions.some((s) => s.sessionId === "first"), false, "reading did not load it");

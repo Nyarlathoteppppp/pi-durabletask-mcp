@@ -100,7 +100,18 @@ try {
   assert.equal(full.toolCalls.length, 7);
   assert.ok(full.toolCalls[0].args.length > 121);
   const waited = await host.call("wait", { sessionId: "many", timeoutMs: 250 });
-  assert.equal(waited.toolCalls.length, 5, "wait is compact too");
+  assert.equal(waited.toolCallCount, 7);
+  assert.equal(waited.lastText, "OK");
+  assert.equal(waited.nextAction, "finish");
+  assert.equal(compact.nextAction, "finish");
+  for (const key of ["toolCalls", "model", "thinking", "cwd", "activeTools", "limits", "startedAt", "elapsedMs"])
+    assert.equal(key in waited, false, `default wait omits ${key}`);
+  const verboseWait = await host.call("wait", { sessionId: "many", verbose: true, timeoutMs: 250 });
+  assert.deepEqual(verboseWait.toolCalls, full.toolCalls, "verbose wait retains ids, arguments and results");
+  assert.equal(verboseWait.cwd, full.cwd);
+  assert.deepEqual(verboseWait.limits, full.limits);
+  assert.equal(verboseWait.nextAction, "finish");
+  assert.ok(JSON.stringify(waited).length < JSON.stringify(compact).length / 2, "waiting uses less than half the context of a diagnostic snapshot");
 
   // 1a. wait until settled returns once, with the result, instead of on every tool call.
   await host.call("spawn", { cwd: directory, id: "many-settled", prompt: "MANY_CALLS PACED", tools: ["ls"] });
@@ -125,6 +136,8 @@ try {
   const batch = await host.call("spawn_batch", { cwd: directory, idPrefix: "fan", tools: [], tasks: [{ prompt: "plain" }, { prompt: "plain" }] });
   assert.deepEqual(batch.sessionIds, ["fan-01", "fan-02"]);
   assert.match(batch.next, /wait with these sessionIds/);
+  assert.equal(batch.nextAction, "wait");
+  assert.ok(batch.sessions.every((s) => s.nextAction === "wait"));
   assert.deepEqual((await host.call("wait", { sessionIds: batch.sessionIds, until: "all_settled", timeoutMs: 15000 })).pending, []);
   await assert.rejects(() => host.call("steer", { sessionId: "fan-01", message: "x" }), /Use follow_up/);
   const listed = await host.call("models", { cwd: directory });
@@ -132,8 +145,11 @@ try {
   assert.equal(listed.defaultUsable, true);
   const spawned = await host.call("spawn", { cwd: directory, id: "hinted", prompt: "plain", tools: [] });
   assert.match(spawned.next, /until "settled"/, "spawn says how to collect the answer");
+  assert.equal(spawned.nextAction, "wait");
   await host.call("wait", { sessionId: "hinted", until: "settled", timeoutMs: 15000 });
-  assert.match((await host.call("follow_up", { sessionId: "hinted", prompt: "again" })).next, /until "settled"/);
+  const followed = await host.call("follow_up", { sessionId: "hinted", prompt: "again" });
+  assert.match(followed.next, /until "settled"/);
+  assert.equal(followed.nextAction, "wait");
   const capped = await connect({ PI_DELEGATE_LIST_CAP: "1" });
   const page = await capped.call("models", { cwd: directory });
   assert.equal(page.models.length, 1, "models pages at LIST_CAP by default");
@@ -181,6 +197,11 @@ try {
   assert.equal(failed.state, "error");
   assert.match(failed.error, /after 2 automatic retries/);
   assert.ok(failed.notices.some((n) => /provider retry 1\/2/.test(n.message)));
+  const failedWait = await host.call("wait", { sessionId: "flaky", until: "settled" });
+  assert.equal(failedWait.nextAction, "finish", "finish is not a success claim");
+  assert.equal(failedWait.state, "error");
+  assert.equal(failedWait.error, failed.error);
+  assert.deepEqual(failedWait.notices, failed.notices, "provider retries remain visible in compact waits");
   await close(host);
 
   // 4. grep finds ripgrep in Pi's tool directory when PATH has none, and explains itself otherwise.
