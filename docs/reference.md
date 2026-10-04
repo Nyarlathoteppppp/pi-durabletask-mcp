@@ -45,7 +45,9 @@ delegates. `handoff` bridges that with a short note per repository:
 
 - `handoff save` (when the user asks to hand over) records `cwd`, `sessionId`, and the calling
   agent's own `goal`, `completed` and `next`, with an optional `name` to keep several per
-  repository. Saving a memory-only session warns that a new window cannot continue it.
+  repository. `cwd` must be the session's own working directory, as it was spawned with; a note
+  for another directory is refused. Saving a memory-only session warns that a new window cannot
+  continue it.
 - `handoff read` (when the user asks to pick a project up) returns the newest note for `cwd`, or
   the one named, with `resumeHint` and `howToResume`:
 
@@ -53,7 +55,7 @@ delegates. `handoff` bridges that with a short note per repository:
 | :--- | :--- | :--- |
 | `wait_running_session` | Running in this process | `wait` with `until: "settled"` |
 | `status_then_follow_up` | Finished | `status`, then `follow_up` with `next` if needed. With `heldByAnotherProcess`, the old window still has it loaded: `status` works, `follow_up` only after that window closes |
-| `old_process_owns_session` | Unfinished, held by another live process (the old window) | Close that window (this process resumes it within about 30 s) or let it finish there; do not spawn a duplicate |
+| `old_process_owns_session` | Unfinished, held by another live process (the old window) | Close that window (a running MCP process, usually this one, resumes it within about 30 s) or let it finish there; do not spawn a duplicate |
 | `awaiting_recovery` | Unfinished, unowned, waiting for a free slot | `status` shortly |
 | `session_not_recoverable` | Memory-only, not in this process | Spawn new work from the note |
 | `session_missing` | Deleted, or its id now names a different session | Spawn new work from the note |
@@ -184,7 +186,9 @@ running agent, `follow_up` starts a new turn on a finished one.
 ## Fanning out
 
 `spawn_batch` starts a whole batch in one call. Tasks inherit the batch-level `model`, `thinking`,
-`cwd`, `tools` and `extensions`, and override them individually where they need to:
+`cwd`, `tools` and `extensions`, and override them individually where they need to. A
+batch-level `retentionDays` applies to the tasks that end up durable; a task can still set
+`durable: false`.
 
 ```json
 {
