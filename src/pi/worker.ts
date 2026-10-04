@@ -107,8 +107,11 @@ export class PiWorker {
   private session: AgentSession | undefined;
   private unsubscribe: (() => void) | undefined;
   private deadlineTimer: NodeJS.Timeout | undefined;
+  private finishTimer: NodeJS.Timeout | undefined;
   private runTurns = 0;
   private finishSteerSent = false;
+  /** Whether the last finished turn called tools; one that did not is normally the answer itself. */
+  private lastTurnUsedTools = false;
   /** pi reports provider failures as an assistant message with stopReason "error", not a throw. */
   private providerError: string | undefined;
   /** Attempts Pi made before giving up on the provider in this run, if it did. */
@@ -390,7 +393,7 @@ export class PiWorker {
     const { done } = await this.job!.begin(prompt, this.checkpoint(), async (input, checkpoint, signal) => {
       const suspend = (): void => {
         this.suspended = true;
-        if (this.deadlineTimer) clearTimeout(this.deadlineTimer);
+        this.clearTimers();
         this.clearQuestions();
         void this.session!.abort();
       };
@@ -448,7 +451,7 @@ export class PiWorker {
 
   async suspend(): Promise<void> {
     this.suspended = true;
-    if (this.deadlineTimer) clearTimeout(this.deadlineTimer);
+    this.clearTimers();
     // abort() synchronously signals the agent before waiting for idle. Keep the
     // journal active while in-flight tools settle, including successful results.
     this.clearQuestions();
@@ -486,13 +489,22 @@ export class PiWorker {
     this.termination = undefined;
     this.runTurns = 0;
     this.finishSteerSent = false;
+    this.lastTurnUsedTools = false;
     this.providerError = undefined;
     this.retriesExhausted = undefined;
-    if (this.deadlineTimer) clearTimeout(this.deadlineTimer);
+    this.clearTimers();
     const remainingMs = Math.max(1, this.maxDurationMs - this.elapsedMs());
     this.deadlineTimer = setTimeout(() => {
       void this.abort("deadline", { limit: this.maxDurationMs, observed: this.elapsedMs() });
     }, remainingMs);
+    // Slow turns can reach the deadline long before the turn budget's reminder: remind by time too.
+    const finishInMs = this.maxDurationMs * 0.75 - this.elapsedMs();
+    if (finishInMs > 0) this.finishTimer = setTimeout(() => {
+      if (this.state !== "running" || this.suspended || !this.lastTurnUsedTools || this.questions.size > 0) return;
+      const left = Math.max(1, Math.round((this.maxDurationMs - this.elapsedMs()) / 1000));
+      this.requestFinish(`time budget ${Math.round(this.elapsedMs() / 1000)}s/${Math.round(this.maxDurationMs / 1000)}s`,
+        `About ${left} seconds remain before the hard deadline, including your final answer.`);
+    }, finishInMs);
     const run = session
       .prompt(prompt)
       .then(() => session.waitForIdle())
@@ -512,8 +524,7 @@ export class PiWorker {
         }
       })
       .finally(() => {
-        if (this.deadlineTimer) clearTimeout(this.deadlineTimer);
-        this.deadlineTimer = undefined;
+        this.clearTimers();
         if (!this.suspended) this.finishedAt = new Date().toISOString();
         // Unblock anything still waiting on an answer that will now never come.
         this.clearQuestions();
@@ -567,27 +578,16 @@ export class PiWorker {
       case "turn_end": {
         // A tool-free turn is normally the final answer. Budget only an agent that is
         // continuing the tool loop, so a conclusion at the limit is not thrown away.
+        this.lastTurnUsedTools = ev.toolResults.length > 0;
         if (this.state !== "running" || this.suspended || ev.toolResults.length === 0) break;
         if (this.turns >= this.maxTurns) {
           void this.abort("max_turns", { limit: this.maxTurns, observed: this.turns });
           break;
         }
         const finishAt = Math.max(1, Math.floor(this.maxTurns * 0.75));
-        if (!this.finishSteerSent && this.turns >= finishAt && this.questions.size === 0) {
-          this.finishSteerSent = true;
-          this.notices.push({
-            type: "warning",
-            message: `turn budget ${this.turns}/${this.maxTurns}: requested wrap-up with only essential checks`,
-            at: new Date().toISOString(),
-          });
-          void this.session?.steer(`You have ${this.maxTurns - this.turns} turns left, including your final answer. ${FINALIZE_PROMPT}`).catch((e: unknown) => {
-            this.notices.push({
-              type: "warning",
-              message: `automatic finalization steer failed: ${message(e)}`,
-              at: new Date().toISOString(),
-            });
-          });
-        }
+        if (this.turns >= finishAt && this.questions.size === 0)
+          this.requestFinish(`turn budget ${this.turns}/${this.maxTurns}`,
+            `You have ${this.maxTurns - this.turns} turns left, including your final answer.`);
         break;
       }
 
@@ -709,8 +709,24 @@ export class PiWorker {
     return { aborted: true, termination: this.termination };
   }
 
-  dispose(): void {
+  private clearTimers(): void {
     if (this.deadlineTimer) clearTimeout(this.deadlineTimer);
+    if (this.finishTimer) clearTimeout(this.finishTimer);
+    this.deadlineTimer = this.finishTimer = undefined;
+  }
+
+  /** Steer once per run toward a final answer, whichever budget gets close first. */
+  private requestFinish(budget: string, remaining: string): void {
+    if (this.finishSteerSent) return;
+    this.finishSteerSent = true;
+    this.notices.push({ type: "warning", message: `${budget}: requested wrap-up with only essential checks`, at: new Date().toISOString() });
+    void this.session?.steer(`${remaining} ${FINALIZE_PROMPT}`).catch((e: unknown) => {
+      this.notices.push({ type: "warning", message: `automatic finalization steer failed: ${message(e)}`, at: new Date().toISOString() });
+    });
+  }
+
+  dispose(): void {
+    this.clearTimers();
     this.unsubscribe?.();
     this.journalUnsubscribe?.();
     const session = this.session;

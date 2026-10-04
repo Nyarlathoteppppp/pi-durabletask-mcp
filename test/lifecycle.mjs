@@ -111,6 +111,42 @@ unbind();
   assert.equal(w.termination.limit, 4);
 }
 
+// A slow tool loop gets the same finalization steer at 75% of its time, once, before the deadline.
+// A delegate whose last turn used no tools is writing its answer and is left alone.
+{
+  const fixture = (toolResults) => {
+    const w = worker(40, 400);
+    let resolvePrompt;
+    const promptDone = new Promise((resolve) => { resolvePrompt = resolve; });
+    const session = {
+      steers: [],
+      prompt: async () => promptDone,
+      waitForIdle: async () => {},
+      steer: async (text) => { session.steers.push(text); },
+      abort: async () => { resolvePrompt(); },
+    };
+    w.session = session;
+    w.track(session, "inspect");
+    w.onEvent({ type: "turn_start" });
+    w.onEvent({ type: "turn_end", toolResults });
+    return { w, session };
+  };
+  const looping = fixture([{}]);
+  const writing = fixture([]);
+  await new Promise((resolve) => setTimeout(resolve, 340));
+  assert.equal(looping.session.steers.length, 1, "steered once by time");
+  assert.match(looping.session.steers[0], /final answer/);
+  assert.equal(writing.session.steers.length, 0, "an answer in progress is not interrupted");
+  for (let i = 0; i < 30; i++) {
+    looping.w.onEvent({ type: "turn_start" });
+    looping.w.onEvent({ type: "turn_end", toolResults: [{}] });
+  }
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(looping.session.steers.length, 1, "the turn budget does not steer a second time");
+  await Promise.all([looping.w.run, writing.w.run]);
+  assert.equal(looping.w.termination.reason, "deadline");
+}
+
 // Wall-clock expiry aborts the underlying session and records a diagnostic reason.
 {
   const w = worker(50, 20);

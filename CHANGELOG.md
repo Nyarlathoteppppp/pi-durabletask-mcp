@@ -1,6 +1,10 @@
 # Changelog
 
-## 0.3.9 (2026-10-04)
+## 0.4.0 (2026-10-04)
+
+First version meant for everyday use. 0.3.9 was never tagged; its changes are listed here.
+
+- The wrap-up steer is also sent at 75% of the time budget when that comes before 75% of the turns, and only while the delegate is still calling tools. Before, a slow model (large context, high thinking) could hit the deadline with no answer at all, because it never reached the turn reminder. At most one wrap-up steer is sent per run.
 
 - Cancelling a delegate during OAuth refresh or task creation no longer starts a model request afterward. Durable cancellation is committed as the final result.
 - `wait` reports completion after the worker finishes committing its result. A timeout during finalization stays `running`, including batch `pending`/`continueIds`, so immediate `follow_up` works after a settled result.
