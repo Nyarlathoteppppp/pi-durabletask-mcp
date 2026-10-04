@@ -93,7 +93,10 @@ function unavailable(id: string, reason: "held" | "pending" | undefined): Error 
 /** A live delegate, or a finished durable one loaded from disk on first use. */
 export async function resolve(id: string): Promise<PiWorker> {
   await unloading.get(id);
-  const live = sessions.get(id) ?? await loading.get(id);
+  // No await between this check and claimStored unless a load is in flight: a second call in the
+  // same tick would otherwise find this process already owning the job and report it unknown.
+  const inFlight = loading.get(id);
+  const live = sessions.get(id) ?? (inFlight && await inFlight);
   if (live) { touch(live.id); return live; }
   let record = claimStored(id);
   if (record === "held") {

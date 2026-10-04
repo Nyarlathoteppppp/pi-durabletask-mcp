@@ -16,7 +16,7 @@ export function registerHandoff(server: McpServer): void {
         "summary, not the session's state; it never claims, recovers or deletes a session.",
       inputSchema: {
         action: z.enum(["save", "read"]),
-        cwd: z.string().describe("Absolute repository path the work belongs to"),
+        cwd: z.string().describe("Absolute path of the repository. save: the session's own cwd, exactly as it was spawned with"),
         name: z.string().max(100).optional().describe("Optional label to keep several handoffs per repository; read defaults to the newest"),
         sessionId: z.string().optional().describe("save: the Pi session to hand over"),
         goal: z.string().max(2000).optional().describe("save: what the work is for"),

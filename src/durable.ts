@@ -150,8 +150,10 @@ export function claimAbandoned(excludeIds: Set<string>, limit: number): { record
     const options = JSON.parse(row.options) as WorkerOptions;
     if (options.id && excludeIds.has(options.id)) continue;
     if (!tryAcquire(row.key)) { contended++; continue; }
-    const fresh = db().prepare("SELECT attempts FROM jobs WHERE key = ?").get(row.key) as { attempts: number } | undefined;
-    if (!fresh) { releaseOwnership(row.key); continue; }
+    // The owner may also have finished it and let go since the scan.
+    const fresh = db().prepare("SELECT attempts, finished_at FROM jobs WHERE key = ?").get(row.key) as
+      { attempts: number; finished_at: number | null } | undefined;
+    if (!fresh || fresh.finished_at !== null) { releaseOwnership(row.key); continue; }
     db().prepare("UPDATE jobs SET pid = ?, attempts = ? WHERE key = ?").run(process.pid, fresh.attempts + 1, row.key);
     records.push({ key: row.key, options, prompt: row.prompt });
     if (options.id) excludeIds.add(options.id);

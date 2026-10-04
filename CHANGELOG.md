@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Recovery could claim a durable job that its owner finished and released between recovery's scan and its lock, holding a finished session and counting an attempt. It now re-checks `finished_at` after locking.
+- Two calls that loaded the same stored session at once (for example two `follow_up`s) could fail the second with `Unknown sessionId`.
+- The `handoff.sqlite` migration runs in one write transaction, so two MCP processes opening an old file together no longer fail with `duplicate column name: seq`. Old notes saved in the same millisecond now keep their save order.
+- `handoff`'s `cwd` description says that `save` needs the session's own cwd.
+
 ## 0.3.6 (2026-10-04)
 
 - `handoff save` refuses a session whose working directory is not the note's `cwd`, so a note for one repository cannot point a new window at another repository's session.

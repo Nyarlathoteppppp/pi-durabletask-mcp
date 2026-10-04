@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -71,10 +71,26 @@ try {
   // A handoff.sqlite from the first handoff commit has no seq column; it is migrated on open.
   await mkdir(join(directory, "state"), { recursive: true });
   const legacy = new DatabaseSync(join(directory, "state", "handoff.sqlite"));
-  legacy.exec(`CREATE TABLE handoffs (agent_dir TEXT NOT NULL, cwd TEXT NOT NULL, name TEXT NOT NULL,
+  legacy.exec(`PRAGMA journal_mode=WAL; CREATE TABLE handoffs (agent_dir TEXT NOT NULL, cwd TEXT NOT NULL, name TEXT NOT NULL,
     session_id TEXT NOT NULL, session_started_at TEXT, durable INTEGER NOT NULL, goal TEXT NOT NULL,
     completed TEXT NOT NULL, next TEXT NOT NULL, saved_at TEXT NOT NULL, PRIMARY KEY (agent_dir, cwd, name));`);
+  // Its notes keep their order; "b" and "c" were saved in the same millisecond, "c" second.
+  const legacyRepo = join(directory, "legacy-repo");
+  await mkdir(legacyRepo, { recursive: true });
+  const legacyNote = legacy.prepare(`INSERT INTO handoffs VALUES (?, ?, ?, 'gone', NULL, 1, 'g', 'c', 'n', ?)`);
+  for (const [name, savedAt] of [["a", "2026-10-01T00:00:00.000Z"], ["b", "2026-10-02T00:00:00.000Z"], ["c", "2026-10-02T00:00:00.000Z"]])
+    legacyNote.run(agentDir, await realpath(legacyRepo), name, savedAt);
   legacy.close();
+  // Two windows open it for the first time together; a writer holds it meanwhile, so both see the old schema.
+  const blocker = new DatabaseSync(join(directory, "state", "handoff.sqlite"));
+  blocker.exec("BEGIN IMMEDIATE");
+  const pair = [await window(), await window()];
+  const reads = pair.map((host) => host.call("handoff", { action: "read", cwd: legacyRepo }));
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  blocker.exec("COMMIT");
+  blocker.close();
+  for (const migrated of await Promise.all(reads)) assert.deepEqual(migrated.names, ["c", "b", "a"]);
+  for (const host of pair) await close(host);
 
   // Nothing saved yet; saving needs a real session.
   let old = await window();
@@ -164,7 +180,14 @@ try {
   await symlink(repo, join(directory, "repo-link"));
   assert.equal((await fresh.call("handoff", { action: "read", cwd: join(directory, "repo-link") + "/" })).handoff.name, "newest");
   await assert.rejects(() => fresh.call("handoff", { action: "save", cwd: repo, sessionId: "finished" }), /needs sessionId, goal, completed and next/);
+  // Two calls that load the same stored session at once both get it.
+  await fresh.call("spawn", { cwd: repo, id: "twin", prompt: "plain", tools: [], durable: true });
+  await settle(fresh, "twin");
   await close(fresh);
+  const last = await window();
+  const twice = await Promise.allSettled([1, 2].map(() => last.call("follow_up", { sessionId: "twin", prompt: "again" })));
+  for (const outcome of twice) if (outcome.status === "rejected") assert.doesNotMatch(outcome.reason.message, /Unknown sessionId/);
+  await close(last);
   console.log("  OK -> handoff: memory-only warned, finished resumed, live owner respected, crash recovered, awaiting slot, id reuse, newest/named, cwd normalised");
 } finally {
   for (const host of clients) await host.client.close().catch(() => {});

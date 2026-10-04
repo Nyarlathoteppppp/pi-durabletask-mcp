@@ -57,10 +57,17 @@ function db(): DatabaseSync {
       session_id TEXT NOT NULL, session_started_at TEXT, durable INTEGER NOT NULL,
       goal TEXT NOT NULL, completed TEXT NOT NULL, next TEXT NOT NULL, saved_at TEXT NOT NULL,
       seq INTEGER NOT NULL, PRIMARY KEY (agent_dir, cwd, name));`);
-  // Tables from the first handoff commit lack seq; number their rows by saved_at.
-  if (!(opened.prepare("PRAGMA table_info(handoffs)").all() as { name: string }[]).some((c) => c.name === "seq")) {
-    opened.exec("ALTER TABLE handoffs ADD COLUMN seq INTEGER NOT NULL DEFAULT 0");
-    opened.exec("UPDATE handoffs SET seq = (SELECT count(*) FROM handoffs AS older WHERE older.saved_at <= handoffs.saved_at)");
+  // Tables from the first handoff commit lack seq; number their rows by saved_at, then insertion.
+  // One write transaction, checked inside it, so two processes opening it together migrate once.
+  const hasSeq = (): boolean => (opened.prepare("PRAGMA table_info(handoffs)").all() as { name: string }[]).some((c) => c.name === "seq");
+  if (!hasSeq()) {
+    opened.exec("BEGIN IMMEDIATE");
+    try {
+      if (!hasSeq()) opened.exec(`ALTER TABLE handoffs ADD COLUMN seq INTEGER NOT NULL DEFAULT 0;
+        UPDATE handoffs SET seq = (SELECT n FROM (SELECT rowid AS id, row_number() OVER (ORDER BY saved_at, rowid) AS n
+          FROM handoffs) WHERE id = handoffs.rowid);`);
+      opened.exec("COMMIT");
+    } catch (error) { opened.exec("ROLLBACK"); opened.close(); throw error; }
   }
   chmodSync(path, 0o600);
   return store = opened;
