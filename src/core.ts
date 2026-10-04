@@ -119,13 +119,16 @@ export async function startBatch({
     mcpServers: t.mcpServers ?? mcpServers,
     maxTurns: t.maxTurns ?? maxTurns,
     maxDurationMs: t.maxDurationMs ?? maxDurationMs,
-    retentionDays: t.retentionDays ?? retentionDays,
+    // The batch's retentionDays is for its durable tasks; a task may still opt out with durable: false.
+    retentionDays: t.retentionDays ?? ((t.durable ?? durable) === true ? retentionDays : undefined),
     id: t.id ?? (idPrefix ? `${idPrefix}-${String(i + 1).padStart(width, "0")}` : undefined),
   }));
 
   // Validate the batch up front. Every check here is cheap and deterministic, and a
   // half-started fan-out is the worst outcome: you pay for the delegates that launched
   // and still have to work out which ones did not.
+  if (retentionDays !== undefined && !merged.some((t) => t.durable === true))
+    throw new Error("retentionDays applies only to durable delegates; pass durable: true for the batch or its tasks.");
   const seen = new Set<string>();
   for (const [i, t] of merged.entries()) {
     if (t.id) {

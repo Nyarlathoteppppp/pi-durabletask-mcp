@@ -87,14 +87,17 @@ function unavailable(id: string, reason: "held" | "pending" | undefined): Error 
     return new Error(`Session ${id} is unfinished and waiting for recovery; a process resumes it when a ` +
       "delegate slot is free. Check again shortly.");
   return new Error(`Unknown sessionId: ${id}. Sessions without durable: true end with the MCP process that ran ` +
-    "them; durable ones end at forget or after retention. sessions lists what exists here.");
+    "them, or earlier once finished when PI_DELEGATE_HISTORY (default 50) newer ones push them out; durable ones " +
+    "end at forget or after retention. sessions lists what exists here.");
 }
 
 /** A live delegate, or a finished durable one loaded from disk on first use. */
 export async function resolve(id: string): Promise<PiWorker> {
-  await unloading.get(id);
-  // No await between this check and claimStored unless a load is in flight: a second call in the
-  // same tick would otherwise find this process already owning the job and report it unknown.
+  // Await only an unload or load in flight. Any other await before claimStored lets eviction or
+  // another lookup start meanwhile; claimStored then finds this process owning the job and the
+  // session is reported unknown.
+  const unloadingNow = unloading.get(id);
+  if (unloadingNow) await unloadingNow;
   const inFlight = loading.get(id);
   const live = sessions.get(id) ?? (inFlight && await inFlight);
   if (live) { touch(live.id); return live; }
@@ -102,7 +105,8 @@ export async function resolve(id: string): Promise<PiWorker> {
   if (record === "held") {
     // Another process loading the same session at the same instant can make both back off.
     await jitter();
-    const now = sessions.get(id) ?? await loading.get(id);
+    const loadNow = loading.get(id);
+    const now = sessions.get(id) ?? (loadNow && await loadNow);
     if (now) { touch(now.id); return now; }
     record = claimStored(id);
   }
@@ -127,8 +131,11 @@ export async function resolve(id: string): Promise<PiWorker> {
 }
 
 export async function forget(id: string): Promise<void> {
-  await unloading.get(id);
-  const worker = sessions.get(id);
+  // As in resolve: no await before claimStored except for an unload or load in flight.
+  const unloadingNow = unloading.get(id);
+  if (unloadingNow) await unloadingNow;
+  const inFlight = loading.get(id);
+  const worker = sessions.get(id) ?? (inFlight && await inFlight);
   if (!worker) {
     // Deleting a stored job does not need its conversation loaded.
     const record = claimStored(id);

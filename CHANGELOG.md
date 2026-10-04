@@ -1,10 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- `resolve` and `forget` yielded once before looking up a session even when nothing was unloading. History eviction running in that gap left this process holding the session's lock with no worker, so the call reported `Unknown sessionId`. `forget` during a load in this process failed the same way; it now waits for the load.
+- `spawn_batch` with `durable: true` and `retentionDays` rejected the whole batch when a task set `durable: false`, because that task still inherited `retentionDays`. The batch's `retentionDays` now goes only to its durable tasks, and setting it on a batch with no durable task is still refused.
+- `Unknown sessionId` also names the other way a memory session disappears: once finished, it is dropped after `PI_DELEGATE_HISTORY` (default 50) newer sessions.
+- The concurrent `follow_up` test asserts that exactly one starts, the other is refused as running, and only one turn is added.
+
 ## 0.3.7 (2026-10-04)
 
 - Recovery could claim a durable job that its owner finished and released between recovery's scan and its lock, holding a finished session and counting an attempt. It now re-checks `finished_at` after locking.
 - Two calls that loaded the same stored session at once (for example two `follow_up`s) could fail the second with `Unknown sessionId`.
-- The `handoff.sqlite` migration runs in one write transaction, so two MCP processes opening an old file together no longer fail with `duplicate column name: seq`. Old notes saved in the same millisecond now keep their save order.
+- The `handoff.sqlite` migration runs in one write transaction, so two MCP processes opening an old file together no longer fail with `duplicate column name: seq`. Old notes saved in the same millisecond are ordered deterministically, by `saved_at` and then by row order; the true order among them cannot be recovered.
 - `handoff`'s `cwd` description says that `save` needs the session's own cwd.
 
 ## 0.3.6 (2026-10-04)

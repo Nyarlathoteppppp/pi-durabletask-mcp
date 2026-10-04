@@ -186,7 +186,13 @@ try {
   await close(fresh);
   const last = await window();
   const twice = await Promise.allSettled([1, 2].map(() => last.call("follow_up", { sessionId: "twin", prompt: "again" })));
-  for (const outcome of twice) if (outcome.status === "rejected") assert.doesNotMatch(outcome.reason.message, /Unknown sessionId/);
+  const started = twice.filter((outcome) => outcome.status === "fulfilled");
+  const refused = twice.filter((outcome) => outcome.status === "rejected");
+  assert.equal(started.length, 1, "exactly one follow_up starts");
+  assert.equal(refused.length, 1);
+  assert.match(refused[0].reason.message, /Session twin is (starting|running)\. Use `steer`/);
+  const twin = await settle(last, "twin");
+  assert.equal(twin.turns, started[0].value.turnsSoFar + 1, "one follow-up turn, not two");
   await close(last);
   console.log("  OK -> handoff: memory-only warned, finished resumed, live owner respected, crash recovered, awaiting slot, id reuse, newest/named, cwd normalised");
 } finally {

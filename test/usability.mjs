@@ -150,6 +150,14 @@ try {
   assert.equal((await host.call("sessions")).stored.length, 0, "nothing stored");
   await assert.rejects(() => host.call("spawn", { cwd: directory, id: "keep", prompt: "plain", tools: [], retentionDays: 30 }),
     /retentionDays applies only to durable delegates/);
+  // A batch's retentionDays goes to its durable tasks; a task can still opt out of durable.
+  await host.call("spawn_batch", { cwd: directory, tools: [], durable: true, retentionDays: 30, tasks: [
+    { id: "mix-kept", prompt: "plain" }, { id: "mix-memory", prompt: "plain", durable: false }] });
+  assert.equal((await settle(host, "mix-kept")).retentionDays, 30);
+  const memory = await settle(host, "mix-memory");
+  assert.deepEqual([memory.durable, memory.retentionDays], [false, undefined]);
+  await assert.rejects(() => host.call("spawn_batch", { cwd: directory, tools: [], retentionDays: 30, tasks: [{ prompt: "plain" }] }),
+    /retentionDays applies only to durable delegates/);
 
   // 1c. The wall-clock limit applies per run: a session finished long ago can still be followed up.
   await host.call("spawn", { cwd: directory, id: "short-clock", prompt: "plain", tools: [], maxDurationMs: 1000 });
