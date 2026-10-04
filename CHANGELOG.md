@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.8 (2026-10-04)
 
 - `resolve` and `forget` yielded once before looking up a session even when nothing was unloading. History eviction running in that gap left this process holding the session's lock with no worker, so the call reported `Unknown sessionId`. `forget` during a load in this process failed the same way; it now waits for the load.
 - `spawn_batch` with `durable: true` and `retentionDays` rejected the whole batch when a task set `durable: false`, because that task still inherited `retentionDays`. The batch's `retentionDays` now goes only to its durable tasks, and setting it on a batch with no durable task is still refused.
