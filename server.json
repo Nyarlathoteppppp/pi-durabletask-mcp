@@ -1,0 +1,20 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.Nyarlathoteppppp/pi-durabletask-mcp",
+  "title": "Pi Durabletask MCP",
+  "description": "Delegate Claude/Codex tasks to configured Pi, with steering and optional SQLite restart recovery.",
+  "version": "0.4.3",
+  "repository": {
+    "url": "https://github.com/Nyarlathoteppppp/pi-durabletask-mcp",
+    "source": "github"
+  },
+  "websiteUrl": "https://github.com/Nyarlathoteppppp/pi-durabletask-mcp#readme",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "pi-durabletask-mcp",
+      "version": "0.4.3",
+      "transport": { "type": "stdio" }
+    }
+  ]
+}

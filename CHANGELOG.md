@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.3 (2026-10-04)
+
+- Add official MCP Registry metadata (`mcpName` and packaged `server.json`). No runtime logic changes.
+
 ## 0.4.2 (2026-10-04)
 
 - Publish the portable Agent Skill in the npm package to guide use of an already-connected MCP server.
