@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.2 (2026-10-04)
+
+- Publish the portable Agent Skill in the npm package to guide use of an already-connected MCP server.
+- Simplify the English and Chinese READMEs and add optional skill installation instructions. No runtime logic changes.
+
 ## 0.4.1 (2026-10-04)
 
 From a gpt-6.1-sol review of 0.4.0.
