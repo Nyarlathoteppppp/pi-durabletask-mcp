@@ -5,6 +5,9 @@
 - `spawn_batch` checks every task before starting any: the model it will really use, including Pi's own default, thinking support and provider credentials. A bad task no longer leaves its siblings running.
 - `models` leaves out providers whose credentials fail, like `init` and `spawn`, reports them under `failingProviders`, and `defaultUsable` accounts for them.
 - Batch `wait` returns `continueIds`: every session not finished, including those waiting for an answer. Waiting again on `pending` alone dropped a session once its question was answered.
+- Recovery that retried after a busy lock reused the capacity and shutdown state from before its wait, so new work started meanwhile could push it past `PI_DELEGATE_MAX_CONCURRENT`, and it could still register work after shutdown began. Each claim attempt now reads both afresh.
+- `models` resolves the default the way `spawn` does, so a short id such as `grok-4.7` is no longer reported as unusable.
+- The claim-race test's claimer processes no longer fall through into the parent flow.
 
 ## 0.3.3 (2026-10-04)
 

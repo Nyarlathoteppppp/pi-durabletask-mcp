@@ -162,7 +162,9 @@ export async function recoverAbandoned(): Promise<void> {
   if (recovering) return recovering;
   recovering = (async () => {
     while (!shuttingDown && activeCount() < MAX_CONCURRENT) {
-      const records = await claimAbandonedSettled(new Set(sessions.keys()), Math.max(0, MAX_CONCURRENT - activeCount()));
+      // A budget read at each claim attempt, so a retry after waiting sees current capacity and shutdown.
+      const records = await claimAbandonedSettled(() => shuttingDown ? undefined
+        : { excludeIds: new Set(sessions.keys()), limit: Math.max(0, MAX_CONCURRENT - activeCount()) });
       if (!records.length) break;
       // Reserve the entire claim before awaiting model/runtime initialization.
       const claimed = records.map((record) => {

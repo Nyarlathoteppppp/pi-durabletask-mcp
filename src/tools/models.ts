@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { LIST_CAP, MODEL_ALLOWLIST, MODEL_DENYLIST } from "../config.js";
-import { defaultModelRef, modelScope, usableModels } from "../pi/models.js";
+import { defaultModelRef, modelScope, resolveModel, usableModels } from "../pi/models.js";
 import { json } from "./shared.js";
 
 export function registerModels(server: McpServer): void {
@@ -25,11 +25,14 @@ export function registerModels(server: McpServer): void {
       const all = usable.map((m) => m.ref);
       const hits = filter ? all.filter((s) => s.toLowerCase().includes(filter.toLowerCase())) : all;
       const models = hits.slice(offset, offset + limit);
+      // Resolve the default the way spawn does, so a short id like "grok-4.7" is compared as provider/id.
       const fallback = defaultModelRef(cwd);
+      const resolved = fallback ? await resolveModel(fallback, cwd).catch(() => undefined) : undefined;
+      const canonical = resolved ? `${resolved.provider}/${resolved.id}` : fallback;
       return json({
         // What a spawn without `model` uses, and whether this server would allow it.
-        defaultModel: fallback ?? "(none configured)",
-        ...(fallback ? { defaultUsable: all.includes(fallback) } : {}),
+        defaultModel: canonical ?? "(none configured)",
+        ...(canonical ? { defaultUsable: all.includes(canonical) } : {}),
         ...(Object.keys(failing).length ? { failingProviders: failing } : {}),
         count: hits.length,
         offset,

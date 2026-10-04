@@ -219,6 +219,12 @@ try {
   const offered = await host.call("models", { cwd: directory });
   assert.equal(offered.models.includes("broken/one"), false, "a failing provider's models are not offered");
   await close(host);
+  // A short model id is resolved like spawn resolves it.
+  host = await connect({ PI_DELEGATE_MODEL: "one" });
+  const short = await host.call("models", { cwd: directory });
+  assert.equal(short.defaultModel, "test/one");
+  assert.equal(short.defaultUsable, true, "a short default id that spawn accepts is usable");
+  await close(host);
   host = await connect({ TEST_BROKEN_PROVIDER: "broken", PI_DELEGATE_MODEL: "broken/one" });
   assert.equal((await host.call("models", { cwd: directory })).defaultUsable, false, "a default on a failing provider is not usable");
   await close(host);

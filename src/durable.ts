@@ -167,11 +167,19 @@ export const jitter = (): Promise<void> => new Promise((resolve) => setTimeout(r
  * Without it, two processes starting together can both back off and leave the job unclaimed
  * until something else triggers recovery.
  */
-export async function claimAbandonedSettled(excludeIds: Set<string>, limit: number): Promise<JobRecord[]> {
-  const first = claimAbandoned(excludeIds, limit);
+export async function claimAbandonedSettled(
+  budget: () => { excludeIds: Set<string>; limit: number } | undefined,
+): Promise<JobRecord[]> {
+  // Read the budget right before each attempt: during the wait, new work can fill the slots or
+  // shutdown can begin. undefined (or no slots) means claim nothing.
+  const attempt = (): { records: JobRecord[]; contended: number } => {
+    const now = budget();
+    return now && now.limit > 0 ? claimAbandoned(now.excludeIds, now.limit) : { records: [], contended: 0 };
+  };
+  const first = attempt();
   if (first.records.length || !first.contended) return first.records;
   await jitter();
-  return claimAbandoned(excludeIds, limit).records;
+  return attempt().records;
 }
 
 const byId = (id: string): Row | undefined => db().prepare(

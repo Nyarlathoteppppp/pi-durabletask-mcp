@@ -9,10 +9,12 @@ import { DatabaseSync } from "node:sqlite";
 if (process.argv[2] === "claim") {
   const { claimAbandonedSettled } = await import("../dist/durable.js");
   while (Date.now() < Number(process.argv[3])) { /* start together */ }
-  const claimed = (await claimAbandonedSettled(new Set(), 1)).length;
+  const claimed = (await claimAbandonedSettled(() => ({ excludeIds: new Set(), limit: 1 }))).length;
   process.stdout.write(String(claimed));
   // Hold ownership past the other claimer's retry window, so a second owner would be concurrent.
-  setTimeout(() => process.exit(0), claimed ? 800 : 0);
+  // Awaited, so a claimer never falls through into the parent's flow below.
+  await new Promise((resolve) => setTimeout(resolve, claimed ? 800 : 0));
+  process.exit(0);
 }
 
 const dir = await mkdtemp(join(tmpdir(), "pi-delegate-claim-race-"));
