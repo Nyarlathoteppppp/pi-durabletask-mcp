@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- `spawn_batch` checks every task before starting any: the model it will really use, including Pi's own default, thinking support and provider credentials. A bad task no longer leaves its siblings running.
+- `models` leaves out providers whose credentials fail, like `init` and `spawn`, reports them under `failingProviders`, and `defaultUsable` accounts for them.
+- Batch `wait` returns `continueIds`: every session not finished, including those waiting for an answer. Waiting again on `pending` alone dropped a session once its question was answered.
+
 ## 0.3.3 (2026-10-04)
 
 - `wait` takes `until: "settled"` to return only when a delegate finishes or asks a question, so one loop gets the result without waking on every tool call.

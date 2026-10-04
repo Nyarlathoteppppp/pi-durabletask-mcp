@@ -50,8 +50,9 @@ export function registerControl(server: McpServer): void {
         "turn/tool call, a pending question, the end, or timeout; pass prior turns/toolCallCount as " +
         "afterTurns/afterToolCalls. until: \"settled\" returns only when it finishes or asks a question, " +
         "so loop on it to get the result. With sessionIds (e.g. a spawn_batch), returns when any one settles " +
-        "(\"settled\") or all do (\"all_settled\"): settled/pending ids plus a summary per session, with the " +
-        "final text of finished ones; wait again on the pending ids. Answer questions before waiting again. " +
+        "(\"settled\") or all do (\"all_settled\"): settled/pending ids, continueIds (everything not finished, " +
+        "including sessions waiting for an answer) and a summary per session, with the final text of finished " +
+        "ones and any pending questions. Answer questions, then wait again on continueIds. " +
         "Cancelling this wait leaves delegates running; use `abort` to stop one.",
       inputSchema: {
         sessionId: z.string().optional().describe("One session; returns its status snapshot"),

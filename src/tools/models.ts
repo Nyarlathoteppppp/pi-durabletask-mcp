@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { LIST_CAP, MODEL_ALLOWLIST, MODEL_DENYLIST } from "../config.js";
-import { defaultModelRef, modelScope, scopedModels } from "../pi/models.js";
+import { defaultModelRef, modelScope, usableModels } from "../pi/models.js";
 import { json } from "./shared.js";
 
 export function registerModels(server: McpServer): void {
@@ -20,7 +20,9 @@ export function registerModels(server: McpServer): void {
       },
     },
     async ({ filter, cwd, offset = 0, limit = LIST_CAP }) => {
-      const all = (await scopedModels(cwd)).map((m) => m.ref);
+      // Same view as spawn: providers whose credentials fail are left out.
+      const { models: usable, failing } = await usableModels(cwd);
+      const all = usable.map((m) => m.ref);
       const hits = filter ? all.filter((s) => s.toLowerCase().includes(filter.toLowerCase())) : all;
       const models = hits.slice(offset, offset + limit);
       const fallback = defaultModelRef(cwd);
@@ -28,6 +30,7 @@ export function registerModels(server: McpServer): void {
         // What a spawn without `model` uses, and whether this server would allow it.
         defaultModel: fallback ?? "(none configured)",
         ...(fallback ? { defaultUsable: all.includes(fallback) } : {}),
+        ...(Object.keys(failing).length ? { failingProviders: failing } : {}),
         count: hits.length,
         offset,
         nextOffset: offset + models.length < hits.length ? offset + models.length : null,

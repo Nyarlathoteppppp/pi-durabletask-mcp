@@ -1,5 +1,5 @@
 /** Execution operations shared by protocol adapters. Registry and PiWorker own lifecycle/state. */
-import { DEFAULT_MODEL, PROGRESS_MS, RUN_DEFAULT_DURATION_MS, RUN_DEFAULT_TURNS } from "./config.js";
+import { PROGRESS_MS, RUN_DEFAULT_DURATION_MS, RUN_DEFAULT_TURNS } from "./config.js";
 import {
   all, assertCapacity, claimId, evictHistory, forget, launch, launchBatch, loaded, resolve,
 } from "./registry.js";
@@ -9,7 +9,7 @@ import { compactSnapshot, message } from "./pi/worker.js";
 import type { PiWorker } from "./pi/worker.js";
 import type { Snapshot } from "./types.js";
 import { pickTools } from "./permissions.js";
-import { assertThinkingSupported, resolveModel } from "./pi/models.js";
+import { assertProviderReady, assertThinkingSupported, defaultModelRef, resolveModel } from "./pi/models.js";
 import { resolveDelegateCwd } from "./workspace.js";
 import { validateNativeMcp } from "./pi/native-mcp.js";
 
@@ -138,8 +138,11 @@ export async function startBatch({
       pickTools(t.tools);
       const taskCwd = await resolveDelegateCwd(t.cwd ?? cwd);
       validateNativeMcp(t, taskCwd);
-      const taskModel = await resolveModel(t.model || DEFAULT_MODEL, taskCwd);
+      // The model the task will really run on, including Pi's own default, and its credentials:
+      // a task that would fail after its siblings started must stop the whole batch here.
+      const taskModel = await resolveModel(t.model || defaultModelRef(taskCwd), taskCwd);
       assertThinkingSupported(taskModel, t.thinking);
+      if (taskModel) await assertProviderReady(taskModel.provider);
     } catch (e) {
       throw new Error(`tasks[${i}]${t.id ? ` (${t.id})` : ""}: ${message(e)}`);
     }
@@ -310,7 +313,7 @@ export interface WaitSummary {
 export async function waitForMany(
   sessionIds: string[],
   { timeoutMs = 30_000, until: mode = "settled", signal }: Omit<WaitOptions, "afterTurns" | "afterToolCalls" | "verbose"> = {},
-): Promise<{ settled: string[]; pending: string[]; sessions: WaitSummary[] }> {
+): Promise<{ settled: string[]; pending: string[]; continueIds: string[]; sessions: WaitSummary[] }> {
   const ids = [...new Set(sessionIds)];
   const watched = await watch(ids);
   await until(watched, mode, timeoutMs, signal);
@@ -330,6 +333,8 @@ export async function waitForMany(
   return {
     settled: sessions.filter(isSettled).map((s) => s.sessionId),
     pending: sessions.filter((s) => !isSettled(s)).map((s) => s.sessionId),
+    // Not finished yet, including those waiting for an answer: keep waiting on these after answering.
+    continueIds: sessions.filter((s) => !TERMINAL.has(s.state)).map((s) => s.sessionId),
     sessions,
   };
 }

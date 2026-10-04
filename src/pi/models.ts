@@ -188,12 +188,23 @@ export async function preflight(cwd?: string): Promise<Health> {
         : "No usable model: pi reports authenticated providers but none carry a usable model.",
     );
   }
+  const healthy = await withHealthyProviders(usable);
+  return { available: available.length, usable: healthy.models.map((m) => m.ref), failing: healthy.failing };
+}
+
+/** Drop models of providers whose credentials fail to resolve, reporting why. */
+async function withHealthyProviders(models: ScopedModel[]): Promise<{ models: ScopedModel[]; failing: Record<string, string> }> {
   const failing: Record<string, string> = {};
-  await Promise.all([...new Set(usable.map((m) => m.provider))].map(async (provider) => {
+  await Promise.all([...new Set(models.map((m) => m.provider))].map(async (provider) => {
     const problem = await providerProblem(provider);
     if (problem) failing[provider] = problem;
   }));
-  return { available: available.length, usable: usable.filter((m) => !(m.provider in failing)).map((m) => m.ref), failing };
+  return { models: models.filter((m) => !(m.provider in failing)), failing };
+}
+
+/** The models a spawn could actually use right now: in scope and policy, with working credentials. */
+export async function usableModels(cwd?: string): Promise<{ models: ScopedModel[]; failing: Record<string, string> }> {
+  return withHealthyProviders(await scopedModels(cwd));
 }
 
 /**

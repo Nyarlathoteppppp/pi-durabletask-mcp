@@ -142,6 +142,21 @@ try {
   const cancelled = await core.runExecution({ cwd: dir, id: "cancelled", prompt: "work", tools: [] }, { signal: caller.signal });
   assert.equal(cancelled.state, "aborted");
   assert.equal(cancelled.termination.reason, "caller_cancelled");
+  // A batch member waiting for an answer stays in the set the caller keeps waiting on.
+  const asker = await core.startExecution({ cwd: dir, id: "batch-asker", prompt: "work", tools: [] });
+  const quiet = await core.startExecution({ cwd: dir, id: "batch-quiet", prompt: "work", tools: [] });
+  const ask = new Question("confirm", "continue?");
+  registry.loaded(asker.sessionId).questions.set(ask.id, ask);
+  const seenBatch = await call("wait", { sessionIds: [asker.sessionId, quiet.sessionId], timeoutMs: 1000 });
+  assert.deepEqual(seenBatch.settled, [asker.sessionId], "a question settles the wait");
+  assert.deepEqual(seenBatch.continueIds?.sort(), [asker.sessionId, quiet.sessionId].sort(),
+    "both still need waiting on after the answer");
+  assert.equal(seenBatch.sessions.find((x) => x.sessionId === asker.sessionId).questions[0].id, ask.id);
+  await call("answer", { sessionId: asker.sessionId, requestId: ask.id, value: true });
+  for (const id of [asker.sessionId, quiet.sessionId]) { runs.get(id).resolve(); await registry.loaded(id).run; }
+  const doneBatch = await call("wait", { sessionIds: seenBatch.continueIds, until: "all_settled", timeoutMs: 1000 });
+  assert.deepEqual(doneBatch.continueIds, []);
+
   console.log("  OK -> core/custom MCP shared state, follow-up, interaction, cancel vs wait, progress cleanup");
 } finally {
   for (const w of registry.all()) {

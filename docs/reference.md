@@ -29,7 +29,7 @@ workflow guidance, add this short block to their skill, `AGENTS.md` or `CLAUDE.m
 Use Pi for bounded delegation; put the task's context and constraints in the prompt.
 Prefer spawn with an absolute repository cwd; omit model/tools for configured defaults and read-only tools.
 Use models to choose an alternative model; init is optional setup diagnostics.
-To get a result, loop wait with until:"settled"; for a batch, wait with sessionIds and repeat on the pending ids.
+To get a result, loop wait with until:"settled"; for a batch, wait with sessionIds, answer questions, then wait on continueIds.
 Answer pending questions using questions[].id as requestId before waiting again.
 Use steer while running and follow_up when finished, while the session remains retained.
 Memory sessions live in this server; use durable:true for restart recovery and disk retention.
@@ -181,8 +181,9 @@ nothing. Half a fan-out is the worst outcome, because you pay for the delegates 
 and still have to work out which ones did not.
 
 Wait for the whole batch with `wait` and the returned `sessionIds`: `until: "settled"` returns as
-each delegate finishes, with its final text, and `"all_settled"` once all have. Repeat on the
-pending ids. `steer` and `abort` stay per session.
+each delegate finishes, with its final text, and `"all_settled"` once all have. A delegate asking
+a question also settles the wait; answer it, then wait again on `continueIds`, which lists every
+delegate not finished yet, including the one you answered. `steer` and `abort` stay per session.
 
 ## Picking a model per call
 

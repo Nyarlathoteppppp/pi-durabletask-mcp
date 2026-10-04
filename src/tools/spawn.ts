@@ -155,7 +155,7 @@ export function registerSpawn(server: McpServer): void {
     async (args) => json({
       ...await startBatch(args),
       next: "Call wait with these sessionIds (until \"settled\" returns as each finishes, \"all_settled\" when all have); " +
-        "repeat on the pending ids. `steer` and `abort` stay per session.",
+        "answer any questions, then wait again on continueIds. `steer` and `abort` stay per session.",
     }),
   );
 

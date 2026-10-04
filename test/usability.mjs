@@ -18,11 +18,13 @@ const waitUntil = async (predicate) => {
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
 };
+const seen = [];
 const http = createServer(async (req, res) => {
   let body = "";
   for await (const chunk of req) body += chunk;
   const request = JSON.parse(body);
   const encoded = JSON.stringify(request.messages);
+  seen.push(encoded);
   const toolResults = request.messages.filter((m) => m.role === "tool").length;
   if (encoded.includes("SLOW")) await new Promise((resolve) => setTimeout(resolve, 1500));
   // Paced replies make intermediate progress observable to a waiting caller.
@@ -196,7 +198,32 @@ try {
     assert.match(found.toolCalls[0].result, /needle/);
     await close(host);
   } else console.log("  (no rg on PATH: skipped the Pi tool-directory case)");
-  console.log("  OK -> compact status/wait, failing provider reported and refused, retries visible, ripgrep from Pi's tool directory");
+  // A batch is checked as a whole before anything starts, including Pi's own default model and
+  // provider credentials, so a bad task never leaves its siblings running.
+  host = await connect({ PI_DELEGATE_MODEL: "", PI_DELEGATE_MODEL_DENYLIST: "test/one" });
+  await assert.rejects(() => host.call("spawn_batch", { cwd: directory, tools: [], tasks: [
+    { id: "batch-explicit", prompt: "BATCH_EXPLICIT", model: "broken/one" },
+    { id: "batch-default", prompt: "BATCH_DEFAULT" },
+  ] }), /DENYLIST/);
+  assert.equal(seen.some((m) => m.includes("BATCH_EXPLICIT")), false, "no task of a refused batch ran");
+  assert.equal((await host.call("sessions")).sessions.length, 0);
+  await close(host);
+  host = await connect({ TEST_BROKEN_PROVIDER: "broken" });
+  await assert.rejects(() => host.call("spawn_batch", { cwd: directory, tools: [], tasks: [
+    { id: "batch-good", prompt: "BATCH_GOOD", model: "test/one" },
+    { id: "batch-broken", prompt: "BATCH_BROKEN", model: "broken/one" },
+  ] }), /Provider broken is not usable/);
+  assert.equal(seen.some((m) => m.includes("BATCH_GOOD")), false, "no task of a refused batch ran");
+
+  // models agrees with spawn about a provider whose credentials fail.
+  const offered = await host.call("models", { cwd: directory });
+  assert.equal(offered.models.includes("broken/one"), false, "a failing provider's models are not offered");
+  await close(host);
+  host = await connect({ TEST_BROKEN_PROVIDER: "broken", PI_DELEGATE_MODEL: "broken/one" });
+  assert.equal((await host.call("models", { cwd: directory })).defaultUsable, false, "a default on a failing provider is not usable");
+  await close(host);
+
+  console.log("  OK -> compact status/wait, failing provider reported and refused, retries visible, ripgrep from Pi's tool directory, batch prechecks every task, models agrees with spawn");
 } finally {
   for (const host of clients) await host.client.close().catch(() => {});
   for (const socket of sockets) socket.destroy();
