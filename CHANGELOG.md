@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.4 (2026-10-04)
 
 - `spawn_batch` checks every task before starting any: the model it will really use, including Pi's own default, thinking support and provider credentials. A bad task no longer leaves its siblings running.
 - `models` leaves out providers whose credentials fail, like `init` and `spawn`, reports them under `failingProviders`, and `defaultUsable` accounts for them.

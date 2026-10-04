@@ -232,9 +232,13 @@ available from pi's authenticated providers except the matching exclusions:
 ```json
 "env": {
   "PI_DELEGATE_IGNORE_SCOPE": "1",
-  "PI_DELEGATE_MODEL_DENYLIST": "anthropic/*,openai-codex/*,dragon/grok-4.6"
+  "PI_DELEGATE_MODEL_DENYLIST": "anthropic/*,dragon/grok-4.6"
 }
 ```
+
+This is an example, not the running host's policy. Check `init` for the live
+`delegateDenylist` and available models. After changing a host's launch environment,
+reconnect that MCP host; an existing process keeps its original environment.
 
 Every launch may also pass `thinking`: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`.
 Omit it to let pi apply its configured/default level. A non-`off` level that the selected model does
