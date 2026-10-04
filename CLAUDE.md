@@ -1,6 +1,19 @@
 # 开发交接（2026-10-04）
 
-## 最新结论：0.3.3 审查
+## 最新结论：0.3.9 收尾审查
+
+Pi 的 `openai-codex/gpt-6-astra` 独立只读审查，Codex 核实并修复；Astra 对补丁再次复核，未发现新的确定问题。当前适合本机 Claude/Codex 的实际委派工作流；本轮没有发现需要架构重写或扩大防御的依据。
+
+- 修复认证/task creation 等待期间取消后仍启动模型的问题，durable 取消结果正确落盘。
+- 修复 `wait(settled)` 提前于最终提交返回的问题，超时期间保持 `running`，完成后可立即 `follow_up`。
+- 修复懒加载期间 `forget` 漏清理资源及并发 `follow_up` 使用已删除 worker 的问题。
+- 本轮实际遇到 75% 轮次提醒导致审查漏读必要源码：提醒改为只做必要核验并预留结论轮次，硬上限不变。
+
+验证：构建通过；8 组定向测试通过（start-cancel、wait-finalization、unload-race、core、lifecycle、regressions、integration、recovery）。三个修复场景先确认旧实现失败，再验证修复；认证/task creation 取消覆盖内存和真实 DurableJob，恢复测试使用真实 MCP/Pi SDK 与本地假 provider。未运行完整套件、压力测试或真实写入任务。
+
+使用建议：短审查/查询保持默认内存任务；需要跨重启或跨窗口继续时显式 `durable: true`，交接用 `handoff`。继续使用 `spawn → wait(until: "settled")`，有问题先 `answer`，结束后再 `follow_up`。当前仍运行的 MCP host 要重连才能加载这次修复。
+
+## 历史结论：0.3.3 审查
 
 审查发布提交 `bc512f7`（对比 0.3.2 的 `cfb274f`）。Pi 的 `openai-codex/gpt-6-astra` 独立只读审查，Codex 随后核实。建议先做小修，不需要架构重写。
 

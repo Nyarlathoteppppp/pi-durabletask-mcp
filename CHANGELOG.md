@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.9 (2026-10-04)
+
+- Cancelling a delegate during OAuth refresh or task creation no longer starts a model request afterward. Durable cancellation is committed as the final result.
+- `wait` reports completion after the worker finishes committing its result. A timeout during finalization stays `running`, including batch `pending`/`continueIds`, so immediate `follow_up` works after a settled result.
+- `forget` checks and disposes the worker obtained after a pending lazy load, awaits native MCP shutdown before deletion, and refuses active work. A concurrent `follow_up` cannot execute on a worker already forgotten or unloaded.
+- The 75% turn-budget reminder permits essential verification and reserves a final-answer turn, instead of forbidding all further tools. The hard turn limit is unchanged.
+
 ## 0.3.8 (2026-10-04)
 
 - `resolve` and `forget` yielded once before looking up a session even when nothing was unloading. History eviction running in that gap left this process holding the session's lock with no worker, so the call reported `Unknown sessionId`. `forget` during a load in this process failed the same way; it now waits for the load.

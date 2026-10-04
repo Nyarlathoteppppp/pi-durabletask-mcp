@@ -55,7 +55,8 @@ const RECENT_CALLS = 5;
 const COMPACT_ARGS = 120;
 
 const FINALIZE_PROMPT =
-  "Stop expanding the investigation and do not call more tools. Return the best conclusion now from " +
+  "Stop expanding the investigation. Reserve one remaining turn for your final answer; use other " +
+  "remaining turns only for essential checks needed to support your conclusion. Return the best conclusion from " +
   "the evidence already collected. Include concrete evidence, uncertainty, blockers, and the next action.";
 
 /**
@@ -371,9 +372,15 @@ export class PiWorker {
     // A recovery already past its budget is only marked aborted, so it needs no model either.
     const overBudget = recover && (this.turns >= this.maxTurns || this.elapsedMs() >= this.maxDurationMs);
     const provider = this.model?.includes("/") ? this.model.slice(0, this.model.indexOf("/")) : undefined;
-    if (!alreadyStopped && !answered && !overBudget && provider) await assertProviderReady(provider);
+    if (!alreadyStopped && !answered && !overBudget && provider) {
+      try { await assertProviderReady(provider); }
+      catch (error) { if (!this.isStopped()) throw error; }
+    }
+    // Authentication may refresh OAuth over the network. An abort or shutdown received during
+    // that await still wins; cancelled runs commit their terminal state without prompting Pi.
+    if (this.suspended) return;
     if (!recover) this.runStartedAt = new Date().toISOString();
-    if (!alreadyStopped) {
+    if (!alreadyStopped && this.state !== "aborted") {
       this.state = "running";
       this.finishedAt = undefined;
       this.error = undefined;
@@ -389,7 +396,8 @@ export class PiWorker {
       };
       signal.addEventListener("abort", suspend, { once: true });
       try {
-        if (alreadyStopped) return this.checkpoint();
+        // A durable task's creation also yields; cancellation may arrive while it commits.
+        if (alreadyStopped || this.state === "aborted") return this.checkpoint();
         if (recover && checkpoint.inputStarted) {
           const last = this.session!.messages.at(-1);
           if (last?.role === "assistant" && last.stopReason === "stop" && !this.steering.length) {
@@ -569,10 +577,10 @@ export class PiWorker {
           this.finishSteerSent = true;
           this.notices.push({
             type: "warning",
-            message: `turn budget ${this.turns}/${this.maxTurns}: requested final answer without more tools`,
+            message: `turn budget ${this.turns}/${this.maxTurns}: requested wrap-up with only essential checks`,
             at: new Date().toISOString(),
           });
-          void this.session?.steer(FINALIZE_PROMPT).catch((e: unknown) => {
+          void this.session?.steer(`You have ${this.maxTurns - this.turns} turns left, including your final answer. ${FINALIZE_PROMPT}`).catch((e: unknown) => {
             this.notices.push({
               type: "warning",
               message: `automatic finalization steer failed: ${message(e)}`,

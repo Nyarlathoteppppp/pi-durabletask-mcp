@@ -13,6 +13,7 @@ await mkdir(join(dir, "agent"), { recursive: true });
 const durable = await import("../dist/durable.js");
 const registry = await import("../dist/registry.js");
 const { PiWorker } = await import("../dist/pi/worker.js");
+const core = await import("../dist/core.js");
 PiWorker.recover = async (options, _prompt, _key, worker) => { worker.state = options.id === "busy" ? "running" : "done"; return worker; };
 try {
   durable.claimAbandoned(new Set(), 0); // creates the catalog
@@ -47,6 +48,62 @@ try {
   await registry.forget("loading");
   await loadingIt;
   assert.equal(durable.storedIdInUse("loading"), false, "forget deleted the one being loaded");
+
+  // A follow_up awaiting the same load must not execute on a worker forget already removed.
+  const last = new DatabaseSync(join(dir, "state", "durable", "v2", "catalog.sqlite"));
+  last.prepare("INSERT INTO jobs (key, pid, agent_dir, options, prompt, finished_at) VALUES (?, 0, ?, ?, 'x', ?)")
+    .run("00000000-0000-4000-8000-0000000000f3", join(dir, "agent"), options("forget-followup"), Date.now());
+  last.close();
+  const entered = Promise.withResolvers(), release = Promise.withResolvers();
+  const closing = Promise.withResolvers(), closeReleased = Promise.withResolvers();
+  let disposed = false, executions = 0;
+  PiWorker.recover = async (_options, _prompt, _key, worker) => {
+    worker.state = "done";
+    worker.nativeMcp = true;
+    worker.session = {
+      extensionRunner: { emit: async () => { closing.resolve(); await closeReleased.promise; } },
+      dispose: () => { disposed = true; },
+    };
+    worker.followUp = async () => { executions++; return { sessionId: worker.id }; };
+    entered.resolve();
+    await release.promise;
+    return worker;
+  };
+  const following = core.followUp("forget-followup", "continue");
+  const rejected = assert.rejects(following, /forgotten|unloaded|Unknown sessionId/);
+  await entered.promise;
+  const deleted = core.forgetSession("forget-followup");
+  release.resolve();
+  await closing.promise;
+  await rejected;
+  assert.equal(durable.storedIdInUse("forget-followup"), true, "cleanup finishes before deleting persistent state");
+  closeReleased.resolve();
+  await deleted;
+  assert.equal(disposed, true, "forget disposes the worker obtained after awaiting its load");
+  assert.equal(executions, 0, "a stale reference must not start a follow_up");
+  assert.equal(durable.storedIdInUse("forget-followup"), false);
+
+  // Check the loaded worker's actual activity after the await, rather than the earlier lookup.
+  const activeDb = new DatabaseSync(join(dir, "state", "durable", "v2", "catalog.sqlite"));
+  activeDb.prepare("INSERT INTO jobs (key, pid, agent_dir, options, prompt, finished_at) VALUES (?, 0, ?, ?, 'x', ?)")
+    .run("00000000-0000-4000-8000-0000000000f4", join(dir, "agent"), options("loading-active"), Date.now());
+  activeDb.close();
+  const activeEntered = Promise.withResolvers(), activeRelease = Promise.withResolvers();
+  PiWorker.recover = async (_options, _prompt, _key, worker) => {
+    worker.state = "running";
+    activeEntered.resolve(); await activeRelease.promise;
+    return worker;
+  };
+  const activeLoad = registry.resolve("loading-active");
+  await activeEntered.promise;
+  const activeForget = assert.rejects(core.forgetSession("loading-active"), /Call abort first/);
+  activeRelease.resolve();
+  const active = await activeLoad;
+  await activeForget;
+  assert.equal(registry.loaded(active.id), active);
+  assert.equal(durable.storedIdInUse(active.id), true);
+  await active.abort();
+  await core.forgetSession(active.id);
   console.log("  OK -> resolve and forget find a session that eviction starts unloading meanwhile");
 } finally {
   await rm(dir, { recursive: true, force: true });

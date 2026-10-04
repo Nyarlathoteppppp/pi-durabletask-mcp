@@ -11,6 +11,12 @@ import { publish, readAll, cleanup, STATE_DIR } from "../dist/statusline/state.j
 
 const dir = await mkdtemp(join(tmpdir(), "pi-delegate-regression-"));
 const originalStart = PiWorker.prototype.start;
+const clearWorkers = async () => {
+  for (const w of registry.all()) {
+    if (w.isActive) await w.abort();
+    await registry.forget(w.id);
+  }
+};
 try {
   assert.deepEqual(pickTools([]), []);
   assert.deepEqual(pickTools(), ["read", "grep", "find", "ls"]);
@@ -21,19 +27,19 @@ try {
     registry.launch({ cwd: dir, id: `capacity-${i}`, prompt: "stub" })));
   assert.equal(results.filter((r) => r.status === "fulfilled").length, 4);
   assert.equal(registry.activeCount(), 4);
-  for (const w of registry.all()) registry.forget(w.id);
+  await clearWorkers();
 
   const duplicate = await Promise.allSettled([0, 1].map(() =>
     registry.launch({ cwd: dir, id: "same-id", prompt: "stub" })));
   assert.equal(duplicate.filter((r) => r.status === "fulfilled").length, 1);
   assert.equal(registry.count(), 1);
-  for (const w of registry.all()) registry.forget(w.id);
+  await clearWorkers();
 
   await registry.launch({ cwd: dir, id: "existing", prompt: "stub" });
   await assert.rejects(() => registry.launchBatch(Array.from({ length: 4 }, (_, i) =>
     ({ cwd: dir, id: `batch-${i}`, prompt: "stub" }))), /concurrency limit/);
   assert.equal(registry.count(), 1, "rejected batch starts nothing");
-  for (const w of registry.all()) registry.forget(w.id);
+  await clearWorkers();
   await assert.rejects(() => registry.launchBatch([0, 1].map(() =>
     ({ cwd: dir, id: "batch-duplicate", prompt: "stub" }))), /reuses session id/);
   assert.equal(registry.count(), 0);
@@ -45,7 +51,7 @@ try {
   ]);
   assert.equal(batchRace.filter((r) => r.status === "fulfilled").length, 1);
   assert.ok(registry.activeCount() <= 4);
-  for (const w of registry.all()) registry.forget(w.id);
+  await clearWorkers();
 
   PiWorker.prototype.start = async function () { throw new Error("startup failure"); };
   await assert.rejects(() => registry.launch({ cwd: dir, id: "reusable", prompt: "stub" }), /startup failure/);
@@ -120,7 +126,7 @@ try {
   console.log("  OK -> concurrent reservations, IDs, cancellation, complete output, no-tools, safe grep, state publication");
 } finally {
   PiWorker.prototype.start = originalStart;
-  for (const w of registry.all()) { w.dispose(); registry.forget(w.id); }
+  await clearWorkers();
   cleanup();
   await rm(dir, { recursive: true, force: true });
 }

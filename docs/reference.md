@@ -594,7 +594,8 @@ through. Three defences, in order of preference:
 
 These transport timeouts are separate from the delegate safety budgets. `run` defaults to 12 turns
 or 5 minutes; background sessions default to 30 turns or 10 minutes. At 75% of the turn budget, a
-tool-using delegate is steered once to stop exploring and return its best conclusion. Reaching the
+tool-using delegate is steered once to stop expanding its investigation, finish only essential checks,
+and reserve one remaining turn for its conclusion. Reaching the
 turn or time ceiling aborts the underlying pi session and records `termination.reason`, while keeping
 the trace and any partial text. Cancelling a blocking `run` also aborts its underlying worker.
 

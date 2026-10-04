@@ -143,6 +143,10 @@ export async function forget(id: string): Promise<void> {
     forgetOwnedJob(record.key);
     return;
   }
+  // Check and dispose the actual worker, including one obtained after awaiting a lazy load.
+  if (worker.isActive)
+    throw new Error(`Session ${id} is still ${worker.state}. Call abort first.`);
+  worker.dispose();
   sessions.delete(id);
   await worker.forgetPersistent();
 }

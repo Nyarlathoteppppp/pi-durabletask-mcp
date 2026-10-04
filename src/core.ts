@@ -14,6 +14,14 @@ import { resolveDelegateCwd } from "./workspace.js";
 import { validateNativeMcp } from "./pi/native-mcp.js";
 
 const TERMINAL = new Set(["done", "aborted", "error"]);
+const hasFinished = (worker: PiWorker): boolean => TERMINAL.has(worker.state) && !worker.isActive;
+
+/** A timed-out wait must keep the caller waiting while the final result is still committing. */
+function waitingSnapshot(worker: PiWorker, verbose?: boolean): Snapshot {
+  const snapshot = worker.snapshot({ verbose });
+  if (TERMINAL.has(snapshot.state) && worker.isActive) snapshot.state = "running";
+  return snapshot;
+}
 
 /** Wait without owning the worker lifecycle. Cancelling this wait never aborts the delegate. */
 export async function waitForProgress(
@@ -24,13 +32,13 @@ export async function waitForProgress(
   afterToolCalls = worker.toolCalls.length,
 ): Promise<Snapshot> {
   if (
-    TERMINAL.has(worker.state) ||
+    hasFinished(worker) ||
     worker.turns > afterTurns ||
     worker.toolCalls.length > afterToolCalls ||
     worker.questions.size > 0 ||
     signal?.aborted
   )
-    return worker.snapshot();
+    return waitingSnapshot(worker);
 
   return new Promise((resolve) => {
     let settled = false;
@@ -40,11 +48,11 @@ export async function waitForProgress(
       clearInterval(poll);
       clearTimeout(timeout);
       signal?.removeEventListener("abort", finish);
-      resolve(worker.snapshot());
+      resolve(waitingSnapshot(worker));
     };
     const poll = setInterval(() => {
       if (
-        TERMINAL.has(worker.state) ||
+        hasFinished(worker) ||
         worker.turns > afterTurns ||
         worker.toolCalls.length > afterToolCalls ||
         worker.questions.size > 0
@@ -256,8 +264,8 @@ export interface WaitOptions {
 /** A session being waited on: live in this process, or finished and read from the catalog. */
 type Watched = { id: string; worker?: PiWorker; finished?: Snapshot; turns: number; calls: number };
 
-const settledNow = (w: Watched): boolean =>
-  w.finished !== undefined || TERMINAL.has(w.worker!.state) || w.worker!.questions.size > 0;
+const finishedNow = (w: Watched): boolean => w.finished !== undefined || hasFinished(w.worker!);
+const settledNow = (w: Watched): boolean => finishedNow(w) || w.worker!.questions.size > 0;
 const progressed = (w: Watched): boolean =>
   settledNow(w) || w.worker!.turns > w.turns || w.worker!.toolCalls.length > w.calls;
 
@@ -299,7 +307,7 @@ export async function waitForState(
   const [watched] = await watch([sessionId], afterTurns, afterToolCalls);
   if (watched!.finished) return verbose ? watched!.finished : compactSnapshot(watched!.finished);
   await until([watched!], mode, timeoutMs, signal);
-  return watched!.worker!.snapshot({ verbose });
+  return waitingSnapshot(watched!.worker!, verbose);
 }
 
 /** One line per session: enough to decide what to read next, plus the answer once it is done. */
@@ -329,7 +337,7 @@ export async function waitForMany(
   const watched = await watch(ids);
   await until(watched, mode, timeoutMs, signal);
   const sessions = watched.map((w): WaitSummary => {
-    const s = w.finished ?? w.worker!.snapshot();
+    const s = w.finished ?? waitingSnapshot(w.worker!);
     const done = TERMINAL.has(s.state);
     return {
       sessionId: s.sessionId, label: s.label, state: s.state, turns: s.turns, toolCallCount: s.toolCallCount,
@@ -360,6 +368,9 @@ export async function resolveInteraction(sessionId: string, requestId: string, v
 
 export async function followUp(sessionId: string, prompt: string) {
   const worker = await resolve(sessionId);
+  // forget/eviction can remove a worker while resolve is finishing a shared lazy load.
+  if (loaded(sessionId) !== worker)
+    throw new Error(`Session ${sessionId} was forgotten or unloaded while loading. Check status before follow_up.`);
   // Let the worker produce the more useful "use steer" error for a live session.
   if (!worker.isActive) assertCapacity();
   return { ...await worker.followUp(prompt), next: WAIT_HINT };
@@ -395,10 +406,6 @@ export function listSessions(state?: string, verbose?: boolean) {
 }
 
 export async function forgetSession(sessionId: string) {
-  const w = all().find((worker) => worker.id === sessionId);
-  if (w?.isActive)
-    throw new Error(`Session ${sessionId} is still ${w.state}. Call abort first.`);
-  w?.dispose();
   await forget(sessionId);
   return { forgotten: sessionId };
 }
