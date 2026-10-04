@@ -132,11 +132,18 @@ unbind();
     return { w, session };
   };
   const looping = fixture([{}]);
-  const writing = fixture([]);
+  const writing = fixture([{}]);
   await new Promise((resolve) => setTimeout(resolve, 340));
+  // The turn under way when time runs short may be the answer itself; steer only after it calls tools.
+  assert.equal(looping.session.steers.length, 0, "not mid-turn");
+  looping.w.onEvent({ type: "turn_start" });
+  looping.w.onEvent({ type: "turn_end", toolResults: [{}] });
+  writing.w.onEvent({ type: "turn_start" });
+  writing.w.onEvent({ type: "turn_end", toolResults: [] });
+  await new Promise((resolve) => setImmediate(resolve));
   assert.equal(looping.session.steers.length, 1, "steered once by time");
   assert.match(looping.session.steers[0], /final answer/);
-  assert.equal(writing.session.steers.length, 0, "an answer in progress is not interrupted");
+  assert.equal(writing.session.steers.length, 0, "an answer is not followed by a steer");
   for (let i = 0; i < 30; i++) {
     looping.w.onEvent({ type: "turn_start" });
     looping.w.onEvent({ type: "turn_end", toolResults: [{}] });

@@ -1,6 +1,6 @@
 {
   "name": "pi-durabletask-mcp",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Durable Pi Coding Agent tasks over MCP with background execution, steering, and crash recovery",
   "type": "module",
   "bin": {

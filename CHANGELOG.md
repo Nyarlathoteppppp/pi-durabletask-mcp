@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1 (2026-10-04)
+
+From a gpt-6.1-sol review of 0.4.0.
+
+- The time-budget wrap-up steer could land while the delegate was writing its final answer, which made Pi take one more turn after it; that turn could replace the answer or run into the deadline. Now 2/3 of the time budget only marks the run, and the steer is sent at the end of the next turn that called tools.
+- An `abort` during a `follow_up`'s provider authentication, followed at once by another `follow_up`, let both reach Pi: the first saw the second's `starting` state and did not know it had been cancelled. A superseded start now stops after authentication.
+
 ## 0.4.0 (2026-10-04)
 
 First version meant for everyday use. 0.3.9 was never tagged; its changes are listed here.

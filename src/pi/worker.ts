@@ -110,8 +110,10 @@ export class PiWorker {
   private finishTimer: NodeJS.Timeout | undefined;
   private runTurns = 0;
   private finishSteerSent = false;
-  /** Whether the last finished turn called tools; one that did not is normally the answer itself. */
-  private lastTurnUsedTools = false;
+  /** Set when the run has used 2/3 of its time; the wrap-up steer follows at the next tool turn's end. */
+  private timeShort = false;
+  /** Counts beginDurable calls, so one cancelled during authentication cannot resume a later run. */
+  private executions = 0;
   /** pi reports provider failures as an assistant message with stopReason "error", not a throw. */
   private providerError: string | undefined;
   /** Attempts Pi made before giving up on the provider in this run, if it did. */
@@ -363,6 +365,7 @@ export class PiWorker {
   }
 
   private async beginDurable(prompt: string, saved?: Checkpoint, recover = false): Promise<void> {
+    const execution = ++this.executions;
     if (saved) this.restoreSnapshot(saved);
     else this.inputStarted = false;
     const alreadyStopped = recover && saved && !["starting", "running"].includes(saved.snapshot.state);
@@ -381,7 +384,8 @@ export class PiWorker {
     }
     // Authentication may refresh OAuth over the network. An abort or shutdown received during
     // that await still wins; cancelled runs commit their terminal state without prompting Pi.
-    if (this.suspended) return;
+    // An abort during that await also lets a new follow_up start; this execution is then superseded.
+    if (this.suspended || execution !== this.executions) return;
     if (!recover) this.runStartedAt = new Date().toISOString();
     if (!alreadyStopped && this.state !== "aborted") {
       this.state = "running";
@@ -489,7 +493,7 @@ export class PiWorker {
     this.termination = undefined;
     this.runTurns = 0;
     this.finishSteerSent = false;
-    this.lastTurnUsedTools = false;
+    this.timeShort = false;
     this.providerError = undefined;
     this.retriesExhausted = undefined;
     this.clearTimers();
@@ -497,14 +501,11 @@ export class PiWorker {
     this.deadlineTimer = setTimeout(() => {
       void this.abort("deadline", { limit: this.maxDurationMs, observed: this.elapsedMs() });
     }, remainingMs);
-    // Slow turns can reach the deadline long before the turn budget's reminder: remind by time too.
-    const finishInMs = this.maxDurationMs * 0.75 - this.elapsedMs();
-    if (finishInMs > 0) this.finishTimer = setTimeout(() => {
-      if (this.state !== "running" || this.suspended || !this.lastTurnUsedTools || this.questions.size > 0) return;
-      const left = Math.max(1, Math.round((this.maxDurationMs - this.elapsedMs()) / 1000));
-      this.requestFinish(`time budget ${Math.round(this.elapsedMs() / 1000)}s/${Math.round(this.maxDurationMs / 1000)}s`,
-        `About ${left} seconds remain before the hard deadline, including your final answer.`);
-    }, finishInMs);
+    // Slow turns can reach the deadline long before the turn budget's reminder, so time counts too.
+    // The steer waits for a tool turn to end: the turn under way may be the answer itself, and a
+    // steer queued during it would cost another turn. 2/3 leaves room for that wait.
+    const shortInMs = (this.maxDurationMs * 2) / 3 - this.elapsedMs();
+    if (shortInMs > 0) this.finishTimer = setTimeout(() => { this.timeShort = true; }, shortInMs);
     const run = session
       .prompt(prompt)
       .then(() => session.waitForIdle())
@@ -578,16 +579,21 @@ export class PiWorker {
       case "turn_end": {
         // A tool-free turn is normally the final answer. Budget only an agent that is
         // continuing the tool loop, so a conclusion at the limit is not thrown away.
-        this.lastTurnUsedTools = ev.toolResults.length > 0;
         if (this.state !== "running" || this.suspended || ev.toolResults.length === 0) break;
         if (this.turns >= this.maxTurns) {
           void this.abort("max_turns", { limit: this.maxTurns, observed: this.turns });
           break;
         }
         const finishAt = Math.max(1, Math.floor(this.maxTurns * 0.75));
-        if (this.turns >= finishAt && this.questions.size === 0)
+        if (this.questions.size > 0) break;
+        if (this.turns >= finishAt)
           this.requestFinish(`turn budget ${this.turns}/${this.maxTurns}`,
             `You have ${this.maxTurns - this.turns} turns left, including your final answer.`);
+        else if (this.timeShort) {
+          const left = Math.max(1, Math.round((this.maxDurationMs - this.elapsedMs()) / 1000));
+          this.requestFinish(`time budget ${Math.round(this.elapsedMs() / 1000)}s/${Math.round(this.maxDurationMs / 1000)}s`,
+            `About ${left} seconds remain before the hard deadline, including your final answer.`);
+        }
         break;
       }
 

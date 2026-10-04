@@ -71,6 +71,41 @@ try {
       }
     }
   }
+  // abort during authentication, then follow_up at once: the cancelled run must not resume when its
+  // authentication completes, even though the worker is already starting the new one.
+  for (const durable of [false, true]) {
+    const release = Promise.withResolvers();
+    let waiting = 0;
+    const entered = [Promise.withResolvers(), Promise.withResolvers()];
+    rt.getAuth = async () => { entered[waiting++]?.resolve(); await release.promise; return "fake-key"; };
+    const options = { id: `abort-then-follow-${durable}`, cwd: dir, model: "test/one", tools: [],
+      durable, maxTurns: 5, maxDurationMs: 60000 };
+    const worker = new PiWorker(options);
+    const prompts = [];
+    worker.model = options.model;
+    worker.session = { sessionManager: SessionManager.inMemory(dir), messages: [],
+      prompt: async (text) => { prompts.push(text); }, waitForIdle: async () => {},
+      abort: async () => {}, dispose: () => {} };
+    worker.job = durable ? await DurableJob.open(worker.options, "work") : new MemoryJob();
+    const job = worker.job;
+    worker.state = "done";
+    try {
+      const first = worker.followUp("cancelled");
+      await entered[0].promise;
+      await worker.abort("caller_cancelled");
+      const second = worker.followUp("replacement");
+      await entered[1].promise;
+      release.resolve();
+      await Promise.all([first, second]);
+      await worker.run;
+      assert.deepEqual(prompts.filter((p) => p.includes("cancelled") || p.includes("replacement")).length, 1,
+        `durable=${durable}: one run reaches Pi, not both`);
+      assert.ok(prompts.some((p) => p.includes("replacement")), `durable=${durable}: the new follow_up runs`);
+    } finally {
+      worker.dispose();
+      await job.forget();
+    }
+  }
   console.log("  OK -> abort/suspend during authentication or task creation never prompt; durable cancellation persists");
 } finally {
   rt.getAuth = getAuth;
