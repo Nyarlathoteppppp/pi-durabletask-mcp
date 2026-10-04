@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { recoverAbandoned, suspendAll } from "./registry.js";
+import { recoverAbandoned, startRecoveryTicks, suspendAll } from "./registry.js";
 import { createServer } from "./server.js";
 import { cleanup } from "./statusline/state.js";
 
@@ -43,4 +43,5 @@ setInterval(() => {
 }, HOST_WATCH_MS).unref();
 
 await recoverAbandoned();
+startRecoveryTicks();
 await createServer().connect(new StdioServerTransport());

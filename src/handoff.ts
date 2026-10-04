@@ -25,8 +25,8 @@ const HINTS: Record<ResumeHint, string> = {
   wait_running_session: "It is running in this process. Call wait with this sessionId and until \"settled\".",
   status_then_follow_up: "It has finished. Call status for its result, then follow_up with `next` if the work should continue.",
   old_process_owns_session: "It is unfinished and another MCP process still holds it, most likely the previous window. " +
-    "Close that window (its process then exits and this one recovers the session) or wait for it to finish; " +
-    "status reads the result here once it has. Do not spawn a duplicate.",
+    "Close that window: this process then resumes it within about 30 seconds (status also prompts an attempt). " +
+    "Or let it finish there; status reads the result here once it has. Do not spawn a duplicate.",
   awaiting_recovery: "It is unfinished and no process holds it; a process resumes it when a delegate slot is free. Call status shortly.",
   session_not_recoverable: "It was a memory-only session and lives only in the MCP process that started it, which is not this one. " +
     "If the previous window is closed it is gone: use goal, completed and next to spawn new work.",
@@ -55,15 +55,19 @@ function db(): DatabaseSync {
     CREATE TABLE IF NOT EXISTS handoffs (agent_dir TEXT NOT NULL, cwd TEXT NOT NULL, name TEXT NOT NULL,
       session_id TEXT NOT NULL, session_started_at TEXT, durable INTEGER NOT NULL,
       goal TEXT NOT NULL, completed TEXT NOT NULL, next TEXT NOT NULL, saved_at TEXT NOT NULL,
-      PRIMARY KEY (agent_dir, cwd, name));`);
+      seq INTEGER NOT NULL, PRIMARY KEY (agent_dir, cwd, name));`);
   chmodSync(path, 0o600);
   return store = opened;
 }
 
-/** The session behind an id, as far as this process can see it without taking a lock. */
+/**
+ * The session behind an id, as far as this process can see it without taking a lock. A durable
+ * session's identity is the start time in the catalog, whoever has it loaded, so a note saved in
+ * one process compares with the same value in another.
+ */
 function lookup(sessionId: string): { startedAt?: string; durable: boolean } | undefined {
   const worker = loaded(sessionId);
-  if (worker) return { startedAt: worker.startedAt, durable: worker.durable };
+  if (worker && !worker.durable) return { startedAt: worker.startedAt, durable: false };
   const stored = catalogSession(sessionId);
   return stored ? { startedAt: stored.startedAt, durable: true } : undefined;
 }
@@ -84,11 +88,12 @@ export async function saveHandoff(req: SaveRequest): Promise<{ saved: HandoffNot
     throw new Error(`Unknown sessionId: ${req.sessionId}. A handoff names a session this process runs, or a durable one.`);
   const note: HandoffNote = { name: req.name ?? "", cwd, sessionId: req.sessionId, durable: session.durable,
     goal: req.goal, completed: req.completed, next: req.next, savedAt: new Date().toISOString() };
-  db().prepare(`INSERT INTO handoffs (agent_dir, cwd, name, session_id, session_started_at, durable, goal, completed, next, saved_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  // seq orders saves exactly: two saves can share a millisecond, and an upsert keeps its rowid.
+  db().prepare(`INSERT INTO handoffs (agent_dir, cwd, name, session_id, session_started_at, durable, goal, completed, next, saved_at, seq)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT coalesce(max(seq), 0) + 1 FROM handoffs))
     ON CONFLICT (agent_dir, cwd, name) DO UPDATE SET session_id = excluded.session_id,
       session_started_at = excluded.session_started_at, durable = excluded.durable, goal = excluded.goal,
-      completed = excluded.completed, next = excluded.next, saved_at = excluded.saved_at`)
+      completed = excluded.completed, next = excluded.next, saved_at = excluded.saved_at, seq = excluded.seq`)
     .run(AGENT_DIR, cwd, note.name, note.sessionId, session.startedAt ?? null, note.durable ? 1 : 0,
       note.goal, note.completed, note.next, note.savedAt);
   return session.durable ? { saved: note } : { saved: note, warning:
@@ -104,36 +109,43 @@ function alive(pid: number): boolean {
   catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; }
 }
 
-/** How to resume, from live state. Reads only; never claims, loads or locks the session. */
-function resumeHint(row: Row): ResumeHint {
+/**
+ * How to resume, from live state. Reads only; never claims, loads or locks the session.
+ * heldElsewhere is advisory: the catalog pid of the last claimer is alive and not this process.
+ * After a crash that pid can be reused by an unrelated process; the hint can then be wrong.
+ */
+function resumeHint(row: Row): { hint: ResumeHint; heldElsewhere?: boolean } {
   const startedAt = row.session_started_at ?? undefined;
   const worker = loaded(row.session_id);
-  if (worker) {
-    if (startedAt && worker.startedAt !== startedAt) return "session_missing";
-    return worker.isActive ? "wait_running_session" : "status_then_follow_up";
+  if (!row.durable) {
+    if (!worker || (startedAt && worker.startedAt !== startedAt)) return { hint: worker ? "session_missing" : "session_not_recoverable" };
+    return { hint: worker.isActive ? "wait_running_session" : "status_then_follow_up" };
   }
-  if (!row.durable) return "session_not_recoverable";
   const stored = catalogSession(row.session_id);
-  if (!stored || (startedAt && stored.startedAt !== startedAt)) return "session_missing";
-  if (stored.finished) return "status_then_follow_up";
-  // Advisory only: the pid of the last claimer. A live one other than us most likely still owns it.
-  return stored.pid !== 0 && stored.pid !== process.pid && alive(stored.pid) ? "old_process_owns_session" : "awaiting_recovery";
+  if (!stored || (startedAt && stored.startedAt && stored.startedAt !== startedAt)) return { hint: "session_missing" };
+  if (worker) return { hint: worker.isActive ? "wait_running_session" : "status_then_follow_up" };
+  const heldElsewhere = stored.pid !== 0 && stored.pid !== process.pid && alive(stored.pid);
+  if (stored.finished) return { hint: "status_then_follow_up", ...(heldElsewhere ? { heldElsewhere } : {}) };
+  return { hint: heldElsewhere ? "old_process_owns_session" : "awaiting_recovery" };
 }
 
 export async function readHandoff(cwdInput: string, name?: string) {
   const cwd = await resolveDelegateCwd(cwdInput);
-  const rows = db().prepare("SELECT * FROM handoffs WHERE agent_dir = ? AND cwd = ? ORDER BY saved_at DESC")
+  const rows = db().prepare("SELECT * FROM handoffs WHERE agent_dir = ? AND cwd = ? ORDER BY seq DESC")
     .all(AGENT_DIR, cwd) as Row[];
   const row = name === undefined ? rows[0] : rows.find((r) => r.name === name);
   if (!row) return { found: false as const, cwd, ...(rows.length ? { names: rows.map((r) => r.name) } : {}),
     message: name === undefined ? "No handoff found for this repository." : `No handoff named "${name}" for this repository.` };
-  const hint = resumeHint(row);
+  const { hint, heldElsewhere } = resumeHint(row);
   return {
     found: true as const,
     handoff: { name: row.name, cwd: row.cwd, sessionId: row.session_id, durable: row.durable === 1,
       goal: row.goal, completed: row.completed, next: row.next, savedAt: row.saved_at } satisfies HandoffNote,
     resumeHint: hint,
-    howToResume: HINTS[hint],
+    howToResume: heldElsewhere
+      ? `${HINTS[hint]} Another MCP process (likely the previous window) has it loaded, so follow_up works only after that window closes; status works now.`
+      : HINTS[hint],
+    ...(heldElsewhere ? { heldByAnotherProcess: true } : {}),
     // Other notes for this repository, newest first, so a caller can pick one by name.
     ...(rows.length > 1 ? { names: rows.map((r) => r.name) } : {}),
   };

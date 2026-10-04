@@ -52,8 +52,8 @@ delegates. `handoff` bridges that with a short note per repository:
 | `resumeHint` | Meaning | Do |
 | :--- | :--- | :--- |
 | `wait_running_session` | Running in this process | `wait` with `until: "settled"` |
-| `status_then_follow_up` | Finished | `status`, then `follow_up` with `next` if needed |
-| `old_process_owns_session` | Unfinished, held by another live process (the old window) | Close that window or wait for it to finish; do not spawn a duplicate |
+| `status_then_follow_up` | Finished | `status`, then `follow_up` with `next` if needed. With `heldByAnotherProcess`, the old window still has it loaded: `status` works, `follow_up` only after that window closes |
+| `old_process_owns_session` | Unfinished, held by another live process (the old window) | Close that window (this process resumes it within about 30 s) or let it finish there; do not spawn a duplicate |
 | `awaiting_recovery` | Unfinished, unowned, waiting for a free slot | `status` shortly |
 | `session_not_recoverable` | Memory-only, not in this process | Spawn new work from the note |
 | `session_missing` | Deleted, or its id now names a different session | Spawn new work from the note |
@@ -64,6 +64,10 @@ retention, and `forget` or retention do not delete notes; a note whose session i
 `session_missing`. Notes live in `PI_DELEGATE_STATE_DIR/handoff.sqlite`, one per agent
 directory, repository and name; saving again replaces it. Each note records when its session
 started, so an id reused by later work is not mistaken for the original.
+
+"Held by another process" is judged from the catalog's last claimer pid, without touching the
+lock. After a crash that pid can be reused by an unrelated process, so the hint can then say
+`old_process_owns_session` for a session nobody holds; periodic recovery claims it regardless.
 
 Tool annotations describe read and mutation behavior; clients decide how to use the hints.
 The stdio entry point runs recovery before connecting. Code embedding `createServer()` owns
@@ -432,7 +436,7 @@ and new builds running at the same time cannot both own a store. Delegates left 
 protocol 1 namespace are recovered only by old builds. Once no old build is running,
 `durable/catalog.sqlite` and the `durable/<uuid>/` directories can be deleted.
 
-New stdio server processes automatically recover abandoned delegates before connecting.
+New stdio server processes automatically recover abandoned delegates before connecting, and every server looks again every 30 seconds (`PI_DELEGATE_RECOVERY_INTERVAL_MS`), so a delegate whose owner exits while another server is idle is picked up without a restart.
 Original session IDs, history, model selection, turn budgets, and start
 times are retained; downtime counts toward the original wall-clock deadline. Additional
 abandoned tasks are recovered as concurrency slots become available. Use `sessions`,
@@ -565,6 +569,7 @@ MCP for one task in an enabled batch, pass `nativeMcp: false, mcpServers: []`.
 | `PI_DELEGATE_LIST_CAP`        | `60`             | Above this, `init` summarises models by provider instead of listing them |
 | `PI_DELEGATE_STATE_DIR`       | XDG state dir    | Status-line state and durable task storage (local filesystem only)       |
 | `PI_DELEGATE_MAX_RECOVERY_ATTEMPTS` | `3`        | Claims without progress before a delegate is reported instead of resumed |
+| `PI_DELEGATE_RECOVERY_INTERVAL_MS` | `30000`     | How often a server looks for abandoned durable delegates               |
 | `PI_DELEGATE_RETENTION_DAYS`  | `7`              | Days a finished durable delegate is kept when its spawn sets no `retentionDays` |
 | `PI_DELEGATE_STORAGE_LIMIT_MB` | `1024`          | Soft limit on job stores; above it the oldest finished are deleted early |
 | `PI_DELEGATE_STATUSLINE_WRAP` | unset            | Status line command to wrap and append to                                |

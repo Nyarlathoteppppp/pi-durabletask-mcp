@@ -1,5 +1,6 @@
 import {
   DAY_MS,
+  RECOVERY_INTERVAL_MS,
   DEFAULT_MODEL,
   RETENTION_DAYS,
   STORAGE_LIMIT_BYTES,
@@ -102,6 +103,7 @@ export async function resolve(id: string): Promise<PiWorker> {
     if (now) { touch(now.id); return now; }
     record = claimStored(id);
   }
+  if (record === "pending") void recoverAbandoned(); // someone is waiting for it: try now
   if (typeof record !== "object") throw unavailable(id, record);
   const load = (async () => {
     const worker = new PiWorker({ ...record.options, durable: true });
@@ -192,6 +194,15 @@ export async function recoverAbandoned(): Promise<void> {
     sweepStorage(true);
   })().finally(() => { recovering = undefined; });
   return recovering;
+}
+
+/**
+ * Look for abandoned jobs periodically. Startup and local completions are not enough: a job whose
+ * owner exits while this process is idle (an old window closed) would otherwise wait for the next
+ * restart. A claim attempt is cheap, and a busy lock is skipped without waiting.
+ */
+export function startRecoveryTicks(): void {
+  setInterval(() => void recoverAbandoned(), RECOVERY_INTERVAL_MS).unref();
 }
 
 export async function suspendAll(): Promise<void> {

@@ -91,18 +91,26 @@ try {
   assert.equal((await fresh.call("status", { sessionId: "finished" })).lastText, "OK");
   await close(fresh);
 
-  // 3. The previous window is still open and its session still runs: hand back, do not grab it.
+  // 3. The previous window is still open: its running session is not grabbed, and its finished
+  //    one reads fine but cannot be followed up from here yet.
   old = await window();
+  await old.call("spawn", { cwd: repo, id: "held-done", prompt: "plain", tools: [], durable: true });
+  await settle(old, "held-done");
+  await save(old, "held-done", "held-done");
   await old.call("spawn", { cwd: repo, id: "running", prompt: "HOLD", tools: [], durable: true });
   await save(old, "running", "running");
-  fresh = await window();
+  fresh = await window({ PI_DELEGATE_RECOVERY_INTERVAL_MS: "300" });
   assert.equal((await read(fresh, "running")).resumeHint, "old_process_owns_session");
-  await close(fresh);
+  const heldDone = await read(fresh, "held-done");
+  assert.equal(heldDone.resumeHint, "status_then_follow_up");
+  assert.equal(heldDone.heldByAnotherProcess, true);
+  assert.match(heldDone.howToResume, /follow_up works only after that window closes/);
+  await assert.rejects(() => fresh.call("follow_up", { sessionId: "held-done", prompt: "x" }), /another MCP process/);
 
-  // 4. The previous window crashed: the new one recovers the session and waits on it.
+  // 4. The previous window crashes while this one is already open and idle: this one resumes the
+  //    session on its own, without a restart.
   await crash(old);
-  fresh = await window();
-  assert.equal((await read(fresh, "running")).resumeHint, "wait_running_session");
+  await waitUntil(async () => (await read(fresh, "running")).resumeHint === "wait_running_session");
 
   // 5. Unfinished and unowned, waiting for a free slot: two abandoned, room for one.
   await fresh.call("spawn", { cwd: repo, id: "running-2", prompt: "HOLD again", tools: [], durable: true });
@@ -124,11 +132,18 @@ try {
   fresh = await window();
   assert.equal((await read(fresh, "finished")).resumeHint, "session_missing", "also when only the catalog knows the new one");
 
-  // 7. read without a name returns the newest; a symlinked or trailing-slash cwd finds the same notes.
+  // 7. Saves in quick succession: the last one is the newest, even within one millisecond.
+  await save(fresh, "finished", "quick-a");
+  await save(fresh, "finished", "quick-b");
+  assert.equal((await read(fresh)).handoff.name, "quick-b");
+  await save(fresh, "finished", "quick-a");
+  assert.equal((await read(fresh)).handoff.name, "quick-a", "saving again makes a note the newest");
+
+  // read without a name returns the newest; a symlinked or trailing-slash cwd finds the same notes.
   await save(fresh, "finished", "newest");
   const newest = await read(fresh);
   assert.equal(newest.handoff.name, "newest");
-  assert.ok(newest.names.includes("running") && newest.names.length === 5);
+  assert.ok(newest.names.includes("running") && newest.names.length === 8);
   await symlink(repo, join(directory, "repo-link"));
   assert.equal((await fresh.call("handoff", { action: "read", cwd: join(directory, "repo-link") + "/" })).handoff.name, "newest");
   await assert.rejects(() => fresh.call("handoff", { action: "save", cwd: repo, sessionId: "finished" }), /needs sessionId, goal, completed and next/);
