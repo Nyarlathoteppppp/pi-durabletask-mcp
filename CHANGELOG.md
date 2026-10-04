@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.6 (2026-10-04)
 
 - `handoff save` refuses a session whose working directory is not the note's `cwd`, so a note for one repository cannot point a new window at another repository's session.
 - `handoff.sqlite` created by the first handoff commit, without the `seq` column, is migrated when opened.
