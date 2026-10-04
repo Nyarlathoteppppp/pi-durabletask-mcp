@@ -118,6 +118,23 @@ Already connected? Update the existing entry and reconnect. [Other clients →](
 
 The agent uses `spawn` → `wait(until: "settled")`, answering questions with `answer`. Try the steering and follow-up prompts above. `init` is optional diagnostics; `models` lists available models.
 
+<details>
+<summary>Optional: install the Agent Skill</summary>
+
+Connect the MCP server first; this [skill](skills/pi-durabletask-mcp/SKILL.md) only guides tool use. Choose your client's user-level directory and download just `SKILL.md`:
+
+```bash
+dir="$HOME/.claude/skills/pi-durabletask-mcp" # Claude Code
+# dir="$HOME/.agents/skills/pi-durabletask-mcp" # Codex: use instead
+mkdir -p "$dir"
+curl -fsSL https://raw.githubusercontent.com/Nyarlathoteppppp/pi-durabletask-mcp/main/skills/pi-durabletask-mcp/SKILL.md \
+  -o "$dir/SKILL.md"
+```
+
+Start a new client session after installing.
+
+</details>
+
 ## Defaults & recovery
 
 Tasks use your configured model, **read-only tools and memory storage by default**; memory sessions disappear when their MCP process exits.

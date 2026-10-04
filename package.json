@@ -21,6 +21,7 @@
     "README.md",
     "README.zh-CN.md",
     "docs",
+    "skills",
     "scripts/link-pi-sdk.mjs",
     "LICENSE"
   ],

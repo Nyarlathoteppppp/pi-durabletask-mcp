@@ -118,6 +118,23 @@ command = "pi-durabletask-mcp"
 
 主代理调用 `spawn` → `wait(until: "settled")`，遇到问题用 `answer` 回复。接着可以试上面的调整方向和追问提示词。`init` 仅用于可选诊断，`models` 用于查看可用模型。
 
+<details>
+<summary>可选：安装 Agent Skill</summary>
+
+先连接 MCP 服务；这份 [skill](skills/pi-durabletask-mcp/SKILL.md) 只指导工具使用。选择客户端的用户级目录，仅下载 `SKILL.md`：
+
+```bash
+dir="$HOME/.claude/skills/pi-durabletask-mcp" # Claude Code
+# dir="$HOME/.agents/skills/pi-durabletask-mcp" # Codex：改用这一行
+mkdir -p "$dir"
+curl -fsSL https://raw.githubusercontent.com/Nyarlathoteppppp/pi-durabletask-mcp/main/skills/pi-durabletask-mcp/SKILL.md \
+  -o "$dir/SKILL.md"
+```
+
+安装后开启新的客户端会话。
+
+</details>
+
 ## 默认行为与恢复边界
 
 任务使用你配置的模型，**默认只读、只存内存**；内存会话随所属 MCP 进程退出而消失。
