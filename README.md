@@ -86,7 +86,7 @@ For a task that should recover after a bridge restart, ask for a **durable task*
 ```
 
 <details>
-<summary><strong>All 13 tools</strong></summary>
+<summary><strong>All 14 tools</strong></summary>
 
 | Want to… | Use |
 | :--- | :--- |
@@ -95,6 +95,7 @@ For a task that should recover after a bridge restart, ask for a **durable task*
 | Redirect or continue | `steer` · `follow_up` |
 | Answer, stop, or remove | `answer` · `abort` · `forget` |
 | Discover configuration | `init` · `models` |
+| Hand over to a new window | `handoff` |
 
 </details>
 

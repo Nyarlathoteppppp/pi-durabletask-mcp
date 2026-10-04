@@ -198,6 +198,18 @@ export function storedSnapshot(id: string): Snapshot | undefined {
   return row ? JSON.parse(row.snapshot) as Snapshot : undefined;
 }
 
+/**
+ * What the catalog says about a durable session, read without its lock: for callers that only
+ * describe a session (handoff), never for ownership decisions. pid is the last claimer, maybe dead.
+ */
+export function catalogSession(id: string): { pid: number; finished: boolean; startedAt?: string } | undefined {
+  const row = db().prepare(
+    "SELECT pid, finished_at, options FROM jobs WHERE agent_dir = ? AND json_extract(options, '$.id') = ? ORDER BY rowid DESC LIMIT 1",
+  ).get(AGENT_DIR, id) as { pid: number; finished_at: number | null; options: string } | undefined;
+  if (!row) return undefined;
+  return { pid: row.pid, finished: row.finished_at !== null, startedAt: (JSON.parse(row.options) as WorkerOptions).startedAt };
+}
+
 /** True when a stored job, in any process, already uses this session id. */
 export const storedIdInUse = (id: string): boolean => byId(id) !== undefined;
 

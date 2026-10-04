@@ -13,7 +13,8 @@ export function createServer(): McpServer {
         "To get a result, loop wait with until:\"settled\"; for a batch, wait with sessionIds. Answer pending questions. " +
         "Steer running work; follow_up finished work while retained. Memory sessions live in this server; " +
         "durable:true saves across restarts. Use models to choose a model; init is optional setup diagnostics. " +
-        "Cancelling run stops its delegate; cancelling wait only ends the wait.",
+        "Cancelling run stops its delegate; cancelling wait only ends the wait. " +
+        "Handing over to another window: handoff save; picking up: handoff read, then follow its resumeHint.",
     },
   );
   registerTools(server);

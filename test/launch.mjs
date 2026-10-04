@@ -13,6 +13,9 @@ for (const name of ["spawn", "spawn_batch", "run", "steer", "answer", "follow_up
   if (annotations?.readOnlyHint !== false || annotations?.destructiveHint !== true)
     throw new Error(`${name} must describe its potential mutations`);
 }
+const handoff = tools.find((tool) => tool.name === "handoff")?.annotations;
+if (handoff?.readOnlyHint !== false || handoff?.destructiveHint !== false)
+  throw new Error("handoff writes notes but never changes a session");
 if (tools.find(tool => tool.name === "init")?.annotations?.readOnlyHint !== false)
   throw new Error("init may refresh OAuth and must not advertise read-only behavior");
 const spawn = tools.find((tool) => tool.name === "spawn");

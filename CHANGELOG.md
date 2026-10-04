@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `handoff` tool: `save` records which Pi session a repository's work is in, with the calling agent's goal, completed and next; `read` returns the newest note (or a named one) for a new Claude/Codex window, with a `resumeHint` computed from the session's live state. Notes live in a separate `handoff.sqlite`; reading never claims, loads, locks or recovers a session, and a note's recorded start time keeps a reused session id from being mistaken for the original.
+
 ## 0.3.4 (2026-10-04)
 
 - `spawn_batch` checks every task before starting any: the model it will really use, including Pi's own default, thinking support and provider credentials. A bad task no longer leaves its siblings running.

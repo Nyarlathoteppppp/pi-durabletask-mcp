@@ -85,7 +85,7 @@ Pi 默认使用你配置的模型和**只读工具**。
 ```
 
 <details>
-<summary><strong>全部 13 个工具</strong></summary>
+<summary><strong>全部 14 个工具</strong></summary>
 
 | 操作 | 工具 |
 | :--- | :--- |
@@ -94,6 +94,7 @@ Pi 默认使用你配置的模型和**只读工具**。
 | 调整方向或继续会话 | `steer` · `follow_up` |
 | 回答、停止或删除 | `answer` · `abort` · `forget` |
 | 查看配置 | `init` · `models` |
+| 交接给新窗口 | `handoff` |
 
 </details>
 

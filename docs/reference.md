@@ -17,6 +17,7 @@
 | `answer`      | Answer an actual pending extension UI question from `status` or `wait`; use `questions[].id` as `requestId`. |
 | `abort`       | Stop a session; partial output stays readable.                                                                                          |
 | `models`      | List models this delegate may use.                                                                                                      |
+| `handoff`     | Save or read a note that tells a new Claude/Codex window which Pi session to continue and how.                                          |
 | `sessions`    | List sessions, running and finished. Filter by `state`, expand with `verbose`.                                                          |
 | `forget`      | Drop a finished session from history, freeing its id.                                                                                   |
 
@@ -34,7 +35,35 @@ Answer pending questions using questions[].id as requestId before waiting again.
 Use steer while running and follow_up when finished, while the session remains retained.
 Memory sessions live in this server; use durable:true for restart recovery and disk retention.
 Cancelling run aborts its delegate; cancelling wait only ends the wait.
+Handing over to another window: handoff save; picking up a project: handoff read, then follow resumeHint.
 ```
+
+## Handing over between windows
+
+A new Claude/Codex window starts a new MCP process with no memory of the previous window's
+delegates. `handoff` bridges that with a short note per repository:
+
+- `handoff save` (when the user asks to hand over) records `cwd`, `sessionId`, and the calling
+  agent's own `goal`, `completed` and `next`, with an optional `name` to keep several per
+  repository. Saving a memory-only session warns that a new window cannot continue it.
+- `handoff read` (when the user asks to pick a project up) returns the newest note for `cwd`, or
+  the one named, with `resumeHint` and `howToResume`:
+
+| `resumeHint` | Meaning | Do |
+| :--- | :--- | :--- |
+| `wait_running_session` | Running in this process | `wait` with `until: "settled"` |
+| `status_then_follow_up` | Finished | `status`, then `follow_up` with `next` if needed |
+| `old_process_owns_session` | Unfinished, held by another live process (the old window) | Close that window or wait for it to finish; do not spawn a duplicate |
+| `awaiting_recovery` | Unfinished, unowned, waiting for a free slot | `status` shortly |
+| `session_not_recoverable` | Memory-only, not in this process | Spawn new work from the note |
+| `session_missing` | Deleted, or its id now names a different session | Spawn new work from the note |
+
+The hint is computed from live state when the note is read, never stored. Reading does not
+claim, load, lock or recover the session, so handoff cannot affect ownership, recovery or
+retention, and `forget` or retention do not delete notes; a note whose session is gone reads as
+`session_missing`. Notes live in `PI_DELEGATE_STATE_DIR/handoff.sqlite`, one per agent
+directory, repository and name; saving again replaces it. Each note records when its session
+started, so an id reused by later work is not mistaken for the original.
 
 Tool annotations describe read and mutation behavior; clients decide how to use the hints.
 The stdio entry point runs recovery before connecting. Code embedding `createServer()` owns
