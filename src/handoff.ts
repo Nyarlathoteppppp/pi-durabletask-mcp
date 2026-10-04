@@ -25,7 +25,8 @@ const HINTS: Record<ResumeHint, string> = {
   wait_running_session: "It is running in this process. Call wait with this sessionId and until \"settled\".",
   status_then_follow_up: "It has finished. Call status for its result, then follow_up with `next` if the work should continue.",
   old_process_owns_session: "It is unfinished and another MCP process still holds it, most likely the previous window. " +
-    "Close that window: this process then resumes it within about 30 seconds (status also prompts an attempt). " +
+    "Close that window: a running MCP process then resumes it within about 30 seconds, usually this one but " +
+    "possibly another open window (status here also prompts an attempt). " +
     "Or let it finish there; status reads the result here once it has. Do not spawn a duplicate.",
   awaiting_recovery: "It is unfinished and no process holds it; a process resumes it when a delegate slot is free. Call status shortly.",
   session_not_recoverable: "It was a memory-only session and lives only in the MCP process that started it, which is not this one. " +
@@ -56,6 +57,11 @@ function db(): DatabaseSync {
       session_id TEXT NOT NULL, session_started_at TEXT, durable INTEGER NOT NULL,
       goal TEXT NOT NULL, completed TEXT NOT NULL, next TEXT NOT NULL, saved_at TEXT NOT NULL,
       seq INTEGER NOT NULL, PRIMARY KEY (agent_dir, cwd, name));`);
+  // Tables from the first handoff commit lack seq; number their rows by saved_at.
+  if (!(opened.prepare("PRAGMA table_info(handoffs)").all() as { name: string }[]).some((c) => c.name === "seq")) {
+    opened.exec("ALTER TABLE handoffs ADD COLUMN seq INTEGER NOT NULL DEFAULT 0");
+    opened.exec("UPDATE handoffs SET seq = (SELECT count(*) FROM handoffs AS older WHERE older.saved_at <= handoffs.saved_at)");
+  }
   chmodSync(path, 0o600);
   return store = opened;
 }
@@ -65,11 +71,11 @@ function db(): DatabaseSync {
  * session's identity is the start time in the catalog, whoever has it loaded, so a note saved in
  * one process compares with the same value in another.
  */
-function lookup(sessionId: string): { startedAt?: string; durable: boolean } | undefined {
+function lookup(sessionId: string): { startedAt?: string; durable: boolean; cwd?: string } | undefined {
   const worker = loaded(sessionId);
-  if (worker && !worker.durable) return { startedAt: worker.startedAt, durable: false };
+  if (worker && !worker.durable) return { startedAt: worker.startedAt, durable: false, cwd: worker.cwd };
   const stored = catalogSession(sessionId);
-  return stored ? { startedAt: stored.startedAt, durable: true } : undefined;
+  return stored ? { startedAt: stored.startedAt, durable: true, cwd: stored.cwd } : undefined;
 }
 
 export interface SaveRequest {
@@ -86,6 +92,9 @@ export async function saveHandoff(req: SaveRequest): Promise<{ saved: HandoffNot
   const session = lookup(req.sessionId);
   if (!session)
     throw new Error(`Unknown sessionId: ${req.sessionId}. A handoff names a session this process runs, or a durable one.`);
+  // A note is found by repository; it must not point a new window at another repository's session.
+  if (session.cwd && session.cwd !== cwd)
+    throw new Error(`Session ${req.sessionId} works in ${session.cwd}, not ${cwd}. Save the handoff with that cwd.`);
   const note: HandoffNote = { name: req.name ?? "", cwd, sessionId: req.sessionId, durable: session.durable,
     goal: req.goal, completed: req.completed, next: req.next, savedAt: new Date().toISOString() };
   // seq orders saves exactly: two saves can share a millisecond, and an upsert keeps its rowid.

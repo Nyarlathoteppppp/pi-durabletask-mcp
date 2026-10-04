@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- `handoff save` refuses a session whose working directory is not the note's `cwd`, so a note for one repository cannot point a new window at another repository's session.
+- `handoff.sqlite` created by the first handoff commit, without the `seq` column, is migrated when opened.
+- `handoff` no longer promises that the reading window itself resumes a released session: any running MCP process may claim it first.
+
 ## 0.3.5 (2026-10-04)
 
 - `handoff` tool: `save` records which Pi session a repository's work is in, with the calling agent's goal, completed and next; `read` returns the newest note (or a named one) for a new Claude/Codex window, with a `resumeHint` computed from the session's live state. Notes live in a separate `handoff.sqlite`; reading never claims, loads, locks or recovers a session, and a note's recorded start time keeps a reused session id from being mistaken for the original.

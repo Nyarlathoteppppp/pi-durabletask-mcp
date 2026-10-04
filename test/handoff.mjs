@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
@@ -67,10 +68,26 @@ try {
     models: [{ id: "one", name: "one", reasoning: false, input: ["text"], contextWindow: 16000,
       maxTokens: 512, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] } } }));
 
+  // A handoff.sqlite from the first handoff commit has no seq column; it is migrated on open.
+  await mkdir(join(directory, "state"), { recursive: true });
+  const legacy = new DatabaseSync(join(directory, "state", "handoff.sqlite"));
+  legacy.exec(`CREATE TABLE handoffs (agent_dir TEXT NOT NULL, cwd TEXT NOT NULL, name TEXT NOT NULL,
+    session_id TEXT NOT NULL, session_started_at TEXT, durable INTEGER NOT NULL, goal TEXT NOT NULL,
+    completed TEXT NOT NULL, next TEXT NOT NULL, saved_at TEXT NOT NULL, PRIMARY KEY (agent_dir, cwd, name));`);
+  legacy.close();
+
   // Nothing saved yet; saving needs a real session.
   let old = await window();
   assert.equal((await read(old)).found, false);
   await assert.rejects(() => save(old, "nope"), /Unknown sessionId/);
+
+  // A session belongs to one repository: a note for another repository is refused.
+  const otherRepo = join(directory, "other-repo");
+  await mkdir(otherRepo, { recursive: true });
+  await old.call("spawn", { cwd: repo, id: "here", prompt: "plain", tools: [] });
+  await settle(old, "here");
+  await assert.rejects(() => old.call("handoff", { action: "save", cwd: otherRepo, sessionId: "here",
+    goal: "g", completed: "c", next: "n" }), /works in .*not/);
 
   // 1. A memory-only session cannot cross windows, and saving it says so.
   await old.call("spawn", { cwd: repo, id: "memo", prompt: "plain", tools: [] });
