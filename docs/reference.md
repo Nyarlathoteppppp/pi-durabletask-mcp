@@ -40,6 +40,10 @@ Handing over to another window: handoff save; picking up a project: handoff read
 
 ## Handing over between windows
 
+To find saved work without a handoff note, call `sessions` with an absolute project `cwd`.
+Both loaded `sessions` and disk `stored` entries are filtered by project and, if supplied, `state`.
+Disk entries include `label`, `cwd`, state, completion time and remaining turns, without loading the conversation.
+
 A new Claude/Codex window starts a new MCP process with no memory of the previous window's
 delegates. `handoff` bridges that with a short note per repository:
 
@@ -55,6 +59,7 @@ delegates. `handoff` bridges that with a short note per repository:
 | :--- | :--- | :--- |
 | `wait_running_session` | Running in this process | `wait` with `until: "settled"` |
 | `status_then_follow_up` | Finished | `status`, then `follow_up` with `next` if needed. With `heldByAnotherProcess`, the old window still has it loaded: `status` works, `follow_up` only after that window closes |
+| `status_then_spawn` | Finished but cannot follow up (for example, turns exhausted) | `status`, then spawn new work from `goal`, `completed` and `next` if needed |
 | `old_process_owns_session` | Unfinished, held by another live process (the old window) | Close that window (a running MCP process, usually this one, resumes it within about 30 s) or let it finish there; do not spawn a duplicate |
 | `awaiting_recovery` | Unfinished, unowned, waiting for a free slot | `status` shortly |
 | `session_not_recoverable` | Memory-only, not in this process | Spawn new work from the note |
@@ -114,7 +119,7 @@ Finished sessions stay readable via `status` and `sessions` instead of vanishing
 back and check what a delegate actually did. The newest `PI_DELEGATE_HISTORY` (default 50) stay
 loaded; durable ones beyond that stay on disk until retention removes them; `forget` drops one early.
 
-Single-session `wait` keeps result collection compact: by default it returns `sessionId`,
+`run` and single-session `wait` keep result collection compact: by default they return `sessionId`,
 `label`, `state`, `turns`, `toolCallCount`, `lastText`, pending `questions`, the newest 5
 `notices`, and any `error` or `termination`, plus `nextAction`. It omits tool traces and
 configuration/timing metadata. For progress waits, pass the previous `turns` and
@@ -122,7 +127,7 @@ configuration/timing metadata. For progress waits, pass the previous `turns` and
 
 `status` remains the diagnostic view, including model, configuration and timing metadata.
 By default its `toolCalls` holds the last 5 calls with arguments cut to 120 characters;
-`toolCallCount` is the total and `notices` holds the newest 5. On `status` or single-session
+`toolCallCount` is the total and `notices` holds the newest 5. On `run`, `status` or single-session
 `wait`, `verbose: true` returns the full snapshot, including the full ordered trace,
 every notice, and call ids and results:
 
@@ -141,10 +146,10 @@ every notice, and call ids and results:
 Arguments and results are clipped (`PI_DELEGATE_TRACE_ARGS`, `PI_DELEGATE_TRACE_RESULT`) with the
 dropped length recorded, so one `read` of a large file cannot flood your context.
 
-`spawn`, `follow_up`, `status` and `wait` return `nextAction`: `wait` means keep collecting,
+`spawn`, `follow_up`, `run`, `status` and `wait` return `nextAction`: `wait` means keep collecting,
 `answer` means answer pending questions before waiting again, and `finish` means this run
 ended (`done`, `aborted` or `error`), not that the task succeeded. Check `state`, `error`,
-`termination` and the result before claiming success. Existing `next` guidance is retained.
+`termination` and the result before claiming success. Existing `next` guidance is retained as a short wait hint.
 Launch responses (`spawn`, `follow_up`, and started `spawn_batch` members) contain no final
 text, so their `nextAction` is always `wait` to collect the result, even if `state` is already `done`.
 For a loaded worker, `spawn`, `follow_up` and `status` now follow `wait`'s state rule:
@@ -208,6 +213,10 @@ re-explaining the task and paying for it to re-read the same files, and its answ
 with none of the reasoning that led there.
 
 Turns are cumulative across follow-ups, and `follow_up` is refused once `maxTurns` is used up.
+`status`, `wait`, `sessions` and `handoff read` report `remainingTurns`, `canFollowUp` and,
+when blocked, `followUpBlockedReason`. Readiness covers state and the turn budget;
+ownership, concurrency capacity and provider authentication are checked when `follow_up` is called.
+An active run, pending finalization or exhausted turn budget cannot be followed up yet.
 The wall-clock limit (`maxDurationMs`) applies to each run instead: the spawn and every
 `follow_up` get the full limit, so a durable delegate kept for days can still be continued.
 Time a run spends interrupted by a server restart counts against that run.
@@ -645,8 +654,8 @@ reach the deadline long before that, so once 2/3 of the time budget is used, the
 at the end of the next turn that called tools; a turn that is writing the answer is never followed
 by one. Only one is sent per run. The session's last turn has no tools: at the end of the turn
 before it they are removed and the delegate is told to answer, so a model that ignores the
-reminders still ends with an answer instead of being aborted mid-investigation (a run that starts
-with one turn left starts without tools). Reaching the
+reminders gets a tool-free turn to conclude (a run that starts
+with one turn left starts without tools). Timeouts, provider/auth errors or cancellation can still interrupt it. Reaching the
 turn or time ceiling aborts the underlying pi session and records `termination.reason`, while keeping
 the trace and any partial text. Finished results carry `usage`: input, output and cache tokens and
 the cost by pi's model prices, summed over the whole session including follow-ups. Cancelling a blocking `run` also aborts its underlying worker.
@@ -662,6 +671,8 @@ then environment variables. MCP hosts often launch servers with a **stripped env
 prefer `auth.json` (run `pi` once and `/login`) over exporting keys in a shell profile.
 
 ## Development
+
+Before changing execution, cancellation or recovery, read the [Worker lifecycle](worker-lifecycle.md).
 
 ```bash
 npm install

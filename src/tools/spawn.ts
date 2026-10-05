@@ -10,7 +10,7 @@ import {
 } from "../config.js";
 import { PERMITTED, READ_ONLY_TOOLS } from "../permissions.js";
 import { runExecution, startBatch, startExecution } from "../core.js";
-import { json } from "./shared.js";
+import { json, waitResult } from "./shared.js";
 
 // Preserve the existing helper import path for consumers.
 export { bindCancellation } from "../core.js";
@@ -165,8 +165,7 @@ export function registerSpawn(server: McpServer): void {
       const sessions = result.sessions.map((s) => ({ ...s, nextAction: "wait" }));
       return json({
         ...result, sessions, nextAction: sessions.length ? "wait" : "finish",
-        next: "Call wait with these sessionIds (until \"settled\" returns as each finishes, \"all_settled\" when all have); " +
-          "answer any questions, then wait again on continueIds. `steer` and `abort` stay per session.",
+        next: "Call wait with these sessionIds, until \"settled\"; repeat on continueIds.",
       });
     },
   );
@@ -178,21 +177,25 @@ export function registerSpawn(server: McpServer): void {
       description:
         "Delegate a task to a pi agent and wait for the final answer. Blocks until done. " +
         "Client request cancellation aborts the delegate. Prefer spawn plus wait for long work; " +
-        "this is for quick questions.",
-      inputSchema: spawnShape,
+        "this is for quick questions. Returns a compact result; use verbose: true for the full snapshot.",
+      inputSchema: {
+        ...spawnShape,
+        verbose: z.boolean().optional().describe("Include configuration and the full tool trace with ids and results"),
+      },
     },
-    async (args, extra) => {
+    async ({ verbose, ...args }, extra) => {
       // Progress notifications reset the MCP request timeout, which defaults to 60s.
       const token = extra?._meta?.progressToken;
-      return json(await runExecution(args, {
+      return json(waitResult(await runExecution(args, {
         signal: extra.signal,
+        verbose,
         onProgress: token ? async ({ state, turns }) => {
           await extra.sendNotification({
             method: "notifications/progress",
             params: { progressToken: token, progress: turns, message: `${state}, turn ${turns}` },
           });
         } : undefined,
-      }));
+      }), verbose));
     },
   );
 }

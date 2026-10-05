@@ -41,20 +41,19 @@ function canonicalize(path: string): string {
 }
 
 export function blockedSecretPath(path: string, cwd: string, homeDir = homedir()): string | undefined {
-  const resolved = canonicalize(isAbsolute(path) ? path : resolve(cwd, path));
+  const absolute = isAbsolute(path) ? resolve(path) : resolve(cwd, path);
+  const resolved = canonicalize(absolute);
   const home = canonicalize(homeDir);
 
-  if (basename(resolved) === ".env") return resolved;
-  if (resolved.split(sep).includes(".env")) return resolved;
+  // A sensitive name stays sensitive when it is a symlink to an ordinary filename.
+  const segments = [absolute.split(sep), resolved.split(sep)];
+  if (segments.some((parts) => parts.includes(".env"))) return resolved;
 
   for (const name of SENSITIVE_DIRS) {
     const dir = canonicalize(join(home, name));
     if (isInside(dir, resolved)) return resolved;
-    if (resolved.split(sep).includes(name)) {
-      // Unrooted copies such as repo/.ssh or a cloned .codex tree.
-      const idx = resolved.split(sep).lastIndexOf(name);
-      if (idx >= 0) return resolved;
-    }
+    // Unrooted copies such as repo/.ssh, including symlinked directories.
+    if (segments.some((parts) => parts.includes(name))) return resolved;
   }
 
   for (const segments of SENSITIVE_FILES) {

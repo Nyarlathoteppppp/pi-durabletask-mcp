@@ -14,6 +14,7 @@ import { initOwnership, owns, release as releaseOwnership, removeTombstones, try
 import { getRuntime } from "./pi/runtime.js";
 import type { WorkerOptions } from "./pi/worker.js";
 import type { Snapshot } from "./types.js";
+import { followUpInfo, type FollowUpInfo } from "./continuation.js";
 
 /**
  * Version of the ownership protocol, and of the namespace it owns. v1 kept `durable/catalog.sqlite`
@@ -197,20 +198,27 @@ export function storedSnapshot(id: string): Snapshot | undefined {
     "SELECT snapshot FROM jobs WHERE agent_dir = ? AND json_extract(options, '$.id') = ? AND finished_at IS NOT NULL " +
     "AND snapshot IS NOT NULL ORDER BY rowid DESC LIMIT 1",
   ).get(AGENT_DIR, id) as { snapshot: string } | undefined;
-  return row ? JSON.parse(row.snapshot) as Snapshot : undefined;
+  if (!row) return undefined;
+  const snapshot = JSON.parse(row.snapshot) as Snapshot;
+  return { ...snapshot, ...followUpInfo(snapshot.state, snapshot.turns, snapshot.limits.maxTurns) };
 }
 
 /**
  * What the catalog says about a durable session, read without its lock: for callers that only
  * describe a session (handoff), never for ownership decisions. pid is the last claimer, maybe dead.
  */
-export function catalogSession(id: string): { pid: number; finished: boolean; startedAt?: string; cwd?: string } | undefined {
+export function catalogSession(id: string): FollowUpInfo & { pid: number; finished: boolean; startedAt?: string; cwd?: string } | undefined {
   const row = db().prepare(
-    "SELECT pid, finished_at, options FROM jobs WHERE agent_dir = ? AND json_extract(options, '$.id') = ? ORDER BY rowid DESC LIMIT 1",
-  ).get(AGENT_DIR, id) as { pid: number; finished_at: number | null; options: string } | undefined;
+    "SELECT pid, finished_at, options, json_extract(snapshot, '$.state') AS state, json_extract(snapshot, '$.turns') AS turns " +
+    "FROM jobs WHERE agent_dir = ? AND json_extract(options, '$.id') = ? ORDER BY rowid DESC LIMIT 1",
+  ).get(AGENT_DIR, id) as {
+    pid: number; finished_at: number | null; options: string; state: Snapshot["state"] | null; turns: number | null;
+  } | undefined;
   if (!row) return undefined;
   const options = JSON.parse(row.options) as WorkerOptions;
-  return { pid: row.pid, finished: row.finished_at !== null, startedAt: options.startedAt, cwd: options.cwd };
+  return { pid: row.pid, finished: row.finished_at !== null, startedAt: options.startedAt, cwd: options.cwd,
+    ...(row.state !== null && row.turns !== null ? followUpInfo(row.state, row.turns, options.maxTurns)
+      : { canFollowUp: false, followUpBlockedReason: row.finished_at === null ? "running" as const : "status_required" as const }) };
 }
 
 /** True when a stored job, in any process, already uses this session id. */
@@ -246,13 +254,24 @@ export function releaseJob(key: string): void {
   releaseOwnership(key);
 }
 
-/** Finished jobs nobody has loaded, newest first, for listing without opening their stores. */
-export function storedJobs(): { sessionId: string; label: string | undefined; finishedAt: string }[] {
-  const rows = db().prepare("SELECT key, options, finished_at FROM jobs WHERE agent_dir = ? AND finished_at IS NOT NULL ORDER BY finished_at DESC")
-    .all(AGENT_DIR) as { key: string; options: string; finished_at: number }[];
+/** Finished jobs not owned here, newest first; list without opening their stores. */
+export function storedJobs(cwd?: string): Array<FollowUpInfo & {
+  sessionId: string; label: string | undefined; cwd: string; state?: Snapshot["state"]; turns?: number; finishedAt: string;
+}> {
+  // Project/history browsing needs only these fields, not the full conversation snapshot.
+  const rows = db().prepare("SELECT key, options, finished_at, json_extract(snapshot, '$.state') AS state, " +
+    "json_extract(snapshot, '$.turns') AS turns FROM jobs WHERE agent_dir = ? AND finished_at IS NOT NULL" +
+    (cwd === undefined ? "" : " AND json_extract(options, '$.cwd') = ?") + " ORDER BY finished_at DESC")
+    .all(...(cwd === undefined ? [AGENT_DIR] : [AGENT_DIR, cwd])) as {
+      key: string; options: string; finished_at: number; state: Snapshot["state"] | null; turns: number | null;
+    }[];
   return rows.filter((row) => !owns(row.key)).map((row) => {
     const options = JSON.parse(row.options) as WorkerOptions;
-    return { sessionId: options.id ?? row.key, label: options.label, finishedAt: new Date(row.finished_at).toISOString() };
+    return { sessionId: options.id ?? row.key, label: options.label, cwd: options.cwd,
+      finishedAt: new Date(row.finished_at).toISOString(),
+      ...(row.state !== null && row.turns !== null
+        ? { state: row.state, turns: row.turns, ...followUpInfo(row.state, row.turns, options.maxTurns) }
+        : { canFollowUp: false, followUpBlockedReason: "status_required" as const }) };
   });
 }
 

@@ -62,6 +62,7 @@ const read = (host, name) => host.call("handoff", { action: "read", cwd: repo, .
 try {
   await mkdir(agentDir, { recursive: true });
   await mkdir(repo, { recursive: true });
+  const canonicalRepo = await realpath(repo);
   await writeFile(join(agentDir, "settings.json"), JSON.stringify({ defaultProvider: "test", defaultModel: "one", enabledModels: ["test/*"] }));
   await writeFile(join(agentDir, "models.json"), JSON.stringify({ providers: { test: {
     api: "openai-completions", baseUrl: `http://127.0.0.1:${http.address().port}/v1`, apiKey: "fake-key",
@@ -112,16 +113,31 @@ try {
   assert.equal((await read(old, "memo")).resumeHint, "status_then_follow_up", "the window that runs it can continue");
 
   // 2. A finished durable session is read and continued from a new window.
-  await old.call("spawn", { cwd: repo, id: "finished", prompt: "plain", tools: [], durable: true });
+  await old.call("spawn", { cwd: repo, id: "finished", label: "saved review", prompt: "plain", tools: [], durable: true, maxTurns: 3 });
   await settle(old, "finished");
   await save(old, "finished", "finished");
+  await old.call("spawn", { cwd: otherRepo, id: "other-project", prompt: "plain", tools: [], durable: true });
+  await settle(old, "other-project");
+  assert.ok((await old.call("sessions", { cwd: repo })).sessions.every((s) => s.cwd === canonicalRepo));
   await close(old);
   let fresh = await window();
   assert.equal((await read(fresh, "memo")).resumeHint, "session_not_recoverable");
   const finished = await read(fresh, "finished");
   assert.equal(finished.resumeHint, "status_then_follow_up");
   assert.equal(finished.handoff.next, "fix the bug");
-  assert.equal((await fresh.call("status", { sessionId: "finished" })).lastText, "OK");
+  assert.equal(finished.remainingTurns, 2);
+  assert.equal(finished.canFollowUp, true);
+  const history = await fresh.call("sessions", { cwd: repo, state: "done" });
+  assert.equal(history.count, 0, "browsing does not load stored conversations");
+  assert.deepEqual(history.stored.map((s) => s.sessionId), ["finished"]);
+  assert.deepEqual([history.stored[0].label, history.stored[0].remainingTurns, history.stored[0].canFollowUp], ["saved review", 2, true]);
+  assert.equal((await fresh.call("sessions", { cwd: repo, state: "error" })).stored.length, 0);
+  const savedStatus = await fresh.call("status", { sessionId: "finished" });
+  assert.deepEqual([savedStatus.lastText, savedStatus.remainingTurns, savedStatus.canFollowUp], ["OK", 2, true]);
+  assert.equal((await settle(fresh, "finished")).remainingTurns, 2);
+  const summary = await fresh.call("wait", { sessionIds: ["finished"], until: "all_settled", timeoutMs: 250 });
+  assert.equal(summary.sessions[0].remainingTurns, 2);
+  assert.equal(summary.sessions[0].canFollowUp, true);
   await close(fresh);
 
   // 3. The previous window is still open: its running session is not grabbed, and its finished
@@ -179,12 +195,25 @@ try {
   assert.ok(newest.names.includes("running") && newest.names.length === 8);
   await symlink(repo, join(directory, "repo-link"));
   assert.equal((await fresh.call("handoff", { action: "read", cwd: join(directory, "repo-link") + "/" })).handoff.name, "newest");
+  const projectHistory = await fresh.call("sessions", { cwd: join(directory, "repo-link") + "/" });
+  assert.ok([...projectHistory.sessions, ...projectHistory.stored].every((s) => s.cwd === canonicalRepo));
+  await fresh.call("spawn", { cwd: repo, id: "exhausted", prompt: "plain", tools: [], durable: true, maxTurns: 1 });
+  const exhausted = await settle(fresh, "exhausted");
+  assert.deepEqual([exhausted.remainingTurns, exhausted.canFollowUp, exhausted.followUpBlockedReason], [0, false, "turn_budget_exhausted"]);
+  await save(fresh, "exhausted", "exhausted");
+  const spent = await read(fresh, "exhausted");
+  assert.equal(spent.canFollowUp, false);
+  assert.equal(spent.resumeHint, "status_then_spawn");
+  assert.match(spent.howToResume, /spawn a new delegate/);
+  await assert.rejects(() => fresh.call("follow_up", { sessionId: "exhausted", prompt: "again" }), /already used 1\/1 turns/);
   await assert.rejects(() => fresh.call("handoff", { action: "save", cwd: repo, sessionId: "finished" }), /needs sessionId, goal, completed and next/);
   // Two calls that load the same stored session at once both get it.
   await fresh.call("spawn", { cwd: repo, id: "twin", prompt: "plain", tools: [], durable: true });
   await settle(fresh, "twin");
   await close(fresh);
   const last = await window();
+  const storedSpent = await read(last, "exhausted");
+  assert.deepEqual([storedSpent.resumeHint, storedSpent.remainingTurns, storedSpent.canFollowUp], ["status_then_spawn", 0, false]);
   const twice = await Promise.allSettled([1, 2].map(() => last.call("follow_up", { sessionId: "twin", prompt: "again" })));
   const started = twice.filter((outcome) => outcome.status === "fulfilled");
   const refused = twice.filter((outcome) => outcome.status === "rejected");

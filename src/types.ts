@@ -1,3 +1,5 @@
+import type { FollowUpInfo } from "./continuation.js";
+
 /** Every state a delegate can be in. `starting` covers session construction. */
 export type SessionState = "starting" | "running" | "done" | "aborted" | "error";
 
@@ -52,7 +54,7 @@ export interface ToolCall {
 /** The compact trace shape, used unless `verbose` is asked for. */
 export type ToolCallSummary = Pick<ToolCall, "seq" | "name" | "state" | "ms" | "args">;
 
-export interface Snapshot {
+export interface Snapshot extends FollowUpInfo {
   sessionId: string;
   label: string | undefined;
   state: SessionState;

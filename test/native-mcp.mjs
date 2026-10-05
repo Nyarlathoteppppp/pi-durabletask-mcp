@@ -369,6 +369,7 @@ if (process.argv[2] === "fixture") {
     // -------------------------------------------------------------------------
     console.log("[3] tools: [] with nativeMcp: activeTools empty, no MCP factory");
     const s3 = await call("run", {
+      verbose: true,
       cwd: dir,
       prompt: "tools: [] test",
       nativeMcp: true,
@@ -382,6 +383,7 @@ if (process.argv[2] === "fixture") {
     // -------------------------------------------------------------------------
     console.log("[4] extensions: false with direct native MCP: callable");
     const s4 = await call("run", {
+      verbose: true,
       id: "sess-direct",
       cwd: dir,
       prompt: "TRIGGER_DIRECT: call direct echo",
@@ -409,6 +411,7 @@ if (process.argv[2] === "fixture") {
     // -------------------------------------------------------------------------
     console.log("[6] Codemode nested allowed tool succeeds");
     const s6 = await call("run", {
+      verbose: true,
       cwd: dir,
       prompt: "TRIGGER_CODEMODE_ALLOWED: call coded echo via codemode",
       nativeMcp: true,
@@ -427,6 +430,7 @@ if (process.argv[2] === "fixture") {
     // -------------------------------------------------------------------------
     console.log("[7] Codemode nested unauthorized effect tool rejected");
     const s7 = await call("run", {
+      verbose: true,
       cwd: dir,
       prompt: "TRIGGER_CODEMODE_BLOCKED_EFFECT: try unauthorized effect tool",
       nativeMcp: true,
@@ -451,6 +455,7 @@ if (process.argv[2] === "fixture") {
     // -------------------------------------------------------------------------
     console.log("[8] tool_search discovers and calls deferred native tool");
     const s8 = await call("run", {
+      verbose: true,
       cwd: dir,
       prompt: "TRIGGER_DEFERRED_SEARCH: search echo then call it",
       nativeMcp: true,

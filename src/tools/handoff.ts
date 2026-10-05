@@ -13,7 +13,8 @@ export function registerHandoff(server: McpServer): void {
         "the repository cwd, the sessionId, and a short goal, completed and next. read (when the user asks to pick " +
         "up a project): returns the latest note for cwd (or the one named), plus resumeHint and howToResume, computed " +
         "from the session's live state. Follow resumeHint, then use status/wait/follow_up as usual. A note is a " +
-        "summary, not the session's state; it never claims, recovers or deletes a session.",
+        "summary, not the session's state; it never claims, recovers or deletes a session. " +
+        "remainingTurns/canFollowUp describe state and turn-budget readiness only.",
       inputSchema: {
         action: z.enum(["save", "read"]),
         cwd: z.string().describe("Absolute path of the repository. save: the session's own cwd, exactly as it was spawned with"),

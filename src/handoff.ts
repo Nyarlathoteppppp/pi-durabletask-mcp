@@ -5,6 +5,7 @@ import { AGENT_DIR, STATE_DIR } from "./config.js";
 import { catalogSession } from "./durable.js";
 import { loaded } from "./registry.js";
 import { resolveDelegateCwd } from "./workspace.js";
+import type { FollowUpInfo } from "./continuation.js";
 
 /**
  * Handoff notes let a new Claude/Codex window pick up where the previous one left a Pi session.
@@ -16,6 +17,7 @@ import { resolveDelegateCwd } from "./workspace.js";
 export type ResumeHint =
   | "wait_running_session"
   | "status_then_follow_up"
+  | "status_then_spawn"
   | "old_process_owns_session"
   | "awaiting_recovery"
   | "session_not_recoverable"
@@ -24,6 +26,7 @@ export type ResumeHint =
 const HINTS: Record<ResumeHint, string> = {
   wait_running_session: "It is running in this process. Call wait with this sessionId and until \"settled\".",
   status_then_follow_up: "It has finished. Call status for its result, then follow_up with `next` if the work should continue.",
+  status_then_spawn: "This session cannot follow up. Call status for its result, then spawn a new delegate using goal, completed and next if needed.",
   old_process_owns_session: "It is unfinished and another MCP process still holds it, most likely the previous window. " +
     "Close that window: a running MCP process then resumes it within about 30 seconds, usually this one but " +
     "possibly another open window (status here also prompts an attempt). " +
@@ -125,24 +128,28 @@ function alive(pid: number): boolean {
   catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; }
 }
 
+const finishedHint = (info: FollowUpInfo): ResumeHint =>
+  info.followUpBlockedReason === "turn_budget_exhausted" || info.followUpBlockedReason === "not_started"
+    ? "status_then_spawn" : "status_then_follow_up";
+
 /**
  * How to resume, from live state. Reads only; never claims, loads or locks the session.
  * heldElsewhere is advisory: the catalog pid of the last claimer is alive and not this process.
  * After a crash that pid can be reused by an unrelated process; the hint can then be wrong.
  */
-function resumeHint(row: Row): { hint: ResumeHint; heldElsewhere?: boolean } {
+function resumeHint(row: Row): { hint: ResumeHint; heldElsewhere?: boolean; continuation?: FollowUpInfo } {
   const startedAt = row.session_started_at ?? undefined;
   const worker = loaded(row.session_id);
   if (!row.durable) {
     if (!worker || (startedAt && worker.startedAt !== startedAt)) return { hint: worker ? "session_missing" : "session_not_recoverable" };
-    return { hint: worker.isActive ? "wait_running_session" : "status_then_follow_up" };
+    return { hint: worker.isActive ? "wait_running_session" : finishedHint(worker.continuation), continuation: worker.continuation };
   }
   const stored = catalogSession(row.session_id);
   if (!stored || (startedAt && stored.startedAt && stored.startedAt !== startedAt)) return { hint: "session_missing" };
-  if (worker) return { hint: worker.isActive ? "wait_running_session" : "status_then_follow_up" };
+  if (worker) return { hint: worker.isActive ? "wait_running_session" : finishedHint(worker.continuation), continuation: worker.continuation };
   const heldElsewhere = stored.pid !== 0 && stored.pid !== process.pid && alive(stored.pid);
-  if (stored.finished) return { hint: "status_then_follow_up", ...(heldElsewhere ? { heldElsewhere } : {}) };
-  return { hint: heldElsewhere ? "old_process_owns_session" : "awaiting_recovery" };
+  if (stored.finished) return { hint: finishedHint(stored), continuation: stored, ...(heldElsewhere ? { heldElsewhere } : {}) };
+  return { hint: heldElsewhere ? "old_process_owns_session" : "awaiting_recovery", continuation: stored };
 }
 
 export async function readHandoff(cwdInput: string, name?: string) {
@@ -152,15 +159,19 @@ export async function readHandoff(cwdInput: string, name?: string) {
   const row = name === undefined ? rows[0] : rows.find((r) => r.name === name);
   if (!row) return { found: false as const, cwd, ...(rows.length ? { names: rows.map((r) => r.name) } : {}),
     message: name === undefined ? "No handoff found for this repository." : `No handoff named "${name}" for this repository.` };
-  const { hint, heldElsewhere } = resumeHint(row);
+  const { hint, heldElsewhere, continuation } = resumeHint(row);
+  const howToResume = hint === "status_then_spawn" ? HINTS[hint] : heldElsewhere
+      ? `${HINTS[hint]} Another MCP process (likely the previous window) has it loaded, so follow_up works only after that window closes; status works now.`
+      : HINTS[hint];
   return {
     found: true as const,
     handoff: { name: row.name, cwd: row.cwd, sessionId: row.session_id, durable: row.durable === 1,
       goal: row.goal, completed: row.completed, next: row.next, savedAt: row.saved_at } satisfies HandoffNote,
     resumeHint: hint,
-    howToResume: heldElsewhere
-      ? `${HINTS[hint]} Another MCP process (likely the previous window) has it loaded, so follow_up works only after that window closes; status works now.`
-      : HINTS[hint],
+    ...(continuation ? { remainingTurns: continuation.remainingTurns, canFollowUp: continuation.canFollowUp,
+      ...(continuation.followUpBlockedReason ? { followUpBlockedReason: continuation.followUpBlockedReason } : {}) }
+      : { canFollowUp: false, followUpBlockedReason: hint }),
+    howToResume,
     ...(heldElsewhere ? { heldByAnotherProcess: true } : {}),
     // Other notes for this repository, newest first, so a caller can pick one by name.
     ...(rows.length > 1 ? { names: rows.map((r) => r.name) } : {}),

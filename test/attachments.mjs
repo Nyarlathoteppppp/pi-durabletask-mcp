@@ -30,6 +30,14 @@ try {
   await refuse([join(dir, "repo", ".env")], /secret/);
   await symlink(join(dir, "repo", ".env"), join(dir, "innocent.txt"));
   await refuse([join(dir, "innocent.txt")], /secret/);
+  await writeFile(join(dir, "credentials.txt"), "FAKE_TOKEN=secret\n");
+  await symlink(join(dir, "credentials.txt"), join(dir, ".env"));
+  await refuse([join(dir, ".env")], /secret/);
+  const { assertToolPathsAllowed } = await import("../dist/secrets.js");
+  assert.throws(() => assertToolPathsAllowed("read", { path: join(dir, ".env") }, dir), /private credential/);
+  await writeFile(join(dir, "repo", "notes.txt"), "FAKE_TOKEN=secret\n");
+  await symlink(join(dir, "repo"), join(dir, ".ssh"));
+  await refuse([join(dir, ".ssh", "notes.txt")], /secret/);
   await mkdir(join(dir, "pi-agent"));
   await writeFile(join(dir, "pi-agent", "auth.json"), "{\"token\":\"secret\"}");
   await refuse([join(dir, "pi-agent", "auth.json")], /secret/);

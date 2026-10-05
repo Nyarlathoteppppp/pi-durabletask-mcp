@@ -146,8 +146,8 @@ export function registerInit(server: McpServer): void {
 
         gotchas: [
           "Slow models plus many turns means minutes, not seconds. Prefer `spawn` over `run`.",
-          "Every delegate has a turn budget and wall-clock deadline. Near the turn limit it is " +
-            "steered once to conclude; at the limit it is aborted with a termination reason.",
+          "Every delegate has a turn budget and wall-clock deadline. The last turn has no tools and asks for a conclusion. " +
+            "Timeouts, provider/auth errors or cancellation can still interrupt it; check state, error and termination.",
           "The delegate cannot see your conversation. Put every fact it needs into `prompt`.",
           "cwd is required, absolute, and must not be `/` or `$HOME`. Relative paths are refused.",
           "Delegates do not load skills or AGENTS.md/CLAUDE.md. Credential paths " +

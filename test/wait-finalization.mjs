@@ -53,6 +53,13 @@ try {
   assert.equal(worker.isActive, true, "the terminal commit is still pending");
   assert.equal((await core.getState(sessionId)).state, "running", "status also waits for durable finalization");
   assert.equal((await call("status", { sessionId })).nextAction, "wait");
+  for (const verbose of [false, true]) {
+    const listed = await call("sessions", { verbose });
+    assert.equal(listed.sessions[0].state, "running", "sessions waits for durable finalization too");
+    assert.equal(listed.sessions[0].followUpBlockedReason, "finalizing");
+    assert.equal((await call("sessions", { state: "running", verbose })).count, 1);
+    assert.equal((await call("sessions", { state: "done", verbose })).count, 0);
+  }
   assert.equal((await call("wait", { sessionId, until: "settled", timeoutMs: 250 })).nextAction, "wait");
   let returned = false;
   const waiting = core.waitForState(sessionId, { until: "settled", timeoutMs: 2000 })
@@ -61,6 +68,8 @@ try {
   assert.equal(returned, false, "settled must wait for durable finalization");
   const timedOut = await core.waitForState(sessionId, { until: "settled", timeoutMs: 1 });
   assert.equal(timedOut.state, "running", "a timeout must not advertise a committed result");
+  assert.equal(timedOut.canFollowUp, false);
+  assert.equal(timedOut.followUpBlockedReason, "finalizing");
   const progress = await core.waitForProgress(worker, 1);
   assert.equal(progress.state, "running");
   const batch = await core.waitForMany([sessionId], { until: "all_settled", timeoutMs: 1 });
@@ -71,6 +80,8 @@ try {
   release.resolve();
   assert.equal((await waiting).state, "done");
   assert.equal((await call("status", { sessionId })).nextAction, "finish");
+  assert.equal((await call("sessions", { state: "done" })).count, 1);
+  assert.equal((await call("sessions", { state: "running" })).count, 0);
   await core.followUp(sessionId, "continue immediately");
   await worker.run;
   assert.equal(worker.state, "done");

@@ -68,19 +68,19 @@ try {
   assert.equal(requests.length, 0, "invalid batch must not contact a provider");
   assert.equal((await call("sessions")).count, 0);
 
-  const first = await call("run", { cwd: dir, id: "default", prompt: "Reply OK", tools: [], maxTurns: 5 });
+  const first = await call("run", { cwd: dir, id: "default", prompt: "Reply OK", tools: [], maxTurns: 5, verbose: true });
   assert.equal(first.model, "test/one");
   assert.equal(first.lastText, "OK");
   assert.equal(first.state, "done");
   assert.deepEqual(first.activeTools, []);
   assert.equal(requests[0].tools?.length ?? 0, 0);
 
-  const override = await call("run", { cwd: dir, prompt: "Reply OK", model: "test/two", tools: [] });
+  const override = await call("run", { cwd: dir, prompt: "Reply OK", model: "test/two", tools: [], verbose: true });
   assert.equal(override.model, "test/two");
   assert.equal(requests[1].model, "two");
   assert.equal((await raw("run", { cwd: dir, prompt: "blocked", tools: ["bash"] })).isError, true);
 
-  const search = await call("run", { cwd: dir, prompt: "GREP_FIXTURE: search once, then conclude.", tools: ["grep"], maxTurns: 5 });
+  const search = await call("run", { cwd: dir, prompt: "GREP_FIXTURE: search once, then conclude.", tools: ["grep"], maxTurns: 5, verbose: true });
   assert.equal(search.state, "done");
   assert.equal(search.lastText, "SEARCH_OK");
   assert.equal(search.toolCalls.length, 1);

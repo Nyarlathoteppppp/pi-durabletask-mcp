@@ -43,7 +43,7 @@ export function registerModels(server: McpServer): void {
         offset,
         nextOffset: offset + models.length < hits.length ? offset + models.length : null,
         ...(offset + models.length < hits.length
-          ? { note: "More models match. Pass filter to narrow the list, or nextOffset to page." } : {}),
+          ? { note: "More models match. Narrow with filter, or pass offset: nextOffset for the next page." } : {}),
         scoped: Boolean(modelScope(cwd)) || MODEL_ALLOWLIST.size > 0 || MODEL_DENYLIST.size > 0,
         models,
         ...(Object.keys(thinkingLevels).length ? { thinkingLevels } : {}),

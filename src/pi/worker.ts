@@ -12,6 +12,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { DurableJob, forgetOwnedJob, MemoryJob, releaseJob, type Checkpoint, type JobStore } from "../durable.js";
 import { AGENT_DIR, RETENTION_DAYS } from "../config.js";
+import { followUpInfo } from "../continuation.js";
 import { secretPathGuard } from "../secrets.js";
 import { createProtectedGrepTool } from "./search.js";
 import { nativeMcpFactories, validateNativeMcp, type NativeMcpOptions } from "./native-mcp.js";
@@ -67,6 +68,7 @@ const FINALIZE_PROMPT =
 /**
  * One delegated Pi session. The SDK remains live for steering and questions; durable
  * checkpoints retain the conversation and task progress across process restarts.
+ * Event ordering and completion rules: docs/worker-lifecycle.md.
  */
 export class PiWorker {
   readonly id: string;
@@ -148,6 +150,12 @@ export class PiWorker {
   /** Cancelling a session does not release its concurrency slot until the SDK becomes idle. */
   get isActive(): boolean {
     return this.state === "starting" || this.state === "running" || this.abortPromise !== undefined || this.settling;
+  }
+
+  get continuation() {
+    return followUpInfo(this.state, this.turns, this.maxTurns,
+      this.isActive ? (["starting", "running"].includes(this.state) ? "running" : "finalizing")
+        : !this.session ? "not_started" : undefined);
   }
 
   private isStopped(): boolean {
@@ -277,6 +285,8 @@ export class PiWorker {
       await this.nativeClose;
       return this;
     }
+    // AgentSession has persisted message_end before this awaited listener runs.
+    // Tool-start saves must finish before the SDK proceeds to execution.
     this.journalUnsubscribe = session.agent.subscribe(async (ev) => {
       if (this.recordingStopped) return;
       if (ev.type === "message_end" && ev.message.role === "user") {
@@ -313,6 +323,17 @@ export class PiWorker {
     return { name: "delegate-native-journal", hidden: true, factory: (pi) => {
       pi.on("before_agent_start", () => {
         this.activeTools = pi.getActiveTools();
+      });
+      pi.on("context_with_system", (event) => {
+        if (this.turns < this.maxTurns) return;
+        // Native tools register asynchronously, including during the first prompt. Enforce
+        // the answer-only turn after registration, on the actual request transcript.
+        this.lastTurn();
+        return { messages: event.messages.map((message) => {
+          if (message.role !== "system") return message;
+          const { toolsAdded: _added, toolsRemoved: _removed, ...rest } = message;
+          return rest;
+        }) };
       });
       pi.on("tool_call", async (ev) => {
         if (this.suspended || !this.job) return { block: true, reason: "Delegate is suspended or has not entered its durable task." };
@@ -735,10 +756,11 @@ export class PiWorker {
    * later run of this session can use tools again; nothing needs restoring.
    */
   private lastTurn(session = this.session): void {
-    if (!session || session.getActiveToolNames().length === 0) return;
+    if (!session) return;
+    const hadTools = session.getActiveToolNames().length > 0;
     session.setActiveToolsByName([]);
     this.activeTools = [];
-    this.notices.push({ type: "warning", message: `turn ${this.turns}/${this.maxTurns}: tools removed for the last turn`, at: new Date().toISOString() });
+    if (hadTools) this.notices.push({ type: "warning", message: `turn ${this.turns}/${this.maxTurns}: tools removed for the last turn`, at: new Date().toISOString() });
   }
 
   private clearTimers(): void {
@@ -801,6 +823,7 @@ export class PiWorker {
       durable: this.durable,
       retentionDays: this.retentionDays,
       usage: this.usage(),
+      ...this.continuation,
     };
     return verbose ? full : compactSnapshot(full);
   }

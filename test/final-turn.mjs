@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
@@ -20,8 +21,9 @@ const http = createServer(async (req, res) => {
     id: "final", object: "chat.completion.chunk", created: 1, model: request.model, choices: [{ index: 0, delta, finish_reason }] })}\n\n`);
   // A model that never stops exploring while it has tools.
   if (request.tools?.length) {
+    const name = request.tools[0].function.name;
     emit({ role: "assistant", tool_calls: [{ index: 0, id: `call_${requests.length}`, type: "function",
-      function: { name: "ls", arguments: JSON.stringify({ path: dir }) } }] });
+      function: { name, arguments: JSON.stringify(name === "ls" ? { path: dir } : { message: "probe" }) } }] });
     emit({}, "tool_calls");
   } else {
     emit({ role: "assistant", content: "SUMMARY from what I read" });
@@ -37,6 +39,10 @@ const client = new Client({ name: "final-turn", version: "1" });
 try {
   const agentDir = join(dir, "agent");
   await mkdir(agentDir);
+  await writeFile(join(agentDir, "mcp.json"), JSON.stringify({ mcpServers: { direct: {
+    command: process.execPath, args: [fileURLToPath(new URL("./native-mcp.mjs", import.meta.url)), "fixture", "direct"],
+    exposure: "direct",
+  } } }));
   await writeFile(join(agentDir, "settings.json"), JSON.stringify({ defaultProvider: "test", defaultModel: "one", enabledModels: ["test/*"] }));
   await writeFile(join(agentDir, "models.json"), JSON.stringify({ providers: { test: {
     baseUrl: `http://127.0.0.1:${http.address().port}/v1`, api: "openai-completions", apiKey: "fake-key",
@@ -46,7 +52,7 @@ try {
       contextWindow: 16000, maxTokens: 512, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] } } }));
   await client.connect(new StdioClientTransport({ command: process.execPath, args: ["dist/index.js"], stderr: "ignore",
     env: { ...process.env, PI_OFFLINE: "1", PI_CODING_AGENT_DIR: agentDir, PI_DELEGATE_STATE_DIR: join(dir, "state"),
-      PI_DELEGATE_MODEL: "test/one", PI_DELEGATE_IGNORE_SCOPE: "1" } }));
+      PI_DELEGATE_MODEL: "test/one", PI_DELEGATE_IGNORE_SCOPE: "1", PI_DELEGATE_ALLOW_TOOLS: "mcp__direct__echo" } }));
   const call = async (name, args) => {
     const result = await client.callTool({ name, arguments: args });
     assert.ok(!result.isError, result.content?.[0]?.text);
@@ -88,6 +94,20 @@ try {
   await call("spawn", { cwd: dir, id: "single", prompt: "explore", tools: ["ls"], maxTurns: 1 });
   const single = await settle("single");
   assert.deepEqual([single.state, single.lastText], ["done", "SUMMARY from what I read"]);
+  // Native MCP tools register while the first prompt starts, after track() removed its tools.
+  for (const durable of [false, true]) {
+    for (const maxTurns of [1, 3]) {
+      requests.length = 0;
+      const id = `native-${durable}-${maxTurns}`;
+      await call("spawn", { cwd: dir, id, prompt: "explore", tools: ["mcp__direct__echo"],
+        nativeMcp: true, mcpServers: ["direct"], maxTurns, durable });
+      const snap = await settle(id);
+      assert.deepEqual([snap.state, snap.lastText, snap.turns], ["done", "SUMMARY from what I read", maxTurns]);
+      assert.equal(snap.toolCalls.length, maxTurns - 1, "no native calls during the answer turn");
+      assert.ok(!requests.at(-1).tools?.length, "native tools stay absent from the answer request");
+      assert.deepEqual(snap.activeTools, []);
+    }
+  }
   console.log("  OK -> the last turn has no tools, so a delegate that keeps exploring still answers");
 } finally {
   await client.close().catch(() => {});

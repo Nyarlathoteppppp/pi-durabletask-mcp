@@ -42,7 +42,7 @@ To collect results, the main agent loops `wait` with `until: "settled"`. If Pi a
 - **Multiple models:** `spawn_batch` starts tasks with individually selected models.
 - **Live steering:** `steer` redirects work after the current tool call.
 - **Follow-ups:** `follow_up` keeps context in the same long-lived session; turns accumulate.
-- **Always an answer:** the last turn has no tools, so a delegate that keeps exploring still reports; results include token usage and cost.
+- **Final-turn wrap-up:** tools are disabled on the last turn and the model is asked to provide a final answer; results include token usage and cost.
 - **Recovery:** explicit `durable: true` saves checkpoints to SQLite.
 - **Handoff:** leave a note for the next Claude/Codex window.
 - **Native MCP:** `nativeMcp` explicitly selects servers and tool permissions; third-party extensions are enabled separately.

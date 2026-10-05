@@ -9,6 +9,7 @@ import { compactSnapshot, message } from "./pi/worker.js";
 import { withAttachments } from "./attachments.js";
 import type { PiWorker } from "./pi/worker.js";
 import type { Snapshot } from "./types.js";
+import type { FollowUpInfo } from "./continuation.js";
 import { pickTools } from "./permissions.js";
 import { assertProviderReady, assertThinkingSupported, defaultModelRef, resolveModel } from "./pi/models.js";
 import { resolveDelegateCwd } from "./workspace.js";
@@ -112,7 +113,7 @@ export async function startExecution(request: AttachedRequest) {
 }
 
 /** Returned with a started run, so the caller's next call collects the answer in one loop. */
-const WAIT_HINT = "Call wait with this sessionId and until \"settled\" until state is done, aborted or error; its lastText is the answer.";
+const WAIT_HINT = "Call wait with this sessionId, until \"settled\".";
 
 export interface BatchRequest extends Omit<LaunchRequest, "prompt" | "id" | "label"> {
   tasks: AttachedRequest[];
@@ -221,11 +222,12 @@ export async function startBatch({
 export interface RunOptions {
   signal?: AbortSignal;
   onProgress?: (progress: { state: Snapshot["state"]; turns: number }) => void | Promise<void>;
+  verbose?: boolean;
 }
 
 export async function runExecution(
   attached: AttachedRequest,
-  { signal, onProgress }: RunOptions = {},
+  { signal, onProgress, verbose }: RunOptions = {},
 ): Promise<Snapshot> {
   const request = await inline(attached);
   // Bind cancellation as soon as the worker exists, before it starts: a caller that has already
@@ -250,7 +252,7 @@ export async function runExecution(
     if (ticker) clearInterval(ticker);
     unbindCancellation();
   }
-  const snap = w.snapshot();
+  const snap = w.snapshot({ verbose });
   evictHistory();
   return snap;
 }
@@ -325,7 +327,7 @@ export async function waitForState(
 }
 
 /** One line per session: enough to decide what to read next, plus the answer once it is done. */
-export interface WaitSummary {
+export interface WaitSummary extends FollowUpInfo {
   sessionId: string;
   label: string | undefined;
   state: string;
@@ -362,6 +364,9 @@ export async function waitForMany(
       ...(s.error ? { error: s.error } : {}),
       ...(s.termination ? { termination: s.termination } : {}),
       ...(done && s.usage ? { usage: s.usage } : {}),
+      remainingTurns: s.remainingTurns,
+      canFollowUp: s.canFollowUp,
+      ...(s.followUpBlockedReason ? { followUpBlockedReason: s.followUpBlockedReason } : {}),
     };
   });
   const isSettled = (s: WaitSummary): boolean => TERMINAL.has(s.state) || s.pendingQuestions > 0;
@@ -397,9 +402,11 @@ export async function cancelExecution(sessionId: string) {
   return (await resolve(sessionId)).abort();
 }
 
-export function listSessions(state?: string, verbose?: boolean) {
-  const snaps = all().map((w) => w.snapshot());
-  const filtered = state ? snaps.filter((s) => s.state === state) : snaps;
+/** cwd, when supplied, is the canonical project path, as for a worker's cwd. */
+export function listSessions(state?: string, verbose?: boolean, cwd?: string) {
+  const workers = all();
+  const filtered = workers.filter((w) => (state === undefined || observedState(w) === state) && (cwd === undefined || w.cwd === cwd))
+    .map((w) => waitingSnapshot(w, verbose));
   const list = verbose
     ? filtered
     : filtered.map((s) => ({
@@ -416,9 +423,13 @@ export function listSessions(state?: string, verbose?: boolean) {
         finishedAt: s.finishedAt,
         pendingQuestions: s.questions.length,
         durable: s.durable,
+        cwd: s.cwd,
+        remainingTurns: s.remainingTurns,
+        canFollowUp: s.canFollowUp,
+        ...(s.followUpBlockedReason ? { followUpBlockedReason: s.followUpBlockedReason } : {}),
       }));
-  const loaded = new Set(snaps.map((s) => s.sessionId));
-  const stored = storedJobs().filter((job) => !loaded.has(job.sessionId));
+  const loaded = new Set(workers.map((w) => w.id));
+  const stored = storedJobs(cwd).filter((job) => !loaded.has(job.sessionId) && (state === undefined || job.state === state));
   return { count: list.length, sessions: list, stored };
 }
 

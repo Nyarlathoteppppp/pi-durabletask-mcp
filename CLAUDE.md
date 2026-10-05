@@ -1,5 +1,23 @@
 # 开发交接（2026-10-04）
 
+修改 Worker、取消或恢复逻辑前，先读 [生命周期与持久化时序](docs/worker-lifecycle.md)。其中列出了完成条件、SDK 事件顺序和对应测试。
+
+## 本地未发布改动（2026-10-05）
+
+- 已修 `.env` 等敏感名字的符号链接绕过，以及原生 MCP 异步注册后重新出现在最后一轮的问题。
+- `sessions(cwd)` 查项目内 loaded/stored 历史；`status/wait/sessions/handoff` 返回剩余轮数与状态/预算可继续提示。预算耗尽的交接用 `status_then_spawn`；认证、并发与归属仍在实际调用时检查。
+- `spawn/follow_up/spawn_batch` 保留 `next` 字段但缩短提示；MCP `run` 默认用和 `wait` 相同的精简结果，完整答案、错误、用量与可继续提示保留。需要模型、配置或全部工具轨迹时传 `verbose: true`。
+- `sessions` 与 `status/wait` 共用最终提交期间的状态投影，state 筛选也按对外状态进行；`sessions(verbose: true)` 返回完整轨迹和 notices。模型分页提示明确使用 `offset: nextOffset`；init、随包/本机 skill 与双语 README 已去掉“一定有答案”的承诺。
+- 轮数仍累计。未来改成每 run 预算时，要持久化 run 的起始轮数，并恢复上轮收走的工具；不能直接复用恢复时会清零的 `runTurns`。
+
+灵算 Astra 架构审查指出的交接 hint 矛盾与重复 catalog 查询已修复并复核通过；反重力 3.8 Flash 未发现新增确定 bug。类型检查、构建及 handoff、wait-finalization、core、retention 定向测试通过，未跑完整套件。
+
+精简输出这一轮另通过 core、usability、integration、native-mcp 四组定向测试及类型检查/构建。usability 覆盖 `run` 默认省略配置/轨迹但保留答案与用量，以及 `verbose` 返回全部 7 次调用的 id 和结果。源码和本地 dist 已更新，版本仍为 0.5.0，未发布。
+
+输出提示建议：在 caller prompt 中要求简短、结论先行、必要证据/文件行号、测试范围和待决策事项，省略探索过程/长日志/任务复述；关键发现或阻塞允许短进度。Pi Codex Astra 起草了 README 修订和提示词。暂未向 Worker 添加固定输出模板；prompt 可以约束模型正文，不能控制服务端 notices 或 wait 重复返回。
+
+本轮 sessions 修复通过 wait-finalization、usability、core、handoff 四组定向测试及类型检查/构建，未跑全套。随包与本机 skill 仅修改正文；quick_validate 因 Python 缺 PyYAML 无法运行，frontmatter 已核对，未变动。
+
 ## 0.5.0：第一批使用反馈
 
 来自另一个窗口把它当审查工具用的反馈：Gemini 跑满轮数后结果全丢；思考档位查不到；diff 不好传；看不到 token 和费用。对应地做了：最后一轮不给工具、`attachments`、`models.thinkingLevels`、结果里的 `usage`。没有做：给审查者开执行测试的权限（`PI_DELEGATE_ALLOW_TOOLS=bash` 是完整 shell，不是沙箱）、放宽 `wait` 的 55 秒上限、MCP 进度通知。

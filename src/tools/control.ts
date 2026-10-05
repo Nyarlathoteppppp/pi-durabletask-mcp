@@ -6,6 +6,7 @@ import {
   steerExecution, waitForMany, waitForState,
 } from "../core.js";
 import { batchNextAction, json, waitResult, withNextAction } from "./shared.js";
+import { resolveDelegateCwd } from "../workspace.js";
 
 // Preserve the existing helper import path for consumers.
 export { waitForProgress } from "../core.js";
@@ -20,7 +21,8 @@ export function registerControl(server: McpServer): void {
         "pending questions the agent is waiting on. A non-empty `questions` array means it is blocked " +
         "until you call `answer`. `toolCalls` holds the last 5 calls with shortened arguments and " +
         "`toolCallCount` the total; pass `verbose: true` for every call with ids and results. " +
-        "Notices include Pi's automatic provider retries.",
+        "Notices include Pi's automatic provider retries. remainingTurns/canFollowUp report state and turn-budget " +
+        "readiness; ownership, capacity and auth are checked by follow_up.",
       inputSchema: {
         sessionId: z.string(),
         verbose: z.boolean().optional().describe("Include tool results and call ids in the trace"),
@@ -133,13 +135,16 @@ export function registerControl(server: McpServer): void {
       description:
         "List pi sessions held by this server, running and finished, plus finished durable sessions " +
         `stored on disk (\`stored\`). Up to ${HISTORY_LIMIT} finished sessions stay loaded; status/wait read ` +
-        "stored results without loading, and follow_up loads the conversation. Stored sessions expire by retention.",
+        "stored results without loading, and follow_up loads the conversation. Stored sessions expire by retention. " +
+        "Pass cwd to find this project's history; entries include remainingTurns and state/budget canFollowUp.",
       inputSchema: {
+        cwd: z.string().optional().describe("Absolute project directory; includes loaded and stored sessions for this cwd"),
         state: z.string().optional().describe("Filter by state: starting, running, done, aborted, error"),
         verbose: z.boolean().optional().describe("Include full text and tool calls"),
       },
     },
-    async ({ state, verbose }) => json(listSessions(state, verbose)),
+    async ({ state, verbose, cwd }) => json(listSessions(state, verbose,
+      cwd === undefined ? undefined : await resolveDelegateCwd(cwd))),
   );
 
   server.registerTool(

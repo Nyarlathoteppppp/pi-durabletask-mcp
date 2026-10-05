@@ -14,7 +14,7 @@ try {
     return JSON.parse(r.content[0].text);
   };
   await call("init", { cwd: process.cwd() });
-  const result = await call("run", { cwd: process.cwd(), model, tools: [], maxTurns: 1,
+  const result = await call("run", { cwd: process.cwd(), model, tools: [], maxTurns: 1, verbose: true,
     prompt: "Do not call tools. Reply with exactly OK." });
   assert.equal(result.state, "done", result.error);
   assert.equal(result.model, model);

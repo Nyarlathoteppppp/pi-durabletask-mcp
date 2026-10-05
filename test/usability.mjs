@@ -99,6 +99,11 @@ try {
   const full = await host.call("status", { sessionId: "many", verbose: true });
   assert.equal(full.toolCalls.length, 7);
   assert.ok(full.toolCalls[0].args.length > 121);
+  const expanded = (await host.call("sessions", { verbose: true })).sessions.find((s) => s.sessionId === "many");
+  assert.deepEqual(expanded.toolCalls, full.toolCalls, "verbose sessions returns every call with ids and results");
+  assert.deepEqual(expanded.notices, full.notices);
+  assert.equal("toolCalls" in (await host.call("sessions")).sessions.find((s) => s.sessionId === "many"), false,
+    "default sessions still omits traces");
   const waited = await host.call("wait", { sessionId: "many", timeoutMs: 250 });
   assert.equal(waited.toolCallCount, 7);
   assert.equal(waited.lastText, "OK");
@@ -112,6 +117,28 @@ try {
   assert.deepEqual(verboseWait.limits, full.limits);
   assert.equal(verboseWait.nextAction, "finish");
   assert.ok(JSON.stringify(waited).length < JSON.stringify(compact).length / 2, "waiting uses less than half the context of a diagnostic snapshot");
+
+  // Blocking run uses the same compact result; verbose requests retain the entire trace.
+  const ran = await host.call("run", { cwd: directory, id: "compact-run", prompt: "MANY_CALLS", tools: ["ls"] });
+  assert.equal(ran.state, "done");
+  assert.equal(ran.lastText, "OK");
+  assert.equal(ran.toolCallCount, 7);
+  assert.equal(ran.nextAction, "finish");
+  assert.equal(ran.canFollowUp, true);
+  assert.ok(ran.usage, "compact run retains token and cost totals");
+  for (const key of ["toolCalls", "model", "thinking", "cwd", "activeTools", "limits", "startedAt", "elapsedMs"])
+    assert.equal(key in ran, false, `default run omits ${key}`);
+  const diagnostic = await host.call("status", { sessionId: ran.sessionId, verbose: true });
+  assert.ok(JSON.stringify(ran).length < JSON.stringify(diagnostic).length / 2, "run avoids repeating the diagnostic snapshot");
+  const verboseRun = await host.call("run", { cwd: directory, prompt: "MANY_CALLS", tools: ["ls"], verbose: true });
+  assert.equal(verboseRun.nextAction, "finish");
+  assert.equal(verboseRun.model, "test/one");
+  assert.equal(verboseRun.cwd, diagnostic.cwd, "verbose run reports the canonical working directory");
+  assert.equal(verboseRun.toolCalls.length, 7, "verbose run includes calls beyond the compact last five");
+  assert.ok(verboseRun.toolCalls.every((c) => c.id && c.result), "verbose run retains call ids and results");
+  assert.equal(verboseRun.lastText, ran.lastText);
+  await host.call("forget", { sessionId: ran.sessionId });
+  await host.call("forget", { sessionId: verboseRun.sessionId });
 
   // 1a. wait until settled returns once, with the result, instead of on every tool call.
   await host.call("spawn", { cwd: directory, id: "many-settled", prompt: "MANY_CALLS PACED", tools: ["ls"] });
@@ -154,6 +181,10 @@ try {
   const page = await capped.call("models", { cwd: directory });
   assert.equal(page.models.length, 1, "models pages at LIST_CAP by default");
   assert.match(page.note, /filter|nextOffset/);
+  const nextPage = await capped.call("models", { cwd: directory, offset: page.nextOffset });
+  assert.equal(nextPage.offset, page.nextOffset);
+  assert.notDeepEqual(nextPage.models, page.models, "offset advances the model page");
+  assert.equal(nextPage.nextOffset, null);
   await close(capped);
   await assert.rejects(() => host.call("wait", { sessionIds: ["slow"], until: "progress" }), /settled/);
 

@@ -20,12 +20,14 @@ export function batchNextAction(sessions: Array<{ nextAction: NextAction }>): Ne
     : sessions.some((s) => s.nextAction === "wait") ? "wait" : "finish";
 }
 
-/** A normal wait carries the result and progress counters; status remains the diagnostic view. */
+/** Compact result collection for run and wait; status remains the diagnostic view. */
 export function waitResult(snapshot: Snapshot, verbose?: boolean) {
   if (verbose) return withNextAction(snapshot);
-  const { sessionId, label, state, turns, toolCallCount, lastText, questions, notices, error, termination, usage } = snapshot;
+  const { sessionId, label, state, turns, toolCallCount, lastText, questions, notices, error, termination, usage,
+    remainingTurns, canFollowUp, followUpBlockedReason } = snapshot;
   const finished = state === "done" || state === "aborted" || state === "error";
   return withNextAction({ sessionId, label, state, turns, toolCallCount, lastText, questions, notices, error, termination,
+    remainingTurns, canFollowUp, ...(followUpBlockedReason ? { followUpBlockedReason } : {}),
     ...(finished && usage ? { usage } : {}) });
 }
 
