@@ -41,6 +41,7 @@ To collect results, the main agent loops `wait` with `until: "settled"`. If Pi a
 - **Attachments:** pass a diff or notes by file path with `attachments`, instead of pasting them into the prompt.
 - **Multiple models:** `spawn_batch` starts tasks with individually selected models.
 - **Live steering:** `steer` redirects work after the current tool call.
+- **Liveness:** running delegates report `idleMs` and `phase`, so slow reasoning can be told from a hung request; `PI_DELEGATE_STALL_MS` optionally ends a silent request.
 - **Follow-ups:** `follow_up` keeps context in the same long-lived session; turns accumulate.
 - **Final-turn wrap-up:** tools are disabled on the last turn and the model is asked to provide a final answer; results include token usage and cost.
 - **Recovery:** explicit `durable: true` saves checkpoints to SQLite.
