@@ -2,6 +2,15 @@
 
 修改 Worker、取消或恢复逻辑前，先读 [生命周期与持久化时序](docs/worker-lifecycle.md)。其中列出了完成条件、SDK 事件顺序和对应测试。
 
+## PiWorker 运行状态重构（2026-10-05，未发布）
+
+- 本轮之前遗留的 28 个文件已单独提交为 `ac6a98c`；本轮只重构单次运行控制状态。
+- `src/pi/run.ts` 的 `WorkerRun` 集中管理计时器、收尾/provider/retry 标记、取消、最终提交与 completion。每次 `beginDurable` 创建新对象；旧控制回调只清理自己，不能改变新运行。SDK 事件、journal、steering、工具结果与暂停标记继续由 Worker 持有。
+- 创建失败会释放 `settling`；取消从保存开始到 SDK drain 结束一直占用容量，保存失败仍取消 SDK。最终 catalog 写入失败保留答案、显示 error，completion 不拒绝。计时器/事件发起的取消失败记为 warning。
+- MCP API、checkpoint/SQLite schema、ownership、恢复与清理语义不变；轮数累计，follow_up 的时限仍在认证后重置，恢复保留原时钟。删除了仅增减而从未读取的 `runTurns`。
+- 验证：`npm test` 完整 33 组通过。新增 `worker-run.mjs` 的 6 个定向场景；其中创建失败、旧完成回调、已派发旧计时器、取消写入失败已验证旧实现失败。已有 `start-cancel` 增加创建中取消的容量断言，覆盖 MemoryJob 与真实 DurableJob。
+- 灵算 Astra 提供架构建议；反重力 3.8 Flash（最高支持的 high）检查测试覆盖；Pi Codex 6.1 Sol 读取实际 diff 后未发现确定回归或冗余防御。外部审查为静态阅读，完整测试由主会话执行。本地 dist 已构建；旧 MCP host 要重连，版本仍为 0.5.0。
+
 ## 本地未发布改动（2026-10-05）
 
 - 已修 `.env` 等敏感名字的符号链接绕过，以及原生 MCP 异步注册后重新出现在最后一轮的问题。

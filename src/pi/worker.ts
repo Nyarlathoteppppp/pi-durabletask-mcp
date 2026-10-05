@@ -31,6 +31,7 @@ import { assertProviderReady, assertThinkingSupported, resolveModel } from "./mo
 import { getRuntime } from "./runtime.js";
 import { clipArgs, flatten } from "./trace.js";
 import { createUiContext, Question } from "./ui.js";
+import { WorkerRun } from "./run.js";
 
 type AgentSession = CreateAgentSessionResult["session"];
 
@@ -77,11 +78,11 @@ export class PiWorker {
   readonly toolNames: string[];
   readonly startedAt: string;
   /**
-   * Start of the current run: the spawn, or the latest follow_up. The wall-clock limit applies
+   * Control state of the current spawn or follow_up. The wall-clock limit applies
    * per run, so a session can be continued days later; turns stay cumulative. Downtime during a
    * run still counts, since recovery keeps this value.
    */
-  private runStartedAt: string;
+  private currentRun: WorkerRun;
   readonly maxTurns: number;
   readonly maxDurationMs: number;
 
@@ -100,7 +101,7 @@ export class PiWorker {
   readonly questions = new Map<string, Question>();
 
   /** Resolves when the delegate stops, however it stops. Never rejects. */
-  run: Promise<void> | undefined;
+  get run(): Promise<void> | undefined { return this.currentRun.completion; }
   /** Set by the registry so state reaches the status line on every transition. */
   onChange: (() => void) | undefined;
 
@@ -113,25 +114,11 @@ export class PiWorker {
   private readonly openCalls = new Map<string, ToolCall>();
   private session: AgentSession | undefined;
   private unsubscribe: (() => void) | undefined;
-  private deadlineTimer: NodeJS.Timeout | undefined;
-  private finishTimer: NodeJS.Timeout | undefined;
-  private runTurns = 0;
-  private finishSteerSent = false;
-  /** Set when the run has used 2/3 of its time; the wrap-up steer follows at the next tool turn's end. */
-  private timeShort = false;
-  /** Counts beginDurable calls, so one cancelled during authentication cannot resume a later run. */
-  private executions = 0;
-  /** pi reports provider failures as an assistant message with stopReason "error", not a throw. */
-  private providerError: string | undefined;
-  /** Attempts Pi made before giving up on the provider in this run, if it did. */
-  private retriesExhausted: number | undefined;
-  private abortPromise: Promise<void> | undefined;
   private job: JobStore | undefined;
   recoveryKey: string | undefined;
   private journalUnsubscribe: (() => void) | undefined;
   private suspended = false;
   private recordingStopped = false;
-  private settling = false;
   private inputStarted = false;
   private readonly results: Checkpoint["results"] = {};
   private steering: string[] = [];
@@ -149,7 +136,7 @@ export class PiWorker {
 
   /** Cancelling a session does not release its concurrency slot until the SDK becomes idle. */
   get isActive(): boolean {
-    return this.state === "starting" || this.state === "running" || this.abortPromise !== undefined || this.settling;
+    return this.state === "starting" || this.state === "running" || this.currentRun.abortPromise !== undefined || this.currentRun.settling;
   }
 
   get continuation() {
@@ -165,6 +152,11 @@ export class PiWorker {
   private clearQuestions(): void {
     for (const q of this.questions.values()) q.resolve(undefined);
     this.questions.clear();
+  }
+
+  private newRun(): WorkerRun {
+    this.currentRun.clearTimers();
+    return this.currentRun = new WorkerRun(this.currentRun.startedAt);
   }
 
   constructor({
@@ -195,7 +187,7 @@ export class PiWorker {
     this.maxTurns = maxTurns;
     this.maxDurationMs = maxDurationMs;
     this.startedAt = startedAt ?? new Date().toISOString();
-    this.runStartedAt = this.startedAt;
+    this.currentRun = new WorkerRun(this.startedAt);
     this.options = { id: this.id, label, cwd, model, thinking, tools, extensions, durable, retentionDays, nativeMcp, mcpServers: this.mcpServers, maxTurns, maxDurationMs,
       startedAt: this.startedAt };
   }
@@ -371,7 +363,7 @@ export class PiWorker {
 
   private restoreSnapshot(saved: Checkpoint): void {
     const snapshot = saved.snapshot;
-    this.runStartedAt = snapshot.runStartedAt ?? snapshot.startedAt;
+    this.currentRun.startedAt = snapshot.runStartedAt ?? snapshot.startedAt;
     this.state = snapshot.state;
     this.turns = snapshot.turns;
     this.lastText = snapshot.lastText;
@@ -391,7 +383,7 @@ export class PiWorker {
   }
 
   private async beginDurable(prompt: string, saved?: Checkpoint, recover = false): Promise<void> {
-    const execution = ++this.executions;
+    const run = this.newRun();
     if (saved) this.restoreSnapshot(saved);
     else this.inputStarted = false;
     const alreadyStopped = recover && saved && !["starting", "running"].includes(saved.snapshot.state);
@@ -406,68 +398,86 @@ export class PiWorker {
     const provider = this.model?.includes("/") ? this.model.slice(0, this.model.indexOf("/")) : undefined;
     if (!alreadyStopped && !answered && !overBudget && provider) {
       try { await assertProviderReady(provider); }
-      catch (error) { if (!this.isStopped()) throw error; }
+      catch (error) { if (this.currentRun === run && !this.isStopped()) throw error; }
     }
     // Authentication may refresh OAuth over the network. An abort or shutdown received during
     // that await still wins; cancelled runs commit their terminal state without prompting Pi.
     // An abort during that await also lets a new follow_up start; this execution is then superseded.
-    if (this.suspended || execution !== this.executions) return;
-    if (!recover) this.runStartedAt = new Date().toISOString();
+    if (this.suspended || this.currentRun !== run) return;
+    if (!recover) this.currentRun.startedAt = new Date().toISOString();
     if (!alreadyStopped && this.state !== "aborted") {
       this.state = "running";
       this.finishedAt = undefined;
       this.error = undefined;
       this.termination = undefined;
     }
-    this.settling = true;
-    const { done } = await this.job!.begin(prompt, this.checkpoint(), async (input, checkpoint, signal) => {
-      const suspend = (): void => {
-        this.suspended = true;
-        this.clearTimers();
-        this.clearQuestions();
-        void this.session!.abort();
-      };
-      signal.addEventListener("abort", suspend, { once: true });
-      try {
-        // A durable task's creation also yields; cancellation may arrive while it commits.
-        if (alreadyStopped || this.state === "aborted") return this.checkpoint();
-        if (recover && checkpoint.inputStarted) {
-          const last = this.session!.messages.at(-1);
-          if (last?.role === "assistant" && last.stopReason === "stop" && !this.steering.length) {
-            this.state = "done";
-            this.finishedAt = new Date().toISOString();
-            return this.checkpoint();
+    run.settling = true;
+    try {
+      const { done } = await this.job!.begin(prompt, this.checkpoint(), async (input, checkpoint, signal) => {
+        const suspend = (): void => {
+          run.clearTimers();
+          if (this.currentRun !== run) return;
+          this.suspended = true;
+          this.clearQuestions();
+          void this.session!.abort();
+        };
+        signal.addEventListener("abort", suspend, { once: true });
+        try {
+          // A durable task's creation also yields; cancellation may arrive while it commits.
+          if (this.currentRun !== run) return checkpoint;
+          if (alreadyStopped || this.state === "aborted") return this.checkpoint();
+          if (recover && checkpoint.inputStarted) {
+            const last = this.session!.messages.at(-1);
+            if (last?.role === "assistant" && last.stopReason === "stop" && !this.steering.length) {
+              this.state = "done";
+              this.finishedAt = new Date().toISOString();
+              return this.checkpoint();
+            }
+            for (const call of this.toolCalls.filter((c) => c.state === "running")) {
+              call.state = "error";
+              call.result = "Service interrupted this call; its external effects may have completed. Inspect before retrying.";
+              delete call.startedAt;
+            }
+            this.notices.push({ type: "info", at: new Date().toISOString(), message: "Recovered saved conversation after MCP service restart." });
+            input = this.recoveryInput?.text ?? "The MCP service restarted. Continue the original task from the saved conversation. " +
+              "Do not repeat completed work. Interrupted tools may already have applied external effects; inspect before retrying." +
+              (this.steering.length ? "\nPending steering instructions:\n" + this.steering.join("\n") : "");
+            this.recoveryInput ??= { text: input, steeringCount: this.steering.length };
           }
-          for (const call of this.toolCalls.filter((c) => c.state === "running")) {
-            call.state = "error";
-            call.result = "Service interrupted this call; its external effects may have completed. Inspect before retrying.";
-            delete call.startedAt;
+          if (this.turns >= this.maxTurns || this.elapsedMs() >= this.maxDurationMs) {
+            await this.abort(this.turns >= this.maxTurns ? "max_turns" : "deadline");
+          } else await this.track(this.session!, input, run);
+          if (this.suspended) {
+            // suspend() first drains a checkpoint, then closes the Harness. If the SDK
+            // finishes between those steps, wait for close's cancellation instead of
+            // faulting a task which must remain recoverable.
+            if (!signal.aborted) await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+            signal.throwIfAborted();
           }
-          this.notices.push({ type: "info", at: new Date().toISOString(), message: "Recovered saved conversation after MCP service restart." });
-          input = this.recoveryInput?.text ?? "The MCP service restarted. Continue the original task from the saved conversation. " +
-            "Do not repeat completed work. Interrupted tools may already have applied external effects; inspect before retrying." +
-            (this.steering.length ? "\nPending steering instructions:\n" + this.steering.join("\n") : "");
-          this.recoveryInput ??= { text: input, steeringCount: this.steering.length };
+          return this.checkpoint();
+        } finally { signal.removeEventListener("abort", suspend); }
+      }, recover);
+      run.completion = done.then(() => {}).catch((error: unknown) => {
+        if (this.currentRun !== run || this.suspended) return;
+        this.state = "error";
+        this.error = message(error);
+        this.finishedAt = new Date().toISOString();
+      }).finally(() => {
+        run.settling = false;
+        if (this.currentRun !== run) return;
+        try { this.recordFinal(); }
+        catch (error) {
+          this.state = "error";
+          this.error = `Final result persistence failed: ${message(error)}`;
+          this.finishedAt ??= new Date().toISOString();
         }
-        if (this.turns >= this.maxTurns || this.elapsedMs() >= this.maxDurationMs) {
-          await this.abort(this.turns >= this.maxTurns ? "max_turns" : "deadline");
-        } else await this.track(this.session!, input);
-        if (this.suspended) {
-          // suspend() first drains a checkpoint, then closes the Harness. If the SDK
-          // finishes between those steps, wait for close's cancellation instead of
-          // faulting a task which must remain recoverable.
-          if (!signal.aborted) await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
-          signal.throwIfAborted();
-        }
-        return this.checkpoint();
-      } finally { signal.removeEventListener("abort", suspend); }
-    }, recover);
-    this.run = done.then(() => {}).catch((error: unknown) => {
-      if (this.suspended) return;
-      this.state = "error";
-      this.error = message(error);
-      this.finishedAt = new Date().toISOString();
-    }).finally(() => { this.settling = false; this.recordFinal(); this.onChange?.(); });
+        this.onChange?.();
+      });
+    } catch (error) {
+      run.settling = false;
+      run.clearTimers();
+      throw error;
+    }
   }
 
   static async recover(options: WorkerOptions, prompt: string, key: string, worker = new PiWorker(options)): Promise<PiWorker> {
@@ -481,7 +491,7 @@ export class PiWorker {
 
   async suspend(): Promise<void> {
     this.suspended = true;
-    this.clearTimers();
+    this.currentRun.clearTimers();
     // abort() synchronously signals the agent before waiting for idle. Keep the
     // journal active while in-flight tools settle, including successful results.
     this.clearQuestions();
@@ -511,56 +521,54 @@ export class PiWorker {
    * Drive one prompt to completion and fold the outcome back into this worker. Shared by
    * `start` and `followUp` so a second turn behaves exactly like the first.
    */
-  private track(session: AgentSession, prompt: string): Promise<void> {
+  private track(session: AgentSession, prompt: string, run = this.newRun()): Promise<void> {
     this.state = "running";
     this.error = undefined;
     this.lastText = "";
     this.finishedAt = undefined;
     this.termination = undefined;
-    this.runTurns = 0;
-    this.finishSteerSent = false;
-    this.timeShort = false;
-    this.providerError = undefined;
-    this.retriesExhausted = undefined;
-    this.clearTimers();
     // A run with one turn left, or a session with maxTurns 1, has only its answer turn.
     if (this.turns >= this.maxTurns - 1) this.lastTurn(session);
     const remainingMs = Math.max(1, this.maxDurationMs - this.elapsedMs());
-    this.deadlineTimer = setTimeout(() => {
-      void this.abort("deadline", { limit: this.maxDurationMs, observed: this.elapsedMs() });
+    run.deadlineTimer = setTimeout(() => {
+      if (this.currentRun !== run) return;
+      this.abortForBudget("deadline", { limit: this.maxDurationMs, observed: this.elapsedMs() });
     }, remainingMs);
     // Slow turns can reach the deadline long before the turn budget's reminder, so time counts too.
     // The steer waits for a tool turn to end: the turn under way may be the answer itself, and a
     // steer queued during it would cost another turn. 2/3 leaves room for that wait.
     const shortInMs = (this.maxDurationMs * 2) / 3 - this.elapsedMs();
-    if (shortInMs > 0) this.finishTimer = setTimeout(() => { this.timeShort = true; }, shortInMs);
-    const run = session
+    if (shortInMs > 0) run.finishTimer = setTimeout(() => {
+      if (this.currentRun === run) run.timeShort = true;
+    }, shortInMs);
+    const execution = session
       .prompt(prompt)
       .then(() => session.waitForIdle())
       .then(() => {
-        if (this.state === "aborted" || this.suspended) return;
-        if (this.providerError !== undefined) {
+        if (this.currentRun !== run || this.state === "aborted" || this.suspended) return;
+        if (run.providerError !== undefined) {
           this.state = "error";
-          this.error = this.retriesExhausted
-            ? `${this.providerError} (after ${this.retriesExhausted} automatic retries; consider another provider)`
-            : this.providerError;
+          this.error = run.retriesExhausted
+            ? `${run.providerError} (after ${run.retriesExhausted} automatic retries; consider another provider)`
+            : run.providerError;
         } else this.state = "done";
       })
       .catch((e: unknown) => {
-        if (this.state !== "aborted" && !this.suspended) {
+        if (this.currentRun === run && this.state !== "aborted" && !this.suspended) {
           this.state = "error";
           this.error = message(e);
         }
       })
       .finally(() => {
-        this.clearTimers();
+        run.clearTimers();
+        if (this.currentRun !== run) return;
         if (!this.suspended) this.finishedAt = new Date().toISOString();
         // Unblock anything still waiting on an answer that will now never come.
         this.clearQuestions();
         this.onChange?.();
       });
-    if (!this.job) this.run = run;
-    return run;
+    if (!this.job) run.completion = execution;
+    return execution;
   }
 
   /**
@@ -582,12 +590,14 @@ export class PiWorker {
     if (this.job) {
       const previous = this.state;
       this.state = "starting";
-      return this.beginDurable(prompt).then(() => {
-        this.onChange?.();
+      const starting = this.beginDurable(prompt);
+      const run = this.currentRun;
+      return starting.then(() => {
+        if (this.currentRun === run) this.onChange?.();
         return { sessionId: this.id, state: this.state, turnsSoFar: this.turns };
       }, (error: unknown) => {
         // Refused before anything ran (for example, a provider whose credentials fail).
-        this.state = previous;
+        if (this.currentRun === run) { this.state = previous; this.onChange?.(); }
         throw error;
       });
     }
@@ -600,7 +610,6 @@ export class PiWorker {
     switch (ev.type) {
       case "turn_start":
         this.turns++;
-        this.runTurns++;
         this.onChange?.();
         break;
 
@@ -609,7 +618,7 @@ export class PiWorker {
         // continuing the tool loop, so a conclusion at the limit is not thrown away.
         if (this.state !== "running" || this.suspended || ev.toolResults.length === 0) break;
         if (this.turns >= this.maxTurns) {
-          void this.abort("max_turns", { limit: this.maxTurns, observed: this.turns });
+          this.abortForBudget("max_turns", { limit: this.maxTurns, observed: this.turns });
           break;
         }
         // The last turn gets no tools, so the model answers instead of being cut off at the limit.
@@ -625,7 +634,7 @@ export class PiWorker {
         if (this.turns >= finishAt)
           this.requestFinish(`turn budget ${this.turns}/${this.maxTurns}`,
             `You have ${this.maxTurns - this.turns} turns left, including your final answer.`);
-        else if (this.timeShort) {
+        else if (this.currentRun.timeShort) {
           const left = Math.max(1, Math.round((this.maxDurationMs - this.elapsedMs()) / 1000));
           this.requestFinish(`time budget ${Math.round(this.elapsedMs() / 1000)}s/${Math.round(this.maxDurationMs / 1000)}s`,
             `About ${left} seconds remain before the hard deadline, including your final answer.`);
@@ -674,13 +683,13 @@ export class PiWorker {
         break;
 
       case "auto_retry_end":
-        if (!ev.success) this.retriesExhausted = ev.attempt;
+        if (!ev.success) this.currentRun.retriesExhausted = ev.attempt;
         break;
 
       case "message_end":
         // Only the latest assistant message counts, so a turn that recovers after a retry is not failed.
         if (ev.message.role === "assistant") {
-          this.providerError =
+          this.currentRun.providerError =
             ev.message.stopReason === "error" ? ev.message.errorMessage || "provider error" : undefined;
           this.lastText = ev.message.content
             .filter((part) => part.type === "text")
@@ -726,6 +735,7 @@ export class PiWorker {
     reason: TerminationReason = "manual_abort",
     detail: { limit?: number; observed?: number } = {},
   ): Promise<{ aborted: true; termination: Termination }> {
+    const run = this.currentRun;
     // A finished session has nothing to stop, and its recorded state must not change.
     if (!this.isActive && ["done", "error", "aborted"].includes(this.state))
       throw new Error(`Session ${this.id} is already ${this.state}; there is nothing to abort.`);
@@ -736,19 +746,33 @@ export class PiWorker {
         ...(detail.observed === undefined ? {} : { observed: detail.observed }),
         at: new Date().toISOString(),
       };
+    const termination = this.termination;
     this.state = "aborted";
     // Extension dialogs do not automatically observe the agent's abort signal.
+    const session = this.session;
+    const job = this.job;
+    // Reserve cancellation before checkpointing yields. Even a failed save must drain the SDK.
+    run.abortPromise ??= Promise.resolve().then(async () => {
+      try { if (job) await job.save(this.checkpoint()); }
+      finally { if (this.currentRun === run) await session?.abort().catch(NOOP); }
+    }).finally(() => {
+      run.abortPromise = undefined;
+      if (this.currentRun === run) this.onChange?.();
+    });
     this.clearQuestions();
     this.onChange?.();
-    if (this.job) await this.job.save(this.checkpoint());
-    this.abortPromise ??= (async () => {
-      await this.session?.abort().catch(NOOP);
-    })().finally(() => {
-      this.abortPromise = undefined;
+    await run.abortPromise;
+    return { aborted: true, termination };
+  }
+
+  /** Timer/event callers cannot await cancellation; retain checkpoint failures as diagnostics. */
+  private abortForBudget(reason: "deadline" | "max_turns", detail: { limit: number; observed: number }): void {
+    const run = this.currentRun;
+    void this.abort(reason, detail).catch((error: unknown) => {
+      if (this.currentRun !== run) return;
+      this.notices.push({ type: "warning", at: new Date().toISOString(), message: `Budget cancellation failed: ${message(error)}` });
       this.onChange?.();
     });
-    await this.abortPromise;
-    return { aborted: true, termination: this.termination };
   }
 
   /**
@@ -763,24 +787,20 @@ export class PiWorker {
     if (hadTools) this.notices.push({ type: "warning", message: `turn ${this.turns}/${this.maxTurns}: tools removed for the last turn`, at: new Date().toISOString() });
   }
 
-  private clearTimers(): void {
-    if (this.deadlineTimer) clearTimeout(this.deadlineTimer);
-    if (this.finishTimer) clearTimeout(this.finishTimer);
-    this.deadlineTimer = this.finishTimer = undefined;
-  }
-
   /** Steer once per run toward a final answer, whichever budget gets close first. */
   private requestFinish(budget: string, remaining: string): void {
-    if (this.finishSteerSent) return;
-    this.finishSteerSent = true;
+    const run = this.currentRun;
+    if (run.finishSteerSent) return;
+    run.finishSteerSent = true;
     this.notices.push({ type: "warning", message: `${budget}: requested wrap-up with only essential checks`, at: new Date().toISOString() });
     void this.session?.steer(`${remaining} ${FINALIZE_PROMPT}`).catch((e: unknown) => {
+      if (this.currentRun !== run) return;
       this.notices.push({ type: "warning", message: `automatic finalization steer failed: ${message(e)}`, at: new Date().toISOString() });
     });
   }
 
   dispose(): void {
-    this.clearTimers();
+    this.currentRun.clearTimers();
     this.unsubscribe?.();
     this.journalUnsubscribe?.();
     const session = this.session;
@@ -795,7 +815,7 @@ export class PiWorker {
   /** Elapsed time of the current run, which the wall-clock limit applies to. */
   private elapsedMs(): number {
     const end = this.finishedAt && !this.isActive ? Date.parse(this.finishedAt) : Date.now();
-    return end - Date.parse(this.runStartedAt);
+    return end - Date.parse(this.currentRun.startedAt);
   }
 
   snapshot({ verbose = false }: { verbose?: boolean } = {}): Snapshot {
@@ -815,7 +835,7 @@ export class PiWorker {
       notices: this.notices,
       error: this.error,
       startedAt: this.startedAt,
-      runStartedAt: this.runStartedAt,
+      runStartedAt: this.currentRun.startedAt,
       finishedAt: this.finishedAt,
       elapsedMs: this.elapsedMs(),
       limits: { maxTurns: this.maxTurns, maxDurationMs: this.maxDurationMs },

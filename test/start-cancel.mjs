@@ -53,11 +53,13 @@ try {
         await entered.promise;
         if (action === "suspend") await worker.suspend();
         else await worker.abort("caller_cancelled");
+        if (action === "abort-create") assert.equal(worker.isActive, true, "pending task creation retains capacity after cancellation");
         release.resolve();
         await starting;
         await worker.run;
         assert.equal(prompts, 0, `${action}: completing startup must not start cancelled work`);
         if (action !== "suspend") {
+          assert.equal(worker.isActive, false, "finalized cancellation releases capacity");
           assert.equal(worker.state, "aborted");
           assert.equal(worker.termination.reason, "caller_cancelled");
           if (durable) {

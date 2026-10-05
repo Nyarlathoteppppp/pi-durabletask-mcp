@@ -9,6 +9,8 @@ implementation; `sessionId` identifies a conversation, and each `follow_up` star
 - `src/core.ts`: execution operations and waits; hides terminal states while finalization is pending.
 - `src/registry.ts`: capacity, session lookup, recovery claims and eviction.
 - `PiWorker`: Pi SDK events, run state, cancellation and checkpoint contents.
+- `WorkerRun` (`src/pi/run.ts`): transient control for one run: timers, provider/retry flags,
+  cancellation, finalization and completion. Conversation entries and tool results stay in `PiWorker`.
 - `MemoryJob` / `DurableJob`: execution storage. Memory saves are no-ops; durable saves commit to SQLite.
 
 ## Starting and finishing a run
@@ -22,13 +24,19 @@ check provider -> recheck cancellation -> job.begin()
   -> final checkpoint -> job completion -> recordFinal() in catalog
 ```
 
-Authentication and task creation both yield. Recheck cancellation after them; the `executions`
-counter prevents an older cancelled startup from resuming a newer follow-up.
+`beginDurable()` creates a `WorkerRun` before authentication. Authentication and task creation
+both yield. Recheck cancellation after them; callbacks capture the run and compare it with
+`currentRun` before changing worker state. Old callbacks clear only their own timers/finalization,
+so they cannot finish, cancel or reset a newer follow-up. Session event listeners remain shared:
+in-flight tool results still belong to the conversation and must be recorded.
 For durable jobs, creating a task and updating `CurrentTask.taskId` share one transaction.
 The catalog is marked unfinished before that transaction; its final snapshot is written after completion.
 
 `state === "done"` alone does not mean the result is committed. `isActive` also includes
-`settling` and `abortPromise`; core reports `running` until finalization finishes.
+the current run's `settling` and `abortPromise`; core reports `running` until finalization finishes.
+The public `run` promise includes job completion and final catalog writing. Creation failures
+clear `settling`; final catalog failures become an `error` state without discarding the answer
+or rejecting the completion promise.
 `agent_end` alone is insufficient too: SDK listeners and automatic retries may still be pending.
 
 Turns accumulate across follow-ups; the time budget restarts per run. Recovery keeps the run's
@@ -56,7 +64,9 @@ preserve these SDK ordering contracts; see `recovery.mjs` and `native-recovery.m
 ## Cancel, suspend and resume
 
 - `abort()`: sets `aborted`, resolves dialogs, saves state and drains SDK abort. The capacity slot
-  stays occupied until `isActive` is false. Cancelling `run` aborts its worker; cancelling `wait` only ends that wait.
+  stays occupied during both checkpointing and SDK drain, even if saving fails. Explicit callers
+  receive the save error; timer/event cancellations retain it as a warning. Cancelling `run`
+  aborts its worker; cancelling `wait` only ends that wait.
 - `suspend()`: sets `suspended` to block further tool admission, drains SDK abort **while recording
   results**, saves the final checkpoint, then sets `recordingStopped`, closes the job and releases ownership.
   Keep `suspended` separate from `recordingStopped`: in-flight results must still be saved.
@@ -73,6 +83,7 @@ All paths below are under `test/`; use temporary state as `offline.mjs` does.
 | Change | Relevant tests |
 | --- | --- |
 | Startup cancellation, stale startup | `start-cancel.mjs` |
+| Run identity, failed creation, cancellation/final catalog write errors | `worker-run.mjs` |
 | Completion visibility, immediate follow-up | `wait-finalization.mjs` |
 | Recovery, steering admission, tool barriers | `recovery.mjs`, `native-recovery.mjs` |
 | Shutdown during execution | `pause-race.mjs` |
