@@ -14,7 +14,7 @@ Use the connected server's tools; names below omit client-specific prefixes.
 - To review a diff or share long notes, write them to a file and pass its absolute path in `attachments` rather than pasting them into `prompt`.
 - Match the prompt to the model: give fast, small models a bounded checklist (what to grep, what to compare, a tool-call cap); give open-ended bug hunts to stronger reasoning models. `models` lists each model's accepted `thinking` levels.
 - Budget turns with headroom. The last turn has no tools and asks for a conclusion from available evidence; timeouts, provider/auth errors or cancellation can still interrupt it. `usage` in the result shows tokens and cost.
-- While running, `idleMs` is the time since the delegate's last event and `phase` is `model` or `tool`. A long `idleMs` in phase `model` is slow reasoning or a hung request; `steer` lands only after the current turn, so decide whether to wait or `abort`.
+- While running, `idleMs` is the time since the delegate's last event and `phase` is `model`, `tool` or `agent`. A long `idleMs` in phase `model` is slow reasoning or a hung request; `steer` lands only after the current turn, so decide whether to wait or `abort`.
 - For authorized implementation, select the needed server-permitted write tools and keep work within the user's scope.
 - Keep the returned `sessionId`; loop `wait` with `until: "settled"` until finished. Answer pending questions using `questions[].id` as `answer.requestId`, then wait again.
 - For independent tasks, use `spawn_batch`; wait with `sessionIds`, answer questions, then pass returned `continueIds` as the next wait's `sessionIds` until none remain.

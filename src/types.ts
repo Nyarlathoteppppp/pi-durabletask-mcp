@@ -84,7 +84,7 @@ export interface Snapshot extends FollowUpInfo {
   retentionDays?: number | undefined;
   /** While running: ms since the delegate last produced any event, and what it is waiting on. */
   idleMs?: number | undefined;
-  phase?: "model" | "tool" | undefined;
+  phase?: "model" | "tool" | "agent" | undefined;
   /** Tokens and cost of the whole session so far, across follow_up; cost uses pi's model prices. */
   usage?: Usage | undefined;
 }

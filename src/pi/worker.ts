@@ -616,6 +616,7 @@ export class PiWorker {
     this.currentRun.lastActivityAt = Date.now();
     switch (ev.type) {
       case "turn_start":
+        this.currentRun.awaitingModel = true;
         this.turns++;
         this.onChange?.();
         break;
@@ -682,6 +683,7 @@ export class PiWorker {
       }
 
       case "auto_retry_start":
+        this.currentRun.awaitingModel = true;
         // Pi retries transient provider failures itself; record it so a caller can tell a flaky
         // provider from a broken prompt, and switch provider instead of retrying blindly.
         this.notices.push({ type: "warning", at: new Date().toISOString(),
@@ -696,6 +698,7 @@ export class PiWorker {
       case "message_end":
         // Only the latest assistant message counts, so a turn that recovers after a retry is not failed.
         if (ev.message.role === "assistant") {
+          this.currentRun.awaitingModel = false;
           this.currentRun.providerError =
             ev.message.stopReason === "error" ? ev.message.errorMessage || "provider error" : undefined;
           this.lastText = ev.message.content
@@ -857,13 +860,15 @@ export class PiWorker {
   }
 
   /**
-   * While running: ms since the last SDK event, and whether a tool or the model is being waited on.
-   * Long silence in phase "model" means slow thinking with a silent provider, or a hung request.
+   * While running: ms since the last SDK event, and what is being waited on: "model" while a model
+   * request is outstanding, "tool" while a tool executes in this process, "agent" while Pi or an
+   * extension works in between. Long silence in "model" is slow reasoning or a hung request.
+   * Nothing while a question waits for the caller: that is the caller's turn, not a stall.
    */
-  private liveness(): { idleMs?: number; phase?: "model" | "tool" } {
-    if (this.state !== "running" || !this.isActive) return {};
+  private liveness(): { idleMs?: number; phase?: "model" | "tool" | "agent" } {
+    if (this.state !== "running" || !this.isActive || this.questions.size > 0) return {};
     return { idleMs: Date.now() - this.currentRun.lastActivityAt,
-      phase: this.toolCalls.some((call) => call.state === "running") ? "tool" : "model" };
+      phase: this.openCalls.size > 0 ? "tool" : this.currentRun.awaitingModel ? "model" : "agent" };
   }
 
   /** Summed from the session's entries, so it survives durable recovery with them. */

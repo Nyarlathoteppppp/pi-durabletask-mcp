@@ -9,6 +9,11 @@
 - 原地打转：根据最近的工具调用和思考内容判断是否在重复、没有进展，是的话提前发收尾 steer。
 - 存活诊断（奈亚子的想法）：`status({sessionId, diagnose: true})` 按需调用 Jev。输入是服务端已有的客观数据（`idleMs`、`phase`、轮数、最近的工具调用、重试记录、最近几百字的思考或输出），输出一个判断（正在推进 / 慢慢思考 / 原地打转 / 挂起 / 在等工具）和一条建议（继续等 / steer 收尾 / 中止后 follow_up）。明确的情况由规则直接判，比如长时间没有任何流式输出就是挂起；Jev 只处理规则判断不了的，比如"有输出但在打转"。依赖存活信号先落地。
 
+astra 的建议（2026-10-05）。约定：每个判断只输出一个字段，取值是固定枚举；Jev 超时或出错就省略这个字段，不输出分数、理由或任何说明文字。
+- 值得做：`answerState: complete|partial|narration`；`progressState: advancing|looping`（先用确定性规则检查重复调用）；`liveness: progressing|thinking|looping|stalled|tool_wait`（只处理有输出但判断不清的情况；长时间无事件、工具在跑、关机这些仍走规则）。
+- 可选：`modelTier: fast|balanced|strong`（spawn 前判断任务难度，再映射到配置好的模型）；`providerAction: retry|switch|stop`（只在 Pi 的确定性重试之后、针对不透明的错误）；`questionNeed: user|agent`（委托提的问题是否真的需要用户来决定）。
+- 不做：`nextAction`、模型是否存在、思考档位、附件校验、"长时间无事件"、已知的 HTTP 瞬时错误重试。这些用规则就够了。
+
 ## PiWorker 运行状态重构（2026-10-05，未发布）
 
 - 本轮之前遗留的 28 个文件已单独提交为 `ac6a98c`；本轮只重构单次运行控制状态。

@@ -174,8 +174,9 @@ unbind();
   assert.equal(looping.w.termination.reason, "deadline");
 }
 
-// A running delegate reports how long it has been silent and whether it waits on the model or a
-// tool, so a caller can tell slow thinking (stream events keep arriving) from a hung request.
+// A running delegate reports how long it has been silent and what it waits on: "model" only while a
+// model request is outstanding (turn_start to the assistant's message_end), "tool" while a tool runs,
+// "agent" while Pi or an extension works in between. Nothing while a question awaits the caller.
 {
   const w = worker(10, 60_000);
   let resolvePrompt;
@@ -184,15 +185,24 @@ unbind();
   w.session = session;
   w.track(session, "inspect");
   const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  assert.equal(w.snapshot().phase, "agent", "before the first model request");
+  w.onEvent({ type: "turn_start" });
   assert.equal(w.snapshot().phase, "model");
   await pause(120);
   assert.ok(w.snapshot().idleMs >= 100, "silence counts up");
   w.onEvent({ type: "message_update", assistantMessageEvent: { type: "thinking_delta" }, message: { role: "assistant", content: [] } });
   assert.ok(w.snapshot().idleMs < 100, "any stream event is activity");
+  w.onEvent({ type: "message_end", message: { role: "assistant", content: [], stopReason: "toolUse" } });
+  assert.equal(w.snapshot().phase, "agent", "the model has answered");
   w.onEvent({ type: "tool_execution_start", toolCallId: "c1", toolName: "read", args: {} });
   assert.equal(w.snapshot().phase, "tool");
   w.onEvent({ type: "tool_execution_end", toolCallId: "c1", toolName: "read", result: "", isError: false });
-  assert.equal(w.snapshot().phase, "model");
+  // A call recorded as running but not executing in this process (left over from a recovered run) is not a tool phase.
+  w.toolCalls.push({ seq: 99, name: "read", state: "running" });
+  assert.equal(w.snapshot().phase, "agent");
+  w.questions.set("q", { toJSON: () => ({ id: "q" }) });
+  assert.deepEqual([w.snapshot().idleMs, w.snapshot().phase], [undefined, undefined], "waiting on the caller, not the model");
+  w.questions.clear();
   resolvePrompt();
   await w.run;
   const finished = w.snapshot();

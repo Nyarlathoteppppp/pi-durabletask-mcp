@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- While a delegate runs, `status`, `wait` and batch summaries report `idleMs` (time since its last event; stream deltas, including reasoning, count) and `phase` (`model` or `tool`). Before, a delegate silent for minutes in one model turn looked the same as one making progress.
+- While a delegate runs, `status`, `wait` and batch summaries report `idleMs` (time since its last event; stream deltas, including reasoning, count) and `phase` (`model` while a model request is outstanding, `tool` while a tool runs, `agent` in between; neither while a question waits for an answer). Before, a delegate silent for minutes in one model turn looked the same as one making progress.
 - `PI_DELEGATE_STALL_MS`, off by default: a run that produces no event for that long while waiting on the model ends as `termination.reason: "stalled"` and can be continued with `follow_up`. Pi never times out a silent request itself.
 - `handoff read` no longer puts a resume hint such as `session_missing` into `followUpBlockedReason`, which takes only its documented values.
 

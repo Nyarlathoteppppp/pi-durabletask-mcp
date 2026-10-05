@@ -13,6 +13,8 @@ export class WorkerRun {
   settling = false;
   /** Last SDK event of this run (stream deltas included); silence beyond it is idleMs. */
   lastActivityAt = Date.now();
+  /** A model request is outstanding: from turn_start to the assistant's message_end. */
+  awaitingModel = false;
 
   constructor(public startedAt: string) {}
 

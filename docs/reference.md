@@ -662,8 +662,9 @@ the trace and any partial text. Finished results carry `usage`: input, output an
 the cost by pi's model prices, summed over the whole session including follow-ups. Cancelling a blocking `run` also aborts its underlying worker.
 
 While a delegate runs, `status`, `wait` and batch summaries report `idleMs`, the time since it
-last produced any event (stream deltas, including reasoning, count), and `phase`: `model` while
-waiting on the provider, `tool` while a tool runs. A large `idleMs` in phase `model` means either
+last produced any event (stream deltas, including reasoning, count), and `phase`: `model` while a
+model request is outstanding, `tool` while a tool runs, `agent` while Pi or an extension works in
+between. Neither is reported while a question waits for an answer. A large `idleMs` in phase `model` means either
 slow reasoning from a provider that streams nothing meanwhile, or a hung request; Pi itself never
 times out a silent request. `PI_DELEGATE_STALL_MS` (off by default) ends such a run as
 `termination.reason: "stalled"`, which can then be continued with `follow_up`. Set it with care:
