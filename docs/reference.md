@@ -668,7 +668,8 @@ between. Neither is reported while a question waits for an answer. A large `idle
 slow reasoning from a provider that streams nothing meanwhile, or a hung request; Pi itself never
 times out a silent request. `PI_DELEGATE_STALL_MS` (off by default) ends such a run as
 `termination.reason: "stalled"`, which can then be continued with `follow_up`. Set it with care:
-some providers stay silent for minutes while reasoning at high thinking levels.
+some providers stay silent for minutes while reasoning at high thinking levels. With extensions
+enabled, a slow extension handler on the model's reply is counted as model time.
 
 `CLAUDE_AUTO_BACKGROUND_TASKS=1` makes Claude Code background long MCP calls after ~2 minutes.
 Note that progress notifications are discarded once a call is backgrounded, so pick (1) or (3),

@@ -200,6 +200,11 @@ unbind();
   // A call recorded as running but not executing in this process (left over from a recovered run) is not a tool phase.
   w.toolCalls.push({ seq: 99, name: "read", state: "running" });
   assert.equal(w.snapshot().phase, "agent");
+  // A provider retry waits its backoff before requesting again; that wait is not silence.
+  w.onEvent({ type: "auto_retry_start", attempt: 1, maxAttempts: 3, delayMs: 500, errorMessage: "overloaded" });
+  assert.equal(w.snapshot().phase, "model");
+  await pause(150);
+  assert.equal(w.snapshot().idleMs, 0, "backoff is not counted");
   w.questions.set("q", { toJSON: () => ({ id: "q" }) });
   assert.deepEqual([w.snapshot().idleMs, w.snapshot().phase], [undefined, undefined], "waiting on the caller, not the model");
   w.questions.clear();

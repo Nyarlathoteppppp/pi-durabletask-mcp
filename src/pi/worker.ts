@@ -683,7 +683,9 @@ export class PiWorker {
       }
 
       case "auto_retry_start":
+        // The retry requests again after its backoff; silence counts from then.
         this.currentRun.awaitingModel = true;
+        this.currentRun.lastActivityAt = Date.now() + ev.delayMs;
         // Pi retries transient provider failures itself; record it so a caller can tell a flaky
         // provider from a broken prompt, and switch provider instead of retrying blindly.
         this.notices.push({ type: "warning", at: new Date().toISOString(),
@@ -867,7 +869,7 @@ export class PiWorker {
    */
   private liveness(): { idleMs?: number; phase?: "model" | "tool" | "agent" } {
     if (this.state !== "running" || !this.isActive || this.questions.size > 0) return {};
-    return { idleMs: Date.now() - this.currentRun.lastActivityAt,
+    return { idleMs: Math.max(0, Date.now() - this.currentRun.lastActivityAt),
       phase: this.openCalls.size > 0 ? "tool" : this.currentRun.awaitingModel ? "model" : "agent" };
   }
 
