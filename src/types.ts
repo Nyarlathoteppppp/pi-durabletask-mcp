@@ -8,6 +8,7 @@ export type TerminationReason =
   | "caller_cancelled"
   | "max_turns"
   | "deadline"
+  | "stalled"
   | "server_shutdown";
 
 export interface Termination {
@@ -81,6 +82,9 @@ export interface Snapshot extends FollowUpInfo {
   durable: boolean;
   /** Days kept on disk after finishing; absent for non-durable delegates. */
   retentionDays?: number | undefined;
+  /** While running: ms since the delegate last produced any event, and what it is waiting on. */
+  idleMs?: number | undefined;
+  phase?: "model" | "tool" | undefined;
   /** Tokens and cost of the whole session so far, across follow_up; cost uses pi's model prices. */
   usage?: Usage | undefined;
 }

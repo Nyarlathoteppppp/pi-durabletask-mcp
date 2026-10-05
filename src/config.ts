@@ -86,6 +86,11 @@ export const MAX_CONCURRENT = num(process.env.PI_DELEGATE_MAX_CONCURRENT, 4);
 /** Absolute per-session budgets. Callers may lower these but can never exceed them. */
 export const MAX_TURNS = num(process.env.PI_DELEGATE_MAX_TURNS, 50);
 export const MAX_DURATION_MS = num(process.env.PI_DELEGATE_MAX_DURATION_MS, 15 * 60_000);
+/**
+ * Off unless set: end a run as "stalled" after this long without any SDK event while waiting on
+ * the model. Some providers stream nothing while they reason, so a limit can end valid work.
+ */
+export const STALL_MS = num(process.env.PI_DELEGATE_STALL_MS, 0);
 
 /** `run` is deliberately short; background sessions get room for real implementation work. */
 export const RUN_DEFAULT_TURNS = bounded(process.env.PI_DELEGATE_RUN_TURNS, 12, MAX_TURNS);

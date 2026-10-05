@@ -170,7 +170,7 @@ export async function readHandoff(cwdInput: string, name?: string) {
     resumeHint: hint,
     ...(continuation ? { remainingTurns: continuation.remainingTurns, canFollowUp: continuation.canFollowUp,
       ...(continuation.followUpBlockedReason ? { followUpBlockedReason: continuation.followUpBlockedReason } : {}) }
-      : { canFollowUp: false, followUpBlockedReason: hint }),
+      : { canFollowUp: false }),
     howToResume,
     ...(heldElsewhere ? { heldByAnotherProcess: true } : {}),
     // Other notes for this repository, newest first, so a caller can pick one by name.

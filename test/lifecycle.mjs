@@ -174,6 +174,31 @@ unbind();
   assert.equal(looping.w.termination.reason, "deadline");
 }
 
+// A running delegate reports how long it has been silent and whether it waits on the model or a
+// tool, so a caller can tell slow thinking (stream events keep arriving) from a hung request.
+{
+  const w = worker(10, 60_000);
+  let resolvePrompt;
+  const promptDone = new Promise((resolve) => { resolvePrompt = resolve; });
+  const session = { prompt: async () => promptDone, waitForIdle: async () => {}, steer: async () => {}, abort: async () => {} };
+  w.session = session;
+  w.track(session, "inspect");
+  const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  assert.equal(w.snapshot().phase, "model");
+  await pause(120);
+  assert.ok(w.snapshot().idleMs >= 100, "silence counts up");
+  w.onEvent({ type: "message_update", assistantMessageEvent: { type: "thinking_delta" }, message: { role: "assistant", content: [] } });
+  assert.ok(w.snapshot().idleMs < 100, "any stream event is activity");
+  w.onEvent({ type: "tool_execution_start", toolCallId: "c1", toolName: "read", args: {} });
+  assert.equal(w.snapshot().phase, "tool");
+  w.onEvent({ type: "tool_execution_end", toolCallId: "c1", toolName: "read", result: "", isError: false });
+  assert.equal(w.snapshot().phase, "model");
+  resolvePrompt();
+  await w.run;
+  const finished = w.snapshot();
+  assert.deepEqual([finished.idleMs, finished.phase], [undefined, undefined], "only running delegates report it");
+}
+
 // Wall-clock expiry aborts the underlying session and records a diagnostic reason.
 {
   const w = worker(50, 20);

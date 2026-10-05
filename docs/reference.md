@@ -620,6 +620,7 @@ MCP for one task in an enabled batch, pass `nativeMcp: false, mcpServers: []`.
 | `PI_DELEGATE_MAX_CONCURRENT`  | `4`              | Hard ceiling across all active delegates in this server process          |
 | `PI_DELEGATE_MAX_TURNS`       | `50`             | Absolute turn ceiling; per-call budgets may only lower it                 |
 | `PI_DELEGATE_MAX_DURATION_MS` | `900000`         | Absolute wall-clock ceiling; per-call deadlines may only lower it         |
+| `PI_DELEGATE_STALL_MS`        | off              | End a run as `stalled` after this long without any event while waiting on the model |
 | `PI_DELEGATE_RUN_TURNS`       | `12`             | Default turn budget for blocking `run`                                   |
 | `PI_DELEGATE_RUN_DURATION_MS` | `300000`         | Default wall-clock deadline for blocking `run`                           |
 | `PI_DELEGATE_SPAWN_TURNS`     | `30`             | Default turn budget for `spawn` and `spawn_batch`                        |
@@ -659,6 +660,14 @@ with one turn left starts without tools). Timeouts, provider/auth errors or canc
 turn or time ceiling aborts the underlying pi session and records `termination.reason`, while keeping
 the trace and any partial text. Finished results carry `usage`: input, output and cache tokens and
 the cost by pi's model prices, summed over the whole session including follow-ups. Cancelling a blocking `run` also aborts its underlying worker.
+
+While a delegate runs, `status`, `wait` and batch summaries report `idleMs`, the time since it
+last produced any event (stream deltas, including reasoning, count), and `phase`: `model` while
+waiting on the provider, `tool` while a tool runs. A large `idleMs` in phase `model` means either
+slow reasoning from a provider that streams nothing meanwhile, or a hung request; Pi itself never
+times out a silent request. `PI_DELEGATE_STALL_MS` (off by default) ends such a run as
+`termination.reason: "stalled"`, which can then be continued with `follow_up`. Set it with care:
+some providers stay silent for minutes while reasoning at high thinking levels.
 
 `CLAUDE_AUTO_BACKGROUND_TASKS=1` makes Claude Code background long MCP calls after ~2 minutes.
 Note that progress notifications are discarded once a call is backgrounded, so pick (1) or (3),

@@ -121,7 +121,10 @@ try {
   assert.ok((await old.call("sessions", { cwd: repo })).sessions.every((s) => s.cwd === canonicalRepo));
   await close(old);
   let fresh = await window();
-  assert.equal((await read(fresh, "memo")).resumeHint, "session_not_recoverable");
+  const gone = await read(fresh, "memo");
+  assert.equal(gone.resumeHint, "session_not_recoverable");
+  // followUpBlockedReason only takes its documented values; the hint already says why.
+  assert.deepEqual([gone.canFollowUp, gone.followUpBlockedReason], [false, undefined]);
   const finished = await read(fresh, "finished");
   assert.equal(finished.resumeHint, "status_then_follow_up");
   assert.equal(finished.handoff.next, "fix the bug");

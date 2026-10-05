@@ -11,7 +11,7 @@ import {
   type InlineExtension,
 } from "@earendil-works/pi-coding-agent";
 import { DurableJob, forgetOwnedJob, MemoryJob, releaseJob, type Checkpoint, type JobStore } from "../durable.js";
-import { AGENT_DIR, RETENTION_DAYS } from "../config.js";
+import { AGENT_DIR, RETENTION_DAYS, STALL_MS } from "../config.js";
 import { followUpInfo } from "../continuation.js";
 import { secretPathGuard } from "../secrets.js";
 import { createProtectedGrepTool } from "./search.js";
@@ -527,6 +527,7 @@ export class PiWorker {
     this.lastText = "";
     this.finishedAt = undefined;
     this.termination = undefined;
+    run.lastActivityAt = Date.now();
     // A run with one turn left, or a session with maxTurns 1, has only its answer turn.
     if (this.turns >= this.maxTurns - 1) this.lastTurn(session);
     const remainingMs = Math.max(1, this.maxDurationMs - this.elapsedMs());
@@ -538,6 +539,11 @@ export class PiWorker {
     // The steer waits for a tool turn to end: the turn under way may be the answer itself, and a
     // steer queued during it would cost another turn. 2/3 leaves room for that wait.
     const shortInMs = (this.maxDurationMs * 2) / 3 - this.elapsedMs();
+    if (STALL_MS > 0) run.stallTimer = setInterval(() => {
+      const { idleMs, phase } = this.liveness();
+      if (this.currentRun === run && phase === "model" && idleMs !== undefined && idleMs >= STALL_MS)
+        this.abortForBudget("stalled", { limit: STALL_MS, observed: idleMs });
+    }, Math.min(1_000, STALL_MS / 4));
     if (shortInMs > 0) run.finishTimer = setTimeout(() => {
       if (this.currentRun === run) run.timeShort = true;
     }, shortInMs);
@@ -607,6 +613,7 @@ export class PiWorker {
   }
 
   private onEvent(ev: AgentSessionEvent): void {
+    this.currentRun.lastActivityAt = Date.now();
     switch (ev.type) {
       case "turn_start":
         this.turns++;
@@ -766,7 +773,7 @@ export class PiWorker {
   }
 
   /** Timer/event callers cannot await cancellation; retain checkpoint failures as diagnostics. */
-  private abortForBudget(reason: "deadline" | "max_turns", detail: { limit: number; observed: number }): void {
+  private abortForBudget(reason: "deadline" | "max_turns" | "stalled", detail: { limit: number; observed: number }): void {
     const run = this.currentRun;
     void this.abort(reason, detail).catch((error: unknown) => {
       if (this.currentRun !== run) return;
@@ -844,8 +851,19 @@ export class PiWorker {
       retentionDays: this.retentionDays,
       usage: this.usage(),
       ...this.continuation,
+      ...this.liveness(),
     };
     return verbose ? full : compactSnapshot(full);
+  }
+
+  /**
+   * While running: ms since the last SDK event, and whether a tool or the model is being waited on.
+   * Long silence in phase "model" means slow thinking with a silent provider, or a hung request.
+   */
+  private liveness(): { idleMs?: number; phase?: "model" | "tool" } {
+    if (this.state !== "running" || !this.isActive) return {};
+    return { idleMs: Date.now() - this.currentRun.lastActivityAt,
+      phase: this.toolCalls.some((call) => call.state === "running") ? "tool" : "model" };
   }
 
   /** Summed from the session's entries, so it survives durable recovery with them. */

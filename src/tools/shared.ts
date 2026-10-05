@@ -24,11 +24,11 @@ export function batchNextAction(sessions: Array<{ nextAction: NextAction }>): Ne
 export function waitResult(snapshot: Snapshot, verbose?: boolean) {
   if (verbose) return withNextAction(snapshot);
   const { sessionId, label, state, turns, toolCallCount, lastText, questions, notices, error, termination, usage,
-    remainingTurns, canFollowUp, followUpBlockedReason } = snapshot;
+    remainingTurns, canFollowUp, followUpBlockedReason, idleMs, phase } = snapshot;
   const finished = state === "done" || state === "aborted" || state === "error";
   return withNextAction({ sessionId, label, state, turns, toolCallCount, lastText, questions, notices, error, termination,
     remainingTurns, canFollowUp, ...(followUpBlockedReason ? { followUpBlockedReason } : {}),
-    ...(finished && usage ? { usage } : {}) });
+    ...(finished && usage ? { usage } : {}), ...(idleMs !== undefined ? { idleMs, phase } : {}) });
 }
 
 /** Every tool answers with pretty JSON, so a human reading the transcript can follow it. */

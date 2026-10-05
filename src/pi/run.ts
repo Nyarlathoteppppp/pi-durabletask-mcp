@@ -2,6 +2,7 @@
 export class WorkerRun {
   deadlineTimer: NodeJS.Timeout | undefined;
   finishTimer: NodeJS.Timeout | undefined;
+  stallTimer: NodeJS.Timeout | undefined;
   finishSteerSent = false;
   /** Request wrap-up after the next tool turn once 2/3 of this run's time is spent. */
   timeShort = false;
@@ -10,12 +11,15 @@ export class WorkerRun {
   abortPromise: Promise<void> | undefined;
   completion: Promise<void> | undefined;
   settling = false;
+  /** Last SDK event of this run (stream deltas included); silence beyond it is idleMs. */
+  lastActivityAt = Date.now();
 
   constructor(public startedAt: string) {}
 
   clearTimers(): void {
     if (this.deadlineTimer) clearTimeout(this.deadlineTimer);
     if (this.finishTimer) clearTimeout(this.finishTimer);
-    this.deadlineTimer = this.finishTimer = undefined;
+    if (this.stallTimer) clearInterval(this.stallTimer);
+    this.deadlineTimer = this.finishTimer = this.stallTimer = undefined;
   }
 }

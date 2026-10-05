@@ -340,6 +340,8 @@ export interface WaitSummary extends FollowUpInfo {
   error?: string;
   termination?: Snapshot["termination"];
   usage?: Snapshot["usage"];
+  idleMs?: number;
+  phase?: Snapshot["phase"];
 }
 
 /**
@@ -364,6 +366,7 @@ export async function waitForMany(
       ...(s.error ? { error: s.error } : {}),
       ...(s.termination ? { termination: s.termination } : {}),
       ...(done && s.usage ? { usage: s.usage } : {}),
+      ...(s.idleMs !== undefined ? { idleMs: s.idleMs, phase: s.phase } : {}),
       remainingTurns: s.remainingTurns,
       canFollowUp: s.canFollowUp,
       ...(s.followUpBlockedReason ? { followUpBlockedReason: s.followUpBlockedReason } : {}),

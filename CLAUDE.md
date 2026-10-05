@@ -2,6 +2,13 @@
 
 修改 Worker、取消或恢复逻辑前，先读 [生命周期与持久化时序](docs/worker-lifecycle.md)。其中列出了完成条件、SDK 事件顺序和对应测试。
 
+## 待办：可选的 Jev 语义判断（存活信号发布之后再做）
+
+奈亚子提议（2026-10-05）。只作为可选项，默认关闭（例如 `PI_DELEGATE_JUDGE=jev`）；判断失败或超时一律当作没有判断，不影响主流程。key 优先用官方 TypeSafe 的 `TYPESAFE_API_KEY`（/Users/ywbw/workplace/pi/.env），OpenRouter 作备用；可以复用 ~/workplace/pi-jev-context 的调用代码。
+- 结论质量：最终 `lastText` 是完整结论、半截，还是"Let me look at…"这类过渡语（GLM、Gemini 都遇到过），给调用方一个提示，让它用 `follow_up` 补完。
+- 原地打转：根据最近的工具调用和思考内容判断是否在重复、没有进展，是的话提前发收尾 steer。
+- 存活诊断（奈亚子的想法）：`status({sessionId, diagnose: true})` 按需调用 Jev。输入是服务端已有的客观数据（`idleMs`、`phase`、轮数、最近的工具调用、重试记录、最近几百字的思考或输出），输出一个判断（正在推进 / 慢慢思考 / 原地打转 / 挂起 / 在等工具）和一条建议（继续等 / steer 收尾 / 中止后 follow_up）。明确的情况由规则直接判，比如长时间没有任何流式输出就是挂起；Jev 只处理规则判断不了的，比如"有输出但在打转"。依赖存活信号先落地。
+
 ## PiWorker 运行状态重构（2026-10-05，未发布）
 
 - 本轮之前遗留的 28 个文件已单独提交为 `ac6a98c`；本轮只重构单次运行控制状态。
