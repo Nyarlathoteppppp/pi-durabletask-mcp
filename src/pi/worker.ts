@@ -24,6 +24,7 @@ import type {
   TerminationReason,
   ToolCall,
   ToolCallSummary,
+  Usage,
 } from "../types.js";
 import { assertProviderReady, assertThinkingSupported, resolveModel } from "./models.js";
 import { getRuntime } from "./runtime.js";
@@ -53,6 +54,10 @@ export interface WorkerOptions extends NativeMcpOptions {
 
 const RECENT_CALLS = 5;
 const COMPACT_ARGS = 120;
+
+const LAST_TURN_PROMPT =
+  "This is your last turn, and your tools have been removed. Answer now from the evidence already collected. " +
+  "Include concrete evidence, uncertainty, blockers, and the next action.";
 
 const FINALIZE_PROMPT =
   "Stop expanding the investigation. Reserve one remaining turn for your final answer; use other " +
@@ -497,6 +502,8 @@ export class PiWorker {
     this.providerError = undefined;
     this.retriesExhausted = undefined;
     this.clearTimers();
+    // A run with one turn left, or a session with maxTurns 1, has only its answer turn.
+    if (this.turns >= this.maxTurns - 1) this.lastTurn(session);
     const remainingMs = Math.max(1, this.maxDurationMs - this.elapsedMs());
     this.deadlineTimer = setTimeout(() => {
       void this.abort("deadline", { limit: this.maxDurationMs, observed: this.elapsedMs() });
@@ -582,6 +589,14 @@ export class PiWorker {
         if (this.state !== "running" || this.suspended || ev.toolResults.length === 0) break;
         if (this.turns >= this.maxTurns) {
           void this.abort("max_turns", { limit: this.maxTurns, observed: this.turns });
+          break;
+        }
+        // The last turn gets no tools, so the model answers instead of being cut off at the limit.
+        if (this.turns === this.maxTurns - 1) {
+          this.lastTurn();
+          void this.session?.steer(LAST_TURN_PROMPT).catch((e: unknown) => {
+            this.notices.push({ type: "warning", message: `last-turn steer failed: ${message(e)}`, at: new Date().toISOString() });
+          });
           break;
         }
         const finishAt = Math.max(1, Math.floor(this.maxTurns * 0.75));
@@ -715,6 +730,17 @@ export class PiWorker {
     return { aborted: true, termination: this.termination };
   }
 
+  /**
+   * Take the tools away for the session's last turn. Turns are counted across follow_up, so no
+   * later run of this session can use tools again; nothing needs restoring.
+   */
+  private lastTurn(session = this.session): void {
+    if (!session || session.getActiveToolNames().length === 0) return;
+    session.setActiveToolsByName([]);
+    this.activeTools = [];
+    this.notices.push({ type: "warning", message: `turn ${this.turns}/${this.maxTurns}: tools removed for the last turn`, at: new Date().toISOString() });
+  }
+
   private clearTimers(): void {
     if (this.deadlineTimer) clearTimeout(this.deadlineTimer);
     if (this.finishTimer) clearTimeout(this.finishTimer);
@@ -774,8 +800,17 @@ export class PiWorker {
       termination: this.termination,
       durable: this.durable,
       retentionDays: this.retentionDays,
+      usage: this.usage(),
     };
     return verbose ? full : compactSnapshot(full);
+  }
+
+  /** Summed from the session's entries, so it survives durable recovery with them. */
+  private usage(): Usage | undefined {
+    const stats = this.session?.getSessionStats?.();
+    if (!stats) return undefined;
+    const { input, output, cacheRead, cacheWrite, total } = stats.tokens;
+    return { input, output, cacheRead, cacheWrite, totalTokens: total, cost: stats.cost };
   }
 
   /** Keep the finished state readable by any process without loading the session. */

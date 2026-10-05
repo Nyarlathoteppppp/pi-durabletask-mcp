@@ -24,8 +24,14 @@ const RETENTION_HELP =
   "Set it longer when the user wants to come back to this session later.";
 const retentionDays = z.number().int().min(1).max(MAX_RETENTION_DAYS).optional();
 
+const ATTACHMENTS_HELP =
+  "Absolute paths of text files appended to the prompt, read by this server, e.g. a diff you wrote to your " +
+  "scratchpad; they may lie outside cwd. At most 20, 256 KiB each, 1 MiB in total; secret paths are refused.";
+const attachments = z.array(z.string()).optional();
+
 const spawnShape = {
   prompt: z.string().describe("The task for the pi agent"),
+  attachments: attachments.describe(ATTACHMENTS_HELP),
   model: z.string().optional().describe('Omit for the configured default. Use "provider/modelId" from the models tool to choose another.'),
   thinking: z
     .enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"])
@@ -76,6 +82,7 @@ const spawnShape = {
 
 const taskShape = z.object({
   prompt: z.string().describe("The task for this delegate"),
+  attachments: attachments.describe("Overrides the batch `attachments` for this task alone; [] attaches nothing"),
   id: z.string().optional().describe("Session id for this task. Defaults to `idPrefix`-NN, or a UUID."),
   label: z.string().optional().describe("Free-text note for this task"),
   model: z.string().optional().describe("Overrides the batch `model` for this task alone"),
@@ -120,6 +127,7 @@ export function registerSpawn(server: McpServer): void {
         "polling `sessions` or one `status` per delegate.",
       inputSchema: {
         tasks: z.array(taskShape).min(1).max(BATCH_MAX).describe(`1 to ${BATCH_MAX} delegates to start`),
+        attachments: attachments.describe(`Default for every task in this batch. ${ATTACHMENTS_HELP}`),
         model: z.string().optional().describe("Default model for every task in this batch"),
         thinking: z
           .enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"])

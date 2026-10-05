@@ -23,8 +23,10 @@ export function batchNextAction(sessions: Array<{ nextAction: NextAction }>): Ne
 /** A normal wait carries the result and progress counters; status remains the diagnostic view. */
 export function waitResult(snapshot: Snapshot, verbose?: boolean) {
   if (verbose) return withNextAction(snapshot);
-  const { sessionId, label, state, turns, toolCallCount, lastText, questions, notices, error, termination } = snapshot;
-  return withNextAction({ sessionId, label, state, turns, toolCallCount, lastText, questions, notices, error, termination });
+  const { sessionId, label, state, turns, toolCallCount, lastText, questions, notices, error, termination, usage } = snapshot;
+  const finished = state === "done" || state === "aborted" || state === "error";
+  return withNextAction({ sessionId, label, state, turns, toolCallCount, lastText, questions, notices, error, termination,
+    ...(finished && usage ? { usage } : {}) });
 }
 
 /** Every tool answers with pretty JSON, so a human reading the transcript can follow it. */

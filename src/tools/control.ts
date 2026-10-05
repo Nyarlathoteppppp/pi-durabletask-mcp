@@ -110,9 +110,10 @@ export function registerControl(server: McpServer): void {
       inputSchema: {
         sessionId: z.string(),
         prompt: z.string().describe("The next turn for this delegate"),
+        attachments: z.array(z.string()).optional().describe("Absolute paths of text files appended to this prompt, as on spawn"),
       },
     },
-    async ({ sessionId, prompt }) => json({ ...await followUp(sessionId, prompt), nextAction: "wait" }),
+    async ({ sessionId, prompt, attachments }) => json({ ...await followUp(sessionId, prompt, attachments), nextAction: "wait" }),
   );
 
   server.registerTool(

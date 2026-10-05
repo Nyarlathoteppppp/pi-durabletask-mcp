@@ -170,6 +170,22 @@ The delegate's `grep` uses ripgrep from Pi's tool directory (`<agent dir>/bin/rg
 downloads it) or else from the MCP server's PATH, which MCP hosts often start without the login
 shell's PATH. `init` reports which one under `search.ripgrep`, or how to fix a missing one.
 
+## Attaching files
+
+`attachments` on `spawn`, `run`, `follow_up` and `spawn_batch` (batch-wide, or per task; a task's
+`[]` attaches nothing) takes absolute paths of text files. The server reads them and appends them
+to the prompt, so the caller does not have to copy a diff into its own output, and the files may
+lie outside `cwd`, for example in the caller's scratchpad:
+
+```json
+{ "cwd": "/repo", "prompt": "Review the attached diff for bugs.", "attachments": ["/tmp/scratch/change.diff"] }
+```
+
+At most 20 files, 256 KiB each and 1 MiB in total; files must be UTF-8 text. Secret paths
+(`.env`, `~/.ssh`, Pi's `auth.json` and the like) are refused, also through a symlink. The text is
+inlined once when the call is made: a durable session stores the expanded prompt, and recovery
+never reads the files again. Attaching a file sends it to the delegate's model provider.
+
 ## Giving a delegate another turn
 
 A finished delegate can continue with `follow_up`, keeping what it already read in context.
@@ -248,6 +264,10 @@ every started member prompts `wait` to collect its result; the top-level `nextAc
 `wait` if any sessions started, or `finish` if all failed to start—check `failures`.
 
 ## Picking a model per call
+
+`models` returns `thinkingLevels`: for each listed model that reasons, the levels it accepts
+(a model absent from it accepts only `off`). A `thinking` level the model does not accept is
+refused with that list, never silently clamped.
 
 `model` on any call overrides `PI_DELEGATE_MODEL`. An unresolvable name is a hard error, never a
 silent fallback to the default model, because a silent fallback is how you end up billing a model
@@ -623,9 +643,13 @@ tool-using delegate is steered once to stop expanding its investigation, finish 
 and reserve one remaining turn for its conclusion. Slow turns (large context, high thinking) can
 reach the deadline long before that, so once 2/3 of the time budget is used, the same steer is sent
 at the end of the next turn that called tools; a turn that is writing the answer is never followed
-by one. Only one is sent per run. Reaching the
+by one. Only one is sent per run. The session's last turn has no tools: at the end of the turn
+before it they are removed and the delegate is told to answer, so a model that ignores the
+reminders still ends with an answer instead of being aborted mid-investigation (a run that starts
+with one turn left starts without tools). Reaching the
 turn or time ceiling aborts the underlying pi session and records `termination.reason`, while keeping
-the trace and any partial text. Cancelling a blocking `run` also aborts its underlying worker.
+the trace and any partial text. Finished results carry `usage`: input, output and cache tokens and
+the cost by pi's model prices, summed over the whole session including follow-ups. Cancelling a blocking `run` also aborts its underlying worker.
 
 `CLAUDE_AUTO_BACKGROUND_TASKS=1` makes Claude Code background long MCP calls after ~2 minutes.
 Note that progress notifications are discarded once a call is backgrounded, so pick (1) or (3),

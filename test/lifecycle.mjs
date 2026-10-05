@@ -32,6 +32,20 @@ assert.throws(
   ),
   /does not support thinking: high/,
 );
+// Pi's rules: a map entry of null refuses a level (even off); off..high need no entry; xhigh and
+// max need one. The error lists what the model accepts.
+{
+  const { supportedThinkingLevels } = await import("../dist/pi/models.js");
+  const partial = { provider: "test", id: "partial", reasoning: true, thinkingLevelMap: { low: "low", off: null } };
+  assert.deepEqual(supportedThinkingLevels(partial), ["minimal", "low", "medium", "high"]);
+  assert.doesNotThrow(() => assertThinkingSupported(partial, "high"), "an absent entry up to high is supported");
+  assert.throws(() => assertThinkingSupported(partial, "off"), /supports: minimal, low, medium, high/);
+  const unmapped = { provider: "test", id: "unmapped", reasoning: true, thinkingLevelMap: undefined };
+  assert.throws(() => assertThinkingSupported(unmapped, "xhigh"), /does not support thinking: xhigh.*supports: off, minimal, low, medium, high/);
+  assert.deepEqual(supportedThinkingLevels({ ...unmapped, thinkingLevelMap: { xhigh: "xhigh" } }),
+    ["off", "minimal", "low", "medium", "high", "xhigh"]);
+  assert.deepEqual(supportedThinkingLevels({ provider: "test", id: "plain", reasoning: false }), ["off"]);
+}
 
 // MCP caller cancellation must reach the worker exactly once.
 const controller = new AbortController();
@@ -81,34 +95,40 @@ unbind();
   assert.equal((await immediate).questions[0].id, "confirm");
 }
 
-// Tool loops get one finalization steer at 75%, then an abort at the hard turn budget.
+// Tool loops get one finalization steer at 75%, lose their tools for the last turn, and are
+// aborted only if a tool call still reaches the hard turn budget.
 {
-  const w = worker(4, 60_000);
+  const w = worker(8, 60_000);
   let resolvePrompt;
   const promptDone = new Promise((resolve) => { resolvePrompt = resolve; });
   const session = {
     aborts: 0,
     steers: [],
+    tools: ["read"],
     prompt: async () => promptDone,
     waitForIdle: async () => {},
     steer: async (text) => { session.steers.push(text); },
     abort: async () => { session.aborts++; resolvePrompt(); },
+    getActiveToolNames: () => session.tools,
+    setActiveToolsByName: (names) => { session.tools = names; },
   };
   w.session = session;
   w.track(session, "inspect");
-  for (let i = 0; i < 3; i++) {
-    w.onEvent({ type: "turn_start" });
-    w.onEvent({ type: "turn_end", toolResults: [{}] });
-  }
+  const turn = () => { w.onEvent({ type: "turn_start" }); w.onEvent({ type: "turn_end", toolResults: [{}] }); };
+  for (let i = 0; i < 6; i++) turn();
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(session.steers.length, 1);
-  w.onEvent({ type: "turn_start" });
-  w.onEvent({ type: "turn_end", toolResults: [{}] });
+  assert.equal(session.steers.length, 1, "75% steer");
+  assert.deepEqual(session.tools, ["read"]);
+  turn();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(session.tools, [], "no tools for the last turn");
+  assert.match(session.steers[1], /last turn/);
+  turn();
   await w.run;
   assert.equal(session.aborts, 1);
   assert.equal(w.state, "aborted");
   assert.equal(w.termination.reason, "max_turns");
-  assert.equal(w.termination.limit, 4);
+  assert.equal(w.termination.limit, 8);
 }
 
 // A slow tool loop gets the same finalization steer at 75% of its time, once, before the deadline.

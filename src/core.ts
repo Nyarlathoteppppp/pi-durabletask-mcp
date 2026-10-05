@@ -6,6 +6,7 @@ import {
 import type { LaunchRequest } from "./registry.js";
 import { storedJobs, storedSnapshot } from "./durable.js";
 import { compactSnapshot, message } from "./pi/worker.js";
+import { withAttachments } from "./attachments.js";
 import type { PiWorker } from "./pi/worker.js";
 import type { Snapshot } from "./types.js";
 import { pickTools } from "./permissions.js";
@@ -90,8 +91,14 @@ export function bindCancellation(
   return () => signal.removeEventListener("abort", cancel);
 }
 
-export async function startExecution(request: LaunchRequest) {
-  const w = await launch(request);
+/** A launch as a tool receives it: attachments are inlined into the prompt before anything starts. */
+export type AttachedRequest = LaunchRequest & { attachments?: string[] | undefined };
+
+const inline = async ({ attachments, ...request }: AttachedRequest): Promise<LaunchRequest> =>
+  ({ ...request, prompt: await withAttachments(request.prompt, attachments) });
+
+export async function startExecution(request: AttachedRequest) {
+  const w = await launch(await inline(request));
   return {
     sessionId: w.id,
     label: w.label,
@@ -108,17 +115,19 @@ export async function startExecution(request: LaunchRequest) {
 const WAIT_HINT = "Call wait with this sessionId and until \"settled\" until state is done, aborted or error; its lastText is the answer.";
 
 export interface BatchRequest extends Omit<LaunchRequest, "prompt" | "id" | "label"> {
-  tasks: LaunchRequest[];
+  tasks: AttachedRequest[];
+  attachments?: string[] | undefined;
   idPrefix?: string;
 }
 
 export async function startBatch({
   tasks, model, thinking, cwd, tools, extensions, durable, nativeMcp, mcpServers,
-  maxTurns, maxDurationMs, retentionDays, idPrefix,
+  maxTurns, maxDurationMs, retentionDays, idPrefix, attachments,
 }: BatchRequest) {
   const width = Math.max(String(tasks.length).length, 2);
   const merged = tasks.map((t, i) => ({
     prompt: t.prompt,
+    attachments: t.attachments ?? attachments,
     label: t.label,
     model: t.model ?? model,
     thinking: t.thinking ?? thinking,
@@ -163,6 +172,7 @@ export async function startBatch({
       const taskModel = await resolveModel(modelRef, taskCwd);
       assertThinkingSupported(taskModel, t.thinking);
       if (taskModel) await assertProviderReady(taskModel.provider);
+      t.prompt = await withAttachments(t.prompt, t.attachments);
     } catch (e) {
       throw new Error(`tasks[${i}]${t.id ? ` (${t.id})` : ""}: ${message(e)}`);
     }
@@ -178,7 +188,7 @@ export async function startBatch({
     limits: { maxTurns: number; maxDurationMs: number };
   }> = [];
   const failures: Array<{ index: number; id?: string; error: string }> = [];
-  const results = await launchBatch(merged);
+  const results = await launchBatch(merged.map(({ attachments: _inlined, ...task }) => task));
   results.forEach((result, index) => {
     if (result.status === "fulfilled") {
       const w = result.value;
@@ -214,9 +224,10 @@ export interface RunOptions {
 }
 
 export async function runExecution(
-  request: LaunchRequest,
+  attached: AttachedRequest,
   { signal, onProgress }: RunOptions = {},
 ): Promise<Snapshot> {
+  const request = await inline(attached);
   // Bind cancellation as soon as the worker exists, before it starts: a caller that has already
   // cancelled, or cancels during start, must not have Pi prompted at all.
   let unbindCancellation = (): void => {};
@@ -326,6 +337,7 @@ export interface WaitSummary {
   lastText?: string;
   error?: string;
   termination?: Snapshot["termination"];
+  usage?: Snapshot["usage"];
 }
 
 /**
@@ -349,6 +361,7 @@ export async function waitForMany(
       ...(done ? { lastText: s.lastText } : {}),
       ...(s.error ? { error: s.error } : {}),
       ...(s.termination ? { termination: s.termination } : {}),
+      ...(done && s.usage ? { usage: s.usage } : {}),
     };
   });
   const isSettled = (s: WaitSummary): boolean => TERMINAL.has(s.state) || s.pendingQuestions > 0;
@@ -369,14 +382,15 @@ export async function resolveInteraction(sessionId: string, requestId: string, v
   return (await resolve(sessionId)).answer(requestId, value);
 }
 
-export async function followUp(sessionId: string, prompt: string) {
+export async function followUp(sessionId: string, prompt: string, attachments?: string[]) {
+  const text = await withAttachments(prompt, attachments);
   const worker = await resolve(sessionId);
   // forget/eviction can remove a worker while resolve is finishing a shared lazy load.
   if (loaded(sessionId) !== worker)
     throw new Error(`Session ${sessionId} was forgotten or unloaded while loading. Check status before follow_up.`);
   // Let the worker produce the more useful "use steer" error for a live session.
   if (!worker.isActive) assertCapacity();
-  return { ...await worker.followUp(prompt), state: observedState(worker), next: WAIT_HINT };
+  return { ...await worker.followUp(text), state: observedState(worker), next: WAIT_HINT };
 }
 
 export async function cancelExecution(sessionId: string) {

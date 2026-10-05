@@ -79,6 +79,17 @@ export interface Snapshot {
   durable: boolean;
   /** Days kept on disk after finishing; absent for non-durable delegates. */
   retentionDays?: number | undefined;
+  /** Tokens and cost of the whole session so far, across follow_up; cost uses pi's model prices. */
+  usage?: Usage | undefined;
+}
+
+export interface Usage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  totalTokens: number;
+  cost: number;
 }
 
 /** pi's enabledModels scope, resolved for one working directory. */

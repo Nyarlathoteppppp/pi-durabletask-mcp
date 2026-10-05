@@ -11,7 +11,8 @@ export function registerModels(server: McpServer): void {
       annotations: { readOnlyHint: true, openWorldHint: false },
       description:
         "List models this delegate may use from pi's available providers after model filters. " +
-        "Use `filter` to find a provider or model, and `offset`/`limit` to page through long lists.",
+        "Use `filter` to find a provider or model, and `offset`/`limit` to page through long lists. " +
+        "thinkingLevels lists the levels each returned reasoning model accepts; a model absent from it accepts only off.",
       inputSchema: {
         filter: z.string().optional(),
         cwd: z.string().optional().describe("Picks up a project-local pi model scope"),
@@ -25,6 +26,10 @@ export function registerModels(server: McpServer): void {
       const all = usable.map((m) => m.ref);
       const hits = filter ? all.filter((s) => s.toLowerCase().includes(filter.toLowerCase())) : all;
       const models = hits.slice(offset, offset + limit);
+      const page = new Set(models);
+      const thinkingLevels = Object.fromEntries(usable
+        .filter((m) => page.has(m.ref) && m.thinkingLevels.join() !== "off")
+        .map((m) => [m.ref, m.thinkingLevels]));
       // Resolve the default the way spawn does, so a short id like "grok-4.7" is compared as provider/id.
       const fallback = defaultModelRef(cwd);
       const resolved = fallback ? await resolveModel(fallback, cwd).catch(() => undefined) : undefined;
@@ -41,6 +46,7 @@ export function registerModels(server: McpServer): void {
           ? { note: "More models match. Pass filter to narrow the list, or nextOffset to page." } : {}),
         scoped: Boolean(modelScope(cwd)) || MODEL_ALLOWLIST.size > 0 || MODEL_DENYLIST.size > 0,
         models,
+        ...(Object.keys(thinkingLevels).length ? { thinkingLevels } : {}),
       });
     },
   );

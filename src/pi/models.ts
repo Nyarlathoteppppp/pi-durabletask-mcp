@@ -84,20 +84,34 @@ export interface ScopedModel {
   provider: string;
   id: string;
   ref: string;
+  thinkingLevels: PiThinkingLevel[];
 }
 
-/** Refuse a thinking request that pi would silently clamp to off for this model. */
-export function assertThinkingSupported(
-  model: Pick<PiModel, "provider" | "id" | "reasoning" | "thinkingLevelMap"> | undefined,
-  thinking: PiThinkingLevel | undefined,
-): void {
-  if (!model || !thinking || thinking === "off") return;
-  const levelMap = model.thinkingLevelMap as Record<string, string | null | undefined> | undefined;
-  if (!model.reasoning || (levelMap && !levelMap[thinking]))
-    throw new Error(
-      `Model ${model.provider}/${model.id} does not support thinking: ${thinking}. ` +
-        "Omit thinking or choose a level declared by pi for this model.",
-    );
+type ThinkingModel = Pick<PiModel, "provider" | "id" | "reasoning" | "thinkingLevelMap">;
+const THINKING_LEVELS: PiThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+/**
+ * The levels pi accepts for a model, by pi-ai's getSupportedThinkingLevels (copied: pi-ai is not
+ * a direct dependency, and Pi bundles its own): a null map entry refuses a level, off..high need
+ * no entry, xhigh and max need one; a model without reasoning accepts only off.
+ */
+export function supportedThinkingLevels(model: ThinkingModel): PiThinkingLevel[] {
+  if (!model.reasoning) return ["off"];
+  const map = model.thinkingLevelMap as Record<string, string | null | undefined> | undefined;
+  return THINKING_LEVELS.filter((level) => {
+    const mapped = map?.[level];
+    if (mapped === null) return false;
+    return level === "xhigh" || level === "max" ? mapped !== undefined : true;
+  });
+}
+
+/** Refuse a thinking request that pi would silently clamp to another level for this model. */
+export function assertThinkingSupported(model: ThinkingModel | undefined, thinking: PiThinkingLevel | undefined): void {
+  if (!model || !thinking) return;
+  const levels = supportedThinkingLevels(model);
+  if (!levels.includes(thinking))
+    throw new Error(`Model ${model.provider}/${model.id} does not support thinking: ${thinking}; it supports: ` +
+      `${levels.join(", ") || "none"}. Omit thinking to use pi's default for it.`);
 }
 
 /**
@@ -109,7 +123,7 @@ export async function scopedModels(cwd?: string): Promise<ScopedModel[]> {
   const rt = await getRuntime();
   const available = await rt.getAvailable();
   return available
-    .map((m) => ({ provider: m.provider, id: m.id, ref: `${m.provider}/${m.id}` }))
+    .map((m) => ({ provider: m.provider, id: m.id, ref: `${m.provider}/${m.id}`, thinkingLevels: supportedThinkingLevels(m) }))
     .filter((m) => inScope(scope, m.provider, m.id))
     .filter((m) => inDelegateAllowlist(m.provider, m.id))
     .filter((m) => !inDelegateDenylist(m.provider, m.id));

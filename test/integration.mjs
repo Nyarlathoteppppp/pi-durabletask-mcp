@@ -96,6 +96,28 @@ try {
   assert.equal(followup.state, "done");
   assert.equal(followup.lastText, "OK");
   assert.ok(requests.at(-1).messages.filter((m) => m.role === "user").length >= 2);
+  // Attachments outside the delegate's cwd reach the model, on run, follow_up and each batch task.
+  const outside = await mkdtemp(join(tmpdir(), "pi-delegate-attach-"));
+  const lastUserText = () => JSON.stringify(requests.at(-1).messages.findLast((m) => m.role === "user").content);
+  try {
+    await writeFile(join(outside, "a.diff"), "+ATTACHED_DIFF_LINE\n");
+    await writeFile(join(outside, "b.txt"), "SECOND_ATTACHMENT\n");
+    await call("run", { cwd: dir, prompt: "Reply OK", tools: [], attachments: [join(outside, "a.diff")] });
+    assert.match(lastUserText(), /ATTACHED_DIFF_LINE/);
+    await call("follow_up", { sessionId: "default", prompt: "Reply OK", attachments: [join(outside, "b.txt")] });
+    do followup = await call("wait", { sessionId: "default", timeoutMs: 1000 }); while (followup.state === "running");
+    assert.match(lastUserText(), /SECOND_ATTACHMENT/);
+    requests.length = 0;
+    const batch = await call("spawn_batch", { cwd: dir, tools: [], attachments: [join(outside, "a.diff")], tasks: [
+      { prompt: "Reply OK" }, { prompt: "Reply OK", attachments: [] }] });
+    await call("wait", { sessionIds: batch.sessions.map((s) => s.sessionId), until: "all_settled", timeoutMs: 15000 });
+    const seen = requests.map((r) => JSON.stringify(r.messages)).map((m) => m.includes("ATTACHED_DIFF_LINE"));
+    assert.deepEqual(seen.sort(), [false, true], "the batch attachment goes to the task that does not clear it");
+    const bad = await raw("spawn_batch", { cwd: dir, tools: [], tasks: [{ prompt: "OK" }, { prompt: "OK", attachments: [join(dir, ".env")] }] });
+    assert.equal(bad.isError, true);
+    assert.match(bad.content[0].text, /tasks\[1\].*secret/);
+  } finally { await rm(outside, { recursive: true, force: true }); }
+
   await call("forget", { sessionId: "default" });
   assert.equal((await raw("status", { sessionId: "default" })).isError, true);
   console.log("  OK -> real MCP + Pi SDK against local fake provider: defaults, overrides, no-tools, safe grep, follow-up, batch validation");
