@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.0 (2026-10-05)
+
+- `run` returns the same compact result as `wait` by default: answer, state, errors, usage and continuation. Pass `verbose: true` for the full snapshot with configuration and the whole tool trace.
+- `status`, `wait`, `sessions` and `run` report `remainingTurns`, `canFollowUp` and, when it cannot, `followUpBlockedReason` (`running`, `finalizing`, `turn_budget_exhausted`, `not_started`, `status_required`). `sessions` takes `cwd` to list one project's loaded and stored sessions. A handoff whose session has used all its turns says `status_then_spawn`.
+- A symlink named like a secret (`.env`, `.ssh`, ...) pointing to an ordinary filename was not refused; both the path as given and its target are now checked.
+- Native MCP tools that registered after the tools were removed for the last turn reappeared on that turn; they stay removed.
+- `PiWorker` keeps each run's timers, wrap-up flags, provider error, cancellation and completion in its own `WorkerRun`, so callbacks of an earlier run cannot change a later one. This also fixes three failures: a failed task creation left the worker counting as active; a failed checkpoint save during cancellation left the SDK running; a failed final catalog write made the completion promise reject (the answer is now kept and the error shown).
+- READMEs and the skill no longer promise that a delegate always answers: the last turn has no tools, but a provider error or a crash can still end a run without one.
+
 ## 0.5.0 (2026-10-05)
 
 From real use as a code reviewer. A gpt-6-astra design review and a gpt-6.1-sol code review shaped it.
