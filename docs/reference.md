@@ -668,7 +668,9 @@ between. Neither is reported while a question waits for an answer. A large `idle
 slow reasoning from a provider that streams nothing meanwhile, or a hung request; Pi itself never
 times out a silent request. `PI_DELEGATE_STALL_MS` (off by default) ends such a run as
 `termination.reason: "stalled"`, which can then be continued with `follow_up`. Set it with care:
-some providers stay silent for minutes while reasoning at high thinking levels. With extensions
+some providers stay silent for minutes while reasoning at high thinking levels. Measured on one
+review task (2026-10): DeepSeek flash at most 0.6 s of silence, Gemini 3.8 flash 7 s, GPT-6.1 sol
+at high 10 s, GLM-5.3 at high 108 s. If you enable it, 300000 (5 minutes) is a cautious value. With extensions
 enabled, a slow extension handler on the model's reply is counted as model time.
 
 `CLAUDE_AUTO_BACKGROUND_TASKS=1` makes Claude Code background long MCP calls after ~2 minutes.
