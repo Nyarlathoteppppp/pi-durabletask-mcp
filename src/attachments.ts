@@ -28,19 +28,21 @@ export async function withAttachments(prompt: string, paths: string[] | undefine
       const info = await handle.stat();
       if (!info.isFile()) throw new Error(`attachments: ${path} is not a regular file.`);
       if (info.size > MAX_FILE_BYTES) throw new Error(`attachments: ${path} is larger than 256 KiB.`);
-      total += info.size;
-      if (total > MAX_TOTAL_BYTES) throw new Error("attachments: more than 1 MiB in total.");
-      // Read at most one byte past the limit, in case the file grew after stat.
+      if (total + info.size > MAX_TOTAL_BYTES) throw new Error("attachments: more than 1 MiB in total.");
+      // Read at most one byte past the limit, and count what was read: the file may grow after stat.
       const buffer = Buffer.alloc(MAX_FILE_BYTES + 1);
       const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
       if (bytesRead > MAX_FILE_BYTES) throw new Error(`attachments: ${path} is larger than 256 KiB.`);
+      total += bytesRead;
+      if (total > MAX_TOTAL_BYTES) throw new Error("attachments: more than 1 MiB in total.");
       bytes = buffer.subarray(0, bytesRead);
     } finally { await handle.close(); }
     if (bytes.includes(0)) throw new Error(`attachments: ${path} looks binary; attach text files only.`);
     let text: string;
     try { text = utf8.decode(bytes); } catch { throw new Error(`attachments: ${path} is not valid UTF-8 text.`); }
     // A fence longer than any backtick run in the file, so its content cannot end the block.
-    const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length));
+    let longest = 0;
+    for (const run of text.match(/`+/g) ?? []) longest = Math.max(longest, run.length);
     const fence = "`".repeat(Math.max(3, longest + 1));
     parts.push(`Attachment ${JSON.stringify(path)}:\n${fence}\n${text}${text.endsWith("\n") ? "" : "\n"}${fence}`);
   }

@@ -2,6 +2,7 @@ import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { ExtensionAPI, InlineExtension } from "@earendil-works/pi-coding-agent";
+import { AGENT_DIR } from "./config.js";
 
 const SENSITIVE_DIRS = [".codex", ".ssh", ".aws", ".gnupg", ".claude"] as const;
 const SENSITIVE_FILES = [
@@ -60,6 +61,8 @@ export function blockedSecretPath(path: string, cwd: string, homeDir = homedir()
     const file = canonicalize(join(home, ...segments));
     if (resolved === file || isInside(file, resolved)) return resolved;
   }
+  // Pi keeps its credentials in PI_CODING_AGENT_DIR when that is set, not only under ~/.pi/agent.
+  if (resolved === canonicalize(join(AGENT_DIR, "auth.json"))) return resolved;
   return undefined;
 }
 

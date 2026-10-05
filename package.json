@@ -1,6 +1,6 @@
 {
   "name": "pi-durabletask-mcp",
-  "version": "0.4.4",
+  "version": "0.5.0",
   "mcpName": "io.github.Nyarlathoteppppp/pi-durabletask-mcp",
   "description": "Durable Pi Coding Agent tasks over MCP with background execution, steering, and crash recovery",
   "type": "module",

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0 (2026-10-05)
+
+From real use as a code reviewer. A gpt-6-astra design review and a gpt-6.1-sol code review shaped it.
+
+- The session's last turn has no tools. At the end of the turn before it, the tools are removed and the delegate is told to answer, so a model that ignores the wrap-up reminders still ends with an answer instead of being aborted at the turn limit with nothing to show. A run that starts with one turn left starts without tools.
+- `attachments` on `spawn`, `run`, `follow_up` and `spawn_batch` (batch-wide or per task, `[]` for none) takes absolute paths of text files. The server appends them to the prompt, so a caller can pass a diff from its scratchpad without copying it into its own output. At most 20 files, 256 KiB each, 1 MiB in total; UTF-8 text only. Secret paths are refused, also through symlinks. Durable sessions store the expanded prompt, so recovery never reads the files again.
+- `models` returns `thinkingLevels`, the levels each listed reasoning model accepts, and a refused `thinking` level now says which levels the model supports. Validation follows Pi's own rules: an unmapped level up to `high` was wrongly refused, and `xhigh`/`max` were wrongly accepted for models without a level map.
+- Finished results (`status`, `wait`, batch summaries) carry `usage`: input, output and cache tokens and the cost by Pi's model prices, for the whole session including follow-ups.
+- Pi's `auth.json` in a custom `PI_CODING_AGENT_DIR` is treated as a secret path, both for attachments and for the delegate's own file tools. Before, only `~/.pi/agent/auth.json` was.
+
 ## 0.4.4 (2026-10-04)
 
 - Add `nextAction` (`wait`, `answer`, `finish`) to spawn, follow-up, status and wait responses, including per-session and top-level batch spawn/wait guidance. Keep existing `next`; `finish` means the run ended, not that it succeeded.

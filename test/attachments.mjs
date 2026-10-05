@@ -6,6 +6,8 @@ import { join } from "node:path";
 // Files the caller attaches are read by the server and appended to the prompt, so a delegate can
 // review a diff the caller wrote anywhere, without the caller copying it into its own output.
 const dir = await mkdtemp(join(tmpdir(), "pi-delegate-attachments-"));
+// Pi's credentials live in PI_CODING_AGENT_DIR when it is set, not only under ~/.pi/agent.
+process.env.PI_CODING_AGENT_DIR = join(dir, "pi-agent");
 const { withAttachments } = await import("../dist/attachments.js");
 try {
   const diff = join(dir, "change.diff");
@@ -28,6 +30,12 @@ try {
   await refuse([join(dir, "repo", ".env")], /secret/);
   await symlink(join(dir, "repo", ".env"), join(dir, "innocent.txt"));
   await refuse([join(dir, "innocent.txt")], /secret/);
+  await mkdir(join(dir, "pi-agent"));
+  await writeFile(join(dir, "pi-agent", "auth.json"), "{\"token\":\"secret\"}");
+  await refuse([join(dir, "pi-agent", "auth.json")], /secret/);
+  // Many separate backtick runs must not overflow Math.max's argument list.
+  await writeFile(join(dir, "ticks.txt"), "`a".repeat(131072));
+  assert.ok((await withAttachments("x", [join(dir, "ticks.txt")])).includes("``\n`a`a"));
   await writeFile(join(dir, "binary.bin"), Buffer.from([0x41, 0x00, 0x42]));
   await refuse([join(dir, "binary.bin")], /binary/);
   await writeFile(join(dir, "latin1.txt"), Buffer.from([0x63, 0x61, 0x66, 0xe9]));
