@@ -2,6 +2,15 @@
 
 修改 Worker、取消或恢复逻辑前，先读 [生命周期与持久化时序](docs/worker-lifecycle.md)。其中列出了完成条件、SDK 事件顺序和对应测试。
 
+## 存活信号与挂起保护（2026-10-06，本地提交，未推送未发布）
+
+起因：GLM-5.3 一轮思考 9 分钟没有任何输出，调用方分不清是在思考还是请求挂住了。灵算 astra 先评审设计，Claude 实现，Pi 的 Codex 6.1 sol 审了两轮。
+- 运行中的 `status`、`wait` 和批量汇总返回 `idleMs` 和 `phase`（`model`：模型请求未返回，从 `turn_start` 或 `auto_retry_start` 到助手的 `message_end`；`tool`：本进程的 `openCalls` 不为空；`agent`：两者之间）。有待回答的问题时不返回。`sessions` 列表不返回（它是历史视图）。
+- `PI_DELEGATE_STALL_MS` 默认关闭：在 `model` 阶段超过这个时长没有任何事件，就以 `stalled` 结束，之后可以 `follow_up`。重试的退避时间不计入沉默。已知限制：开启扩展时，扩展处理 `message_end` 的耗时会被算作模型时间（文档已写明）。
+- 实测（同一个审查任务）的最长沉默：deepseek 0.6 s，gemini 7 s，sol high 10 s，glm-5.3 high 108 s。所以默认关闭；文档建议需要时设成 300000。
+- 顺手修了 GLM 审查的 #1：`handoff read` 的 `followUpBlockedReason` 不再填入交接提示（如 `session_missing`）。
+- 提交：`3dcfe8a`、`0299747`、`bb92e5e`、`33cf49d`。完整 40 条测试通过；新增 `test/liveness.mjs`（真 MCP 加假 provider：挂住的请求以 stalled 结束，持续推送的请求不会）；修复都先确认测试在旧代码上失败。
+
 ## 待办：可选的 Jev 语义判断（存活信号发布之后再做）
 
 奈亚子提议（2026-10-05）。只作为可选项，默认关闭（例如 `PI_DELEGATE_JUDGE=jev`）；判断失败或超时一律当作没有判断，不影响主流程。key 优先用官方 TypeSafe 的 `TYPESAFE_API_KEY`（/Users/ywbw/workplace/pi/.env），OpenRouter 作备用；可以复用 ~/workplace/pi-jev-context 的调用代码。
