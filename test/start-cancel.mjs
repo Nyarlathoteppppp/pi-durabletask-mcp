@@ -108,6 +108,33 @@ try {
       await job.forget();
     }
   }
+  // A follow_up cancelled before it reaches Pi wrote nothing: it must not report the previous run's
+  // saved file or answer flag.
+  for (const durable of [false, true]) {
+    const release = Promise.withResolvers(), entered = Promise.withResolvers();
+    rt.getAuth = async () => { entered.resolve(); await release.promise; return "fake-key"; };
+    const options = { id: `stale-save-${durable}`, cwd: dir, model: "test/one", tools: [], durable, maxTurns: 5, maxDurationMs: 60000 };
+    const worker = new PiWorker(options);
+    worker.model = options.model;
+    worker.session = { sessionManager: SessionManager.inMemory(dir), messages: [],
+      prompt: async () => {}, waitForIdle: async () => {}, abort: async () => {}, dispose: () => {} };
+    worker.job = durable ? await DurableJob.open(worker.options, "work") : new MemoryJob();
+    const job = worker.job;
+    Object.assign(worker, { state: "done", lastText: "old answer", saved: { savedTo: "/tmp/old.md", savedChars: 10 }, answerFlag: "partial" });
+    try {
+      const followUp = worker.followUp("next");
+      await entered.promise;
+      await worker.abort("caller_cancelled");
+      release.resolve();
+      await followUp;
+      await worker.run;
+      const snap = worker.snapshot();
+      assert.deepEqual([snap.state, snap.savedTo, snap.answerState], ["aborted", undefined, undefined], `durable=${durable}`);
+    } finally {
+      worker.dispose();
+      await job.forget();
+    }
+  }
   console.log("  OK -> abort/suspend during authentication or task creation never prompt; durable cancellation persists");
 } finally {
   rt.getAuth = getAuth;

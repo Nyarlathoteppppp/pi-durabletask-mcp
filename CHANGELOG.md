@@ -3,6 +3,7 @@
 ## Unreleased
 
 - `saveTo` on `spawn`, `run` and `follow_up`, and `saveDir` on `spawn_batch`: when the run finishes as done, its final text is written to that file before the run is reported finished, and results show `savedTo`/`savedChars` instead of the text. Bad or secret paths are refused up front; a failed write keeps the text and adds `saveError`. `wait` and `status` stay read-only.
+- A dangling symlink to a secret name (for example `result.md` -> a missing `.env`) passed the secret-path check, since only existing paths were resolved; writing through it created the secret file. Dangling links are now followed. This also covers the delegate's own file tools.
 - `answerState` on finished results whose text is not a usable conclusion: `missing` (no text) and `partial` (cut off by the output limit) by rule; `narration` from the optional Jev judge (`PI_DELEGATE_JUDGE=jev`), reported only at probability 0.95 or more. See `bench/answer-state/README.md` for how far that is reliable.
 
 ## 0.7.2 (2026-10-06)

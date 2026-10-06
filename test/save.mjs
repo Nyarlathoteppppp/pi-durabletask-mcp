@@ -94,7 +94,10 @@ try {
   await writeFile(secret, "do not overwrite");
   const alias = join(dir, "secret-alias.md");
   await symlink(secret, alias);
-  for (const [saveTo, error] of [["relative.md", /absolute path/], [secret, /secret path/], [alias, /secret path/]]) {
+  // A dangling link to a secret name must not be followed into creating it.
+  const dangling = join(dir, "dangling.md");
+  await symlink(join(dir, "nested", ".env"), dangling);
+  for (const [saveTo, error] of [["relative.md", /absolute path/], [secret, /secret path/], [alias, /secret path/], [dangling, /secret path/]]) {
     for (const [name, args] of [["run", { cwd: dir, prompt: "answer", tools: [] }], ["spawn", { cwd: dir, prompt: "answer", tools: [] }],
       ["follow_up", { sessionId: "run", prompt: "again" }]]) {
       const refused = await raw(name, { ...args, saveTo });
@@ -105,6 +108,7 @@ try {
   const badBatch = await raw("spawn_batch", { cwd: dir, tools: [], saveDir: "relative", tasks: [{ prompt: "answer" }] });
   assert.equal(badBatch.isError, true);
   assert.equal(await readFile(secret, "utf8"), "do not overwrite");
+  await absent(join(dir, "nested", ".env"));
 
   // A failed write keeps the answer inline.
   const blockedParent = join(dir, "not-a-directory");

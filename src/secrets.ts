@@ -1,4 +1,4 @@
-import { realpathSync } from "node:fs";
+import { lstatSync, readlinkSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { ExtensionAPI, InlineExtension } from "@earendil-works/pi-coding-agent";
@@ -27,13 +27,18 @@ function isInside(parent: string, child: string): boolean {
  * Resolve symlinks in the deepest existing ancestor, then append the rest. A path that does not
  * exist yet, such as a file about to be written, must not hide a symlinked parent directory.
  */
-function canonicalize(path: string): string {
+function canonicalize(path: string, depth = 0): string {
   const absolute = resolve(path);
   const missing: string[] = [];
   for (let current = absolute; ; current = dirname(current)) {
     try {
-      return join(realpathSync(current), ...missing.reverse());
+      return join(realpathSync(current), ...[...missing].reverse());
     } catch {
+      // A dangling symlink names its target, not itself: writing through it creates the target.
+      try {
+        if (depth < 32 && lstatSync(current).isSymbolicLink())
+          return canonicalize(join(resolve(dirname(current), readlinkSync(current)), ...[...missing].reverse()), depth + 1);
+      } catch { /* not a link, or unreadable: treat as missing */ }
       if (dirname(current) === current) return absolute;
       missing.push(basename(current));
     }

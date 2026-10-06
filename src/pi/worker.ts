@@ -163,6 +163,8 @@ export class PiWorker {
 
   private newRun(): WorkerRun {
     this.currentRun.clearTimers();
+    this.answerFlag = undefined;
+    this.saved = undefined;
     return this.currentRun = new WorkerRun(this.currentRun.startedAt);
   }
 
@@ -537,8 +539,6 @@ export class PiWorker {
     this.lastText = "";
     this.finishedAt = undefined;
     this.termination = undefined;
-    this.answerFlag = undefined;
-    this.saved = undefined;
     run.prompt = prompt;
     run.lastActivityAt = Date.now();
     // A run with one turn left, or a session with maxTurns 1, has only its answer turn.
@@ -572,6 +572,8 @@ export class PiWorker {
             : run.providerError;
           return;
         }
+        // The model finished within budget; judging and saving are not part of it.
+        run.clearTimers();
         // Judge before the run counts as finished, so the caller's final wait carries the result.
         if (run.stopReason === "length") this.answerFlag = "partial";
         else if (JUDGE_ENABLED && this.lastText.trim()) {
@@ -909,7 +911,8 @@ export class PiWorker {
 
   /** Only for a finished run, and only when its final text is not a usable conclusion. */
   private answerState(): { answerState?: "missing" | "partial" | "narration" } {
-    if (!["done", "aborted", "error"].includes(this.state) || this.isActive) return {};
+    // Not gated on isActive: the terminal checkpoint is taken while the run still settles.
+    if (!["done", "aborted", "error"].includes(this.state)) return {};
     const state = this.lastText.trim() === "" ? "missing" : this.answerFlag;
     return state ? { answerState: state } : {};
   }
