@@ -1,6 +1,6 @@
 # 设计：分叉（forkFrom）与自动续一轮（autoContinue）
 
-状态：方案，待实现（2026-10-06）。先实现第 1 部分；第 2 部分是可选的，可以单独做。
+状态：分叉已实现并通过专门测试及真实跨模型验证（2026-10-06）；自动续一轮暂缓，下面第 2 部分保留为讨论方案。
 
 ## 1. 分叉：`forkFrom`
 
@@ -11,7 +11,7 @@
 - 用 `follow_up` 一个一个地问：只能串行，而且前一个问题会影响后一个的上下文；
 - 派几个独立的委托：每个都要把代码重新读一遍，token 成倍增加。
 
-分叉的意思是：从一个已经读完代码的会话出发，分出若干个独立的新会话。每个新会话都带着同样的上下文，可以并行地问不同的问题，互不影响。新会话的开头和父会话完全一样，provider 的提示缓存通常也能命中。
+分叉的意思是：从一个已经读完代码的会话出发，分出若干个独立的新会话。每个新会话都带着同样的上下文，可以并行地问不同的问题，互不影响。新会话沿用父会话历史；provider 是否命中提示缓存取决于模型、工具和缓存策略。
 
 ### 接口
 
@@ -40,7 +40,7 @@ spawn_batch({ forkFrom: "explore-01", tasks: [
 1. **父会话必须处在空闲状态**：`done`、`aborted` 或 `error`，并且不是 `isActive`。运行中的会话，对话记录可能停在半轮（有工具调用但还没有结果），分叉出来的状态不一致，所以直接拒绝，提示"等它结束，或者先 abort"。
 2. **分叉的是快照**：之后父会话再 `follow_up`，不会影响已经分出去的子会话，反过来也一样。
 3. **子会话的预算从零开始计**：`turns` 和工具调用次数都从 0 开始，因为它是一个独立的新任务。但它的上下文已经很大，一开始就接近模型上下文窗口的情况要考虑到，见"风险"。
-4. **跨模型分叉**：允许 `model` 和父会话不同，但这是风险点。Pi 支持在会话中途切换模型，对话记录在 pi-ai 层是统一的消息格式；不过有些 provider 的思考块带签名，或者是加密的推理内容，可能不能交给另一家 provider。实现时必须实测 openai-codex → deepseek、gemini → openai-codex 两种组合；不兼容的话，就在分叉时剥掉 thinking 块，或者直接拒绝跨 provider 分叉。
+4. **跨模型分叉**：允许 `model` 和父会话不同，但这是风险点。Pi 支持在会话中途切换模型，对话记录在 pi-ai 层是统一的消息格式；不过有些 provider 的思考块带签名，或者是加密的推理内容，可能不能交给另一家 provider。实现时必须实测 openai-codex → deepseek、gemini → openai-codex 两种组合；消息转换交给 Pi SDK；只有实测发现不兼容时才处理，不提前加自定义剥离或兼容分支。
 5. **父会话的来源**：
    - 已经在本进程加载的（memory 或 durable）：直接用；
    - 存在磁盘上、但还没加载的 durable 会话：通过 `resolve(id)` 加载（会认领它的锁），再分叉；
@@ -50,15 +50,15 @@ spawn_batch({ forkFrom: "explore-01", tasks: [
 
 ### 实现要点
 
-- **取父会话的记录**：`src/pi/worker.ts` 新增 `forkEntries(): FileEntry[]`，返回 `[sessionManager.getHeader(), ...sessionManager.getEntries()]`（和 `checkpoint()`、`repairEntries()` 用的是同一种格式）。只在 `!isActive` 并且 session 存在时允许调用。
-- **会话头**：父会话的 header 里有它自己的会话 id。子会话应该生成新的 header；看 Pi `SessionManager` 能否用 `parentSession` 字段（`session-manager.d.ts` 里有 "Path to the parent session (if this session was forked)"）标明来源。**这一点要在 SDK 里先确认清楚**，不要直接复用父会话的 header。
+- **取父会话的记录**：`src/pi/worker.ts` 新增 `forkSeed()`，深拷贝当前检查点并通过 `repairEntries` 配对中断工具结果，同时返回配置和完整 usage 基线。只在会话已 settled 并且 session 存在时允许调用。
+- **会话头**：种子去掉父 header，由 SDK 生成新身份。SDK 的 `parentSession` 表示父会话文件路径，不能拿 MCP sessionId 填它；MCP 来源另存 `forkedFrom`。
 - **创建子会话**：`PiWorker.start(prompt, saved?, key?)` 现在是用 `SessionManager.inMemory(this.cwd, undefined, saved ? repairEntries(saved) : undefined)` 建会话的。增加一个"种子记录"入口，例如 `start(prompt, { seedEntries })`，用父会话的记录来建会话，而不是用 `saved`。`inputStarted`、`results`、`steering` 都从空开始，不要复制父会话的。
-- **durable 子会话**：首个检查点就包含种子记录，恢复时照常用 `repairEntries` 重建。`DurableJob` 的存储格式不需要改。
+- **durable 子会话**：先在现有 Harness 写入 ForkSeed doc，再发布 catalog 行；创建首 task 的同一事务清空种子。创建途中重启也能恢复父历史；不改变现有 SQLite schema 或 ownership。继承消息的 usage 保留供 SDK 估算上下文，子会话结果减去持久化的 usageBaseline。
 - **接线**：
   - `src/core.ts` 的 `startExecution`、`runExecution`、`startBatch`：如果有 `forkFrom`，先 `resolve` 父会话，检查它是空闲的，取出记录，再按"继承加覆盖"合成 `LaunchRequest`，最后带着种子记录调用 `launch`。批次里多个任务分叉同一个父会话时，只 `resolve` 一次。
   - `src/registry.ts` 的 `LaunchRequest`：加 `seedEntries?` 和 `forkedFrom?`。`prepare`、`makeWorker` 把它们传给 worker。`forkedFrom` 写进 `WorkerOptions`（durable 会话会持久化），`seedEntries` 不写进 options，因为它已经在首个检查点里了。
   - 工具参数：`src/tools/spawn.ts` 的 `spawnShape`、`taskShape` 和批次参数加 `forkFrom`。
-- **结果**：`Snapshot` 加 `forkedFrom?`；在 `status`、`sessions`（列表）里显示。`wait` 的精简结果不用加。
+- **结果**：`Snapshot` 加 `forkedFrom?`；在 `status`、`sessions`（列表）里显示。单任务 `wait` 的精简结果也返回来源。
 
 ### 测试（先写测试，确认在旧代码上失败）
 
@@ -75,7 +75,7 @@ spawn_batch({ forkFrom: "explore-01", tasks: [
 
 ### 风险
 
-- **上下文窗口**：父会话已经很大，子会话一开始就可能接近上限。Pi 的自动压缩会处理，但压缩会损失细节。可以在分叉时，如果父会话的 `usage` 已经接近模型的上下文窗口，就在结果里加一条 warning。
+- **上下文窗口**：父会话已经很大，子会话一开始就可能接近上限。Pi 的自动压缩会处理，但压缩会损失细节。`usage` 是历史累计账单，不能用来判断当前上下文大小；沿用 SDK 的上下文估算和自动压缩，不新增 warning。
 - **费用**：每个分支都要把父会话的整段上下文作为输入发给 provider。命中提示缓存时很便宜，没命中就是全价，文档里要写明。
 - **跨 provider 的思考块**：见语义第 4 条。
 
@@ -98,7 +98,7 @@ spawn_batch({ forkFrom: "explore-01", tasks: [
 
 - 位置：`src/pi/worker.ts` 的 `track()`，在 `.then(async () => …)` 里、Jev 判断之后、写 `saveTo` 之前。现在这里会给出 `answerFlag`；加一段：满足条件就 `this.lastTurn(session)`，然后 `await session.prompt(CONTINUE_PROMPT); await session.waitForIdle();`，再重新算 `answerFlag`。所有 `await` 之后都要像现有代码一样检查 `this.currentRun !== run || this.suspended || this.termination`。
 - 运行级的标记 `autoContinued` 放在 `WorkerRun` 上（`src/pi/run.ts`），每次运行各有一份。
-- durable 运行：续的这一轮和普通的轮一样，会经过检查点。要确认：恢复时，如果续到一半，能正常完成或者重来（复用现有的恢复逻辑）。
+- durable 运行：续的这一轮和普通的轮一样，会经过检查点。实现前还需明确如何持久化已续过一次的标记，并沿用原 deadline（当前 track 在模型完成后已清 timer），不能仅用内存 WorkerRun 标记或重新获得完整时限。
 
 ### 测试
 

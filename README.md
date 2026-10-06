@@ -40,6 +40,7 @@ To collect results, the main agent loops `wait` with `until: "settled"`. If Pi a
 - **Separate context:** Pi reads and searches; your main agent collects findings.
 - **Attachments and saved results:** pass a diff or notes by file path with `attachments`, and have long results written to a file with `saveTo`, instead of copying text through the main agent.
 - **Multiple models:** `spawn_batch` starts tasks with individually selected models.
+- **Read once, ask many:** fork a completed memory or durable session into independent `spawn`, `run`, or `spawn_batch` tasks with fresh budgets.
 - **Live steering:** `steer` redirects work after the current tool call.
 - **Liveness:** running delegates report `idleMs` and `phase`, so slow reasoning can be told from a hung request; `PI_DELEGATE_STALL_MS` optionally ends a silent request.
 - **Follow-ups:** `follow_up` keeps context in the same long-lived session; turns accumulate.

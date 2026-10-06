@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.6 (2026-10-06)
+
+- `forkFrom` on `spawn`, `run` and `spawn_batch`: start independent tasks from a settled session's history, with fresh budgets and child-only usage. Omitted execution settings inherit from the parent and are revalidated. `forkedFrom` reports the source in results and session lists.
+- Durable forks save their initial transcript before catalog publication and consume it atomically when creating the first task, so recovery also works before the first prompt. Existing recovery and ownership remain unchanged.
+- Tested cross-model forks with Codex → DeepSeek and Gemini → Codex. Inherited history is still sent to the provider; cache savings depend on the provider.
+
 ## 0.7.5 (2026-10-06)
 
 - Preserve exact MCP tool grants with Pi 1.0.4: codemode and tool search cannot inherit unnamed server or resource tools. Explicitly granted resource tools remain available.

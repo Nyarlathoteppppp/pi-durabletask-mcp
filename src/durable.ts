@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import {
   createRegistry, defineDoc, defineExtension, defineTask, Harness,
-  type Cursor, type HarnessOptions, type TaskId, type TaskRuntime,
+  type Cursor, type HarnessOptions, type JsonObject, type TaskId, type TaskRuntime,
 } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import type { FileEntry } from "@earendil-works/pi-coding-agent";
@@ -44,6 +44,10 @@ export interface Checkpoint {
 }
 const CurrentTask = defineDoc<{ taskId: number | null }>({
   kind: "pi-delegate.current-task", version: 1, scope: "session", initial: () => ({ taskId: null }),
+});
+type ForkSeedState = { checkpoint: JsonObject | null };
+const ForkSeed = defineDoc<ForkSeedState>({
+  kind: "pi-delegate.fork-seed", version: 1, scope: "session", initial: () => ({ checkpoint: null }),
 });
 interface Input { prompt: string; checkpoint: Checkpoint }
 export interface JobRecord { key: string; options: WorkerOptions; prompt: string }
@@ -259,7 +263,7 @@ export function releaseJob(key: string): void {
 
 /** Finished jobs not owned here, newest first; list without opening their stores. */
 export function storedJobs(cwd?: string): Array<FollowUpInfo & {
-  sessionId: string; label: string | undefined; cwd: string; state?: Snapshot["state"]; turns?: number; finishedAt: string;
+  sessionId: string; label: string | undefined; cwd: string; forkedFrom?: string; state?: Snapshot["state"]; turns?: number; finishedAt: string;
 }> {
   // Project/history browsing needs only these fields, not the full conversation snapshot.
   const rows = db().prepare("SELECT key, options, finished_at, json_extract(snapshot, '$.state') AS state, " +
@@ -271,6 +275,7 @@ export function storedJobs(cwd?: string): Array<FollowUpInfo & {
   return rows.filter((row) => !owns(row.key)).map((row) => {
     const options = JSON.parse(row.options) as WorkerOptions;
     return { sessionId: options.id ?? row.key, label: options.label, cwd: options.cwd,
+      ...(options.forkedFrom === undefined ? {} : { forkedFrom: options.forkedFrom }),
       finishedAt: new Date(row.finished_at).toISOString(),
       ...(row.state !== null && row.turns !== null
         ? { state: row.state, turns: row.turns, ...followUpInfo(row.state, row.turns, options.maxTurns) }
@@ -354,9 +359,10 @@ export class DurableJob implements JobStore {
   needsResume = false;
   private constructor(key: string) { this.key = key; }
 
-  static async open(options: WorkerOptions, prompt: string, key?: string): Promise<DurableJob> {
+  static async open(options: WorkerOptions, prompt: string, key?: string, initial?: Checkpoint): Promise<DurableJob> {
     const job = new DurableJob(key ?? randomUUID());
     const catalog = db(); // also initialises the ownership directory
+    const isFork = !key && initial !== undefined;
     let attempts = 0;
     let unfinished = false;
     if (!key) {
@@ -398,7 +404,7 @@ export class DurableJob implements JobStore {
     const registry = createRegistry();
     registry.install(defineExtension({ name: "pi-delegate", tasks: [Task] }));
     try {
-      if (!key) catalog.prepare("INSERT INTO jobs (key, pid, agent_dir, options, prompt) VALUES (?, ?, ?, ?, ?)")
+      if (!key && !isFork) catalog.prepare("INSERT INTO jobs (key, pid, agent_dir, options, prompt) VALUES (?, ?, ?, ?, ?)")
         .run(job.key, process.pid, AGENT_DIR, JSON.stringify(options), prompt);
       mkdirSync(directory, { recursive: true, mode: 0o700 });
       // Pi Durable pins its own pi-ai, while the SDK runtime comes from the global Pi install, whose
@@ -408,6 +414,14 @@ export class DurableJob implements JobStore {
       job.harness = await Harness.open(await openNodeSqliteStorage(join(directory, "session.sqlite")),
         { models, registry }, context);
       chmodSync(join(directory, "session.sqlite"), 0o600);
+      if (isFork) {
+        await job.harness.commit(async (tx) => {
+          // Docs accept strict JSON; SDK entries and snapshots contain optional undefined fields.
+          (await tx.doc(ForkSeed)).checkpoint = JSON.parse(JSON.stringify(initial)) as JsonObject;
+        }, context);
+        catalog.prepare("INSERT INTO jobs (key, pid, agent_dir, options, prompt) VALUES (?, ?, ?, ?, ?)")
+          .run(job.key, process.pid, AGENT_DIR, JSON.stringify(options), prompt);
+      }
       job.taskId = await job.harness.commit(async (tx) => {
         const current = await tx.doc(CurrentTask);
         if (current.taskId === null) {
@@ -423,7 +437,8 @@ export class DurableJob implements JobStore {
         return current.taskId === null ? undefined : current.taskId as TaskId<Checkpoint>;
       }, context);
       const current = job.taskId ? await job.harness.getTask(job.taskId, context) : undefined;
-      job.needsResume = Boolean(current && current.state.status !== "terminal");
+      const seed = job.taskId ? undefined : await job.seed();
+      job.needsResume = Boolean((current && current.state.status !== "terminal") || seed !== undefined);
       if (key && !job.needsResume && (job.attemptsPending || unfinished)) {
         // Loading finished history is not a recovery attempt. A crash after the terminal commit but
         // before recordFinal leaves the row unfinished; the worker records it once loaded.
@@ -447,8 +462,16 @@ export class DurableJob implements JobStore {
   }
   private task!: ReturnType<typeof defineTask<Input, Checkpoint, Checkpoint>>;
 
+  private async seed(): Promise<Checkpoint | undefined> {
+    return this.harness.commit(async (tx) => {
+      const checkpoint = (await tx.doc(ForkSeed)).checkpoint;
+      // Detach while the transaction's draft is live; it is revoked after commit.
+      return checkpoint === null ? undefined : JSON.parse(JSON.stringify(checkpoint)) as Checkpoint;
+    }, context);
+  }
+
   async saved(): Promise<Checkpoint | undefined> {
-    if (!this.taskId) return undefined;
+    if (!this.taskId) return this.seed();
     const task = await this.harness.getTask(this.taskId, context);
     if (task?.state.status === "terminal" || task?.state.status === "completing") {
       if (task.state.outcome.status === "completed") return task.state.outcome.result;
@@ -468,6 +491,7 @@ export class DurableJob implements JobStore {
       this.taskId = await root.commit(async (tx) => {
         const id = await tx.createTask(this.task, { prompt, checkpoint }, { ownership: { kind: "conversation" } });
         (await tx.doc(CurrentTask)).taskId = id;
+        (await tx.doc(ForkSeed)).checkpoint = null;
         return id;
       }, context);
     }

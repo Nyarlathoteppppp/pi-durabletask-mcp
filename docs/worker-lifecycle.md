@@ -43,6 +43,12 @@ Turns accumulate across follow-ups; the time budget restarts per run. Recovery k
 original clock, so downtime counts. The last turn has no tools. Native MCP registration is async:
 the `context_with_system` hook also removes tool declarations from the final provider request.
 
+Forks copy a settled transcript into a new SDK session; they do not restore parent control state.
+The SDK creates a fresh header, and the child's budgets and tool trace start empty. Inherited
+usage remains in the transcript for SDK context accounting; persisted `usageBaseline` is subtracted
+only from the child's reported bill. A durable fork commits its initial `ForkSeed` doc before
+publishing the catalog row. Creating the first task and clearing that seed share one transaction.
+
 ## Event ordering and persistence barriers
 
 The installed SDK awaits `session.agent.subscribe()` listeners. Its own session listener runs
@@ -96,4 +102,5 @@ All paths below are under `test/`; use temporary state as `offline.mjs` does.
 | Recovery, steering admission, tool barriers | `recovery.mjs`, `native-recovery.mjs` |
 | Shutdown during execution | `pause-race.mjs` |
 | Memory checkpoint overhead | `memory-checkpoint.mjs` |
+| Fork isolation, inherited configuration, usage and bootstrap recovery | `fork.mjs`, `fork-seed.mjs` |
 | Turn limits and async native tool registration | `final-turn.mjs` |

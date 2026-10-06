@@ -94,15 +94,33 @@ export function bindCancellation(
 }
 
 /** A launch as a tool receives it: attachments are inlined into the prompt before anything starts. */
-export type AttachedRequest = LaunchRequest & { attachments?: string[] | undefined };
+export type AttachedRequest = LaunchRequest & { attachments?: string[] | undefined; forkFrom?: string | undefined };
+
+/** Capture once before launching a batch; later parent follow-ups cannot change any seed. */
+async function withFork(request: AttachedRequest, seeds = new Map<string, ReturnType<PiWorker["forkSeed"]>>()): Promise<AttachedRequest> {
+  const { forkFrom, ...task } = request;
+  if (forkFrom === undefined) return task;
+  let seed = seeds.get(forkFrom);
+  if (!seed) {
+    seed = (await resolve(forkFrom)).forkSeed();
+    seeds.set(forkFrom, seed);
+  }
+  return { ...task,
+    cwd: task.cwd ?? seed.inherited.cwd, tools: task.tools ?? seed.inherited.tools,
+    model: task.model ?? seed.inherited.model, thinking: task.thinking ?? seed.inherited.thinking,
+    extensions: task.extensions ?? seed.inherited.extensions, nativeMcp: task.nativeMcp ?? seed.inherited.nativeMcp,
+    mcpServers: task.mcpServers ?? seed.inherited.mcpServers,
+    seedEntries: seed.entries, usageBaseline: seed.usageBaseline, forkedFrom: forkFrom };
+}
 
 const inline = async ({ attachments, ...request }: AttachedRequest): Promise<LaunchRequest> =>
   ({ ...request, prompt: await withAttachments(request.prompt, attachments) });
 
 export async function startExecution(request: AttachedRequest) {
-  const w = await launch(await inline(request));
+  const w = await launch(await inline(await withFork(request)));
   return {
     sessionId: w.id,
+    ...(w.forkedFrom ? { forkedFrom: w.forkedFrom } : {}),
     label: w.label,
     state: observedState(w),
     model: w.model,
@@ -121,14 +139,17 @@ export interface BatchRequest extends Omit<LaunchRequest, "prompt" | "id" | "lab
   attachments?: string[] | undefined;
   saveDir?: string | undefined;
   idPrefix?: string;
+  forkFrom?: string;
 }
 
 export async function startBatch({
-  tasks, model, thinking, cwd, tools, extensions, durable, nativeMcp, mcpServers,
+  tasks, model, thinking, cwd, tools, extensions, durable, nativeMcp, mcpServers, forkFrom,
   maxTurns, maxDurationMs, maxToolCalls, retentionDays, idPrefix, attachments, saveDir,
 }: BatchRequest) {
   const width = Math.max(String(tasks.length).length, 2);
-  const merged = tasks.map((t, i) => ({
+  const seeds = new Map<string, ReturnType<PiWorker["forkSeed"]>>();
+  const merged: AttachedRequest[] = [];
+  for (const [i, t] of tasks.entries()) merged.push(await withFork({
     prompt: t.prompt,
     attachments: t.attachments ?? attachments,
     saveDir,
@@ -147,7 +168,8 @@ export async function startBatch({
     // The batch's retentionDays is for its durable tasks; a task may still opt out with durable: false.
     retentionDays: t.retentionDays ?? ((t.durable ?? durable) === true ? retentionDays : undefined),
     id: t.id ?? (idPrefix ? `${idPrefix}-${String(i + 1).padStart(width, "0")}` : undefined),
-  }));
+    forkFrom: t.forkFrom ?? forkFrom,
+  }, seeds));
 
   // Validate the batch up front. Every check here is cheap and deterministic, and a
   // half-started fan-out is the worst outcome: you pay for the delegates that launched
@@ -190,6 +212,7 @@ export async function startBatch({
     state: string;
     model?: string;
     thinking?: string;
+    forkedFrom?: string;
     limits: { maxTurns: number; maxDurationMs: number };
   }> = [];
   const failures: Array<{ index: number; id?: string; error: string }> = [];
@@ -200,6 +223,7 @@ export async function startBatch({
       started.push({
         index,
         sessionId: w.id,
+        ...(w.forkedFrom ? { forkedFrom: w.forkedFrom } : {}),
         label: w.label,
         state: observedState(w),
         model: w.model,
@@ -233,7 +257,7 @@ export async function runExecution(
   attached: AttachedRequest,
   { signal, onProgress, verbose }: RunOptions = {},
 ): Promise<Snapshot> {
-  const request = await inline(attached);
+  const request = await inline(await withFork(attached));
   // Bind cancellation as soon as the worker exists, before it starts: a caller that has already
   // cancelled, or cancels during start, must not have Pi prompted at all.
   let unbindCancellation = (): void => {};
@@ -430,6 +454,7 @@ export function listSessions(state?: string, verbose?: boolean, cwd?: string) {
     ? filtered
     : filtered.map((s) => ({
         sessionId: s.sessionId,
+        ...(s.forkedFrom ? { forkedFrom: s.forkedFrom } : {}),
         label: s.label,
         state: s.state,
         model: s.model,

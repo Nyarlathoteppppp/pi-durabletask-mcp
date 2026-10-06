@@ -57,6 +57,9 @@ export interface WorkerOptions extends NativeMcpOptions {
   /** Cap on the model's own tool calls for the whole session; nested calls (codemode, MCP) do not count. */
   maxToolCalls?: number | undefined;
   startedAt?: string;
+  forkedFrom?: string;
+  /** Full inherited usage, retained in entries for SDK context accounting but excluded from this task. */
+  usageBaseline?: Usage;
 }
 
 const RECENT_CALLS = 5;
@@ -77,6 +80,7 @@ const FINALIZE_PROMPT =
  * Event ordering and completion rules: docs/worker-lifecycle.md.
  */
 export class PiWorker {
+  readonly forkedFrom: string | undefined;
   readonly id: string;
   readonly label: string | undefined;
   readonly cwd: string;
@@ -204,8 +208,11 @@ export class PiWorker {
     maxDurationMs,
     maxToolCalls,
     startedAt,
+    forkedFrom,
+    usageBaseline,
   }: WorkerOptions) {
     this.id = id ?? randomUUID();
+    this.forkedFrom = forkedFrom;
     this.label = label;
     this.cwd = cwd;
     this.modelSpec = model;
@@ -220,7 +227,8 @@ export class PiWorker {
     this.startedAt = startedAt ?? new Date().toISOString();
     this.currentRun = new WorkerRun(this.startedAt);
     this.options = { id: this.id, label, cwd, model, thinking, tools, extensions, durable, retentionDays, nativeMcp, mcpServers: this.mcpServers, maxTurns, maxDurationMs,
-      ...(maxToolCalls !== undefined ? { maxToolCalls } : {}), startedAt: this.startedAt };
+      ...(maxToolCalls !== undefined ? { maxToolCalls } : {}), startedAt: this.startedAt,
+      ...(forkedFrom ? { forkedFrom, usageBaseline } : {}) };
   }
 
   private uiContext(): ExtensionUIContext {
@@ -238,7 +246,7 @@ export class PiWorker {
     });
   }
 
-  async start(prompt: string, saved?: Checkpoint, key?: string): Promise<this> {
+  async start(prompt: string, saved?: Checkpoint, key?: string, seedEntries?: FileEntry[]): Promise<this> {
     validateNativeMcp(this.options, this.cwd);
     const model = await resolveModel(this.modelSpec, this.cwd);
     if (this.isStopped()) return this;
@@ -272,7 +280,10 @@ export class PiWorker {
       modelRuntime: await getRuntime(),
       model,
       thinkingLevel: this.thinkingSpec,
-      sessionManager: SessionManager.inMemory(this.cwd, undefined, saved ? repairEntries(saved) : undefined),
+      // Dropping the inherited header lets the SDK create a new identity. Clone entries so
+      // compaction or transcript edits in one branch cannot mutate a sibling's history.
+      sessionManager: SessionManager.inMemory(this.cwd, undefined, saved ? repairEntries(saved)
+        : seedEntries ? structuredClone(seedEntries.filter((entry) => entry.type !== "session")) : undefined),
       tools: this.toolNames,
       // Pi 1.0.4 keeps MCP tools implicitly when no mcp__ name is selected. Delegates
       // require explicit tool grants, including MCP resource tools without that prefix.
@@ -309,7 +320,8 @@ export class PiWorker {
       return this;
     }
     this.options = { ...this.options, model: chosen ? this.model : undefined, thinking: this.thinking };
-    this.job = this.options.durable === false ? new MemoryJob() : await DurableJob.open(this.options, prompt, key);
+    this.job = this.options.durable === false ? new MemoryJob()
+      : await DurableJob.open(this.options, prompt, key, seedEntries ? this.checkpoint() : undefined);
     if (this.isStopped()) {
       await this.job.close();
       this.dispose();
@@ -349,7 +361,22 @@ export class PiWorker {
     return this;
   }
 
-  /** SDK nested events bypass Agent.subscribe; awaited extension hooks persist them. */
+  /** A settled transcript and its configuration, without the parent's execution state. */
+  forkSeed() {
+    if (this.isActive || !["done", "error", "aborted"].includes(this.state))
+      throw new Error(`Session ${this.id} is still active; wait for it to settle before forking.`);
+    if (!this.session) throw new Error(`Session ${this.id} never started, nothing to fork.`);
+    const stats = this.session.getSessionStats();
+    const { input, output, cacheRead, cacheWrite, total } = stats.tokens;
+    return {
+      entries: repairEntries(structuredClone(this.checkpoint())),
+      usageBaseline: { input, output, cacheRead, cacheWrite, totalTokens: total, cost: stats.cost },
+      inherited: { cwd: this.cwd, tools: [...this.toolNames], model: this.model,
+        thinking: this.thinking, extensions: this.extensionsEnabled, nativeMcp: this.nativeMcp,
+        mcpServers: [...this.mcpServers] },
+    };
+  }
+
   /** Tools that run other tools (native MCP, codemode): their nested calls are journalled too. */
   private get nestedCalls(): boolean {
     return this.nativeMcp || this.toolNames.includes("codemode");
@@ -941,6 +968,7 @@ export class PiWorker {
   snapshot({ verbose = false }: { verbose?: boolean } = {}): Snapshot {
     const full: Snapshot = {
       sessionId: this.id,
+      ...(this.options.forkedFrom ? { forkedFrom: this.options.forkedFrom } : {}),
       label: this.label,
       state: this.state,
       model: this.model,
@@ -998,7 +1026,10 @@ export class PiWorker {
     const stats = this.session?.getSessionStats?.();
     if (!stats) return undefined;
     const { input, output, cacheRead, cacheWrite, total } = stats.tokens;
-    return { input, output, cacheRead, cacheWrite, totalTokens: total, cost: stats.cost };
+    const baseline = this.options.usageBaseline;
+    return { input: input - (baseline?.input ?? 0), output: output - (baseline?.output ?? 0),
+      cacheRead: cacheRead - (baseline?.cacheRead ?? 0), cacheWrite: cacheWrite - (baseline?.cacheWrite ?? 0),
+      totalTokens: total - (baseline?.totalTokens ?? 0), cost: stats.cost - (baseline?.cost ?? 0) };
   }
 
   /** Keep the finished state readable by any process without loading the session. */

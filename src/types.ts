@@ -57,6 +57,7 @@ export type ToolCallSummary = Pick<ToolCall, "seq" | "name" | "state" | "ms" | "
 
 export interface Snapshot extends FollowUpInfo {
   sessionId: string;
+  forkedFrom?: string;
   label: string | undefined;
   state: SessionState;
   model: string | undefined;

@@ -24,10 +24,10 @@ export function batchNextAction(sessions: Array<{ nextAction: NextAction }>): Ne
 /** Compact result collection for run and wait; status remains the diagnostic view. */
 export function waitResult(snapshot: Snapshot, verbose?: boolean) {
   if (verbose) return withNextAction(snapshot);
-  const { sessionId, label, state, turns, toolCallCount, lastText, questions, notices, error, termination, usage,
+  const { sessionId, forkedFrom, label, state, turns, toolCallCount, lastText, questions, notices, error, termination, usage,
     remainingTurns, canFollowUp, followUpBlockedReason, idleMs, phase, answerState, savedTo, savedChars, saveError } = snapshot;
   const finished = state === "done" || state === "aborted" || state === "error";
-  return withNextAction({ sessionId, label, state, turns, toolCallCount,
+  return withNextAction({ sessionId, ...(forkedFrom ? { forkedFrom } : {}), label, state, turns, toolCallCount,
     // A long text the caller asked to have saved is not returned again; it is in savedTo.
     ...(savedTo ? { savedTo, savedChars } : {}), ...(omitsSavedText(snapshot) ? {} : { lastText }), ...(saveError ? { saveError } : {}),
     ...(answerState ? { answerState } : {}), questions, notices, error, termination,

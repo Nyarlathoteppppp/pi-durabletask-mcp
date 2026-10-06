@@ -12,7 +12,8 @@ import {
 import { pickTools } from "./permissions.js";
 import { PiWorker, type WorkerOptions } from "./pi/worker.js";
 import { resolveDelegateCwd } from "./workspace.js";
-import type { PiThinkingLevel, TerminationReason } from "./types.js";
+import type { PiThinkingLevel, TerminationReason, Usage } from "./types.js";
+import type { FileEntry } from "@earendil-works/pi-coding-agent";
 import { publish } from "./statusline/state.js";
 import { claimAbandonedSettled, claimStored, jitter, unclaim, forgetOwnedJob, RecoveryStopped, storageBytes, storedIdInUse, sweep } from "./durable.js";
 import { validateNativeMcp, type NativeMcpOptions } from "./pi/native-mcp.js";
@@ -282,6 +283,10 @@ export function evictHistory(keep?: PiWorker): void {
 
 export interface LaunchRequest extends NativeMcpOptions {
   prompt: string;
+  /** Internal fork data prepared by the execution core, never accepted directly by MCP tools. */
+  seedEntries?: FileEntry[];
+  forkedFrom?: string;
+  usageBaseline?: Usage;
   model?: string | undefined;
   thinking?: PiThinkingLevel | undefined;
   cwd?: string | undefined;
@@ -325,6 +330,8 @@ function makeWorker(req: LaunchRequest & { cwd: string; tools: string[] }): PiWo
     maxTurns: req.maxTurns ?? SPAWN_DEFAULT_TURNS,
     maxDurationMs: req.maxDurationMs ?? SPAWN_DEFAULT_DURATION_MS,
     maxToolCalls: req.maxToolCalls,
+    forkedFrom: req.forkedFrom,
+    usageBaseline: req.usageBaseline,
     // Fixed at creation, so every process applies the same retention whatever its own default.
     retentionDays: req.durable ? req.retentionDays ?? RETENTION_DAYS : undefined,
   });
@@ -332,9 +339,9 @@ function makeWorker(req: LaunchRequest & { cwd: string; tools: string[] }): PiWo
   return worker;
 }
 
-async function startWorker(worker: PiWorker, prompt: string): Promise<PiWorker> {
+async function startWorker(worker: PiWorker, prompt: string, seedEntries?: FileEntry[]): Promise<PiWorker> {
   try {
-    await worker.start(prompt);
+    await worker.start(prompt, undefined, undefined, seedEntries);
   } catch (e) {
     // A session that never started must not occupy its id.
     worker.dispose();
@@ -361,7 +368,7 @@ export async function launch(req: LaunchRequest, onCreated?: (worker: PiWorker) 
   worker.onChange = () => publish(all());
   sessions.set(worker.id, worker);
   onCreated?.(worker);
-  return startWorker(worker, req.prompt);
+  return startWorker(worker, req.prompt, prepared.seedEntries);
 }
 
 /** Reserve the entire batch before starting any worker or allowing another request to interleave. */
@@ -381,5 +388,5 @@ export async function launchBatch(reqs: LaunchRequest[]): Promise<PromiseSettled
     worker.onChange = () => publish(all());
     sessions.set(worker.id, worker);
   }
-  return Promise.allSettled(workers.map((worker, i) => startWorker(worker, prepared[i]!.prompt)));
+  return Promise.allSettled(workers.map((worker, i) => startWorker(worker, prepared[i]!.prompt, prepared[i]!.seedEntries)));
 }

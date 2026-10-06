@@ -21,6 +21,31 @@
 | `sessions`    | List sessions, running and finished. Filter by `state`, expand with `verbose`.                                                          |
 | `forget`      | Drop a finished session from history, freeing its id.                                                                                   |
 
+## Fork a settled session
+
+Pass `forkFrom` to `spawn`, `run`, or `spawn_batch` to start independent work from a
+finished session's transcript, including file contents and attachments it already saw:
+
+```json
+{
+  "forkFrom": "explore-01",
+  "tasks": [
+    { "prompt": "Check recovery races." },
+    { "prompt": "Check SQL migrations." }
+  ]
+}
+```
+
+Omitted `cwd`, `tools`, `model`, `thinking`, `extensions`, `nativeMcp` and `mcpServers`
+inherit from the parent; explicit values override them and pass the usual checks.
+Each child has fresh turn/tool/time budgets and reports only its own usage. `durable`
+defaults to false even when the parent is durable; set it explicitly for child recovery.
+Parents must be settled and available to this host. Later follow-ups cannot change
+existing branches. `forkedFrom` identifies the source in results and session lists.
+
+Forking reuses conversation history; providers still receive that history as input.
+Cache hits and cross-provider compatibility depend on the provider and Pi SDK.
+
 ## Agent instructions
 
 Tools work immediately after the MCP connection is established. For clients that need

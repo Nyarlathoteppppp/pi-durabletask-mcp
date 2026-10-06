@@ -31,6 +31,7 @@ const attachments = z.array(z.string()).optional();
 
 const spawnShape = {
   prompt: z.string().describe("The task for the pi agent"),
+  forkFrom: z.string().optional().describe("Start a new task from a settled session's history; budgets are fresh. Omitted cwd/model/tools inherit from the parent and are revalidated."),
   attachments: attachments.describe(ATTACHMENTS_HELP),
   saveTo: z.string().optional().describe("Absolute file path: when the run finishes, its final text is written there and results show savedTo instead"),
   model: z.string().optional().describe('Omit for the configured default. Use "provider/modelId" from the models tool to choose another.'),
@@ -38,7 +39,7 @@ const spawnShape = {
     .enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"])
     .optional()
     .describe("Explicit pi thinking level. Omit to use pi's configured/default level."),
-  cwd: z.string().describe("Absolute working directory for the agent. Required; not the MCP process cwd."),
+  cwd: z.string().optional().describe("Absolute working directory. Required unless forkFrom supplies the parent cwd."),
   id: z
     .string()
     .optional()
@@ -85,6 +86,7 @@ const spawnShape = {
 
 const taskShape = z.object({
   prompt: z.string().describe("The task for this delegate"),
+  forkFrom: z.string().optional().describe("Overrides the batch forkFrom for this task"),
   attachments: attachments.describe("Overrides the batch `attachments` for this task alone; [] attaches nothing"),
   id: z.string().optional().describe("Session id for this task. Defaults to `idPrefix`-NN, or a UUID."),
   label: z.string().optional().describe("Free-text note for this task"),
@@ -131,6 +133,7 @@ export function registerSpawn(server: McpServer): void {
         "polling `sessions` or one `status` per delegate.",
       inputSchema: {
         tasks: z.array(taskShape).min(1).max(BATCH_MAX).describe(`1 to ${BATCH_MAX} delegates to start`),
+        forkFrom: z.string().optional().describe("Default settled parent session for this batch"),
         attachments: attachments.describe(`Default for every task in this batch. ${ATTACHMENTS_HELP}`),
         saveDir: z.string().optional().describe("Absolute directory: each finished task's final text is written to <sessionId>.md there"),
         model: z.string().optional().describe("Default model for every task in this batch"),
