@@ -1,4 +1,5 @@
 import type { Snapshot } from "../types.js";
+import { omitsSavedText } from "../save.js";
 
 export type NextAction = "wait" | "answer" | "finish";
 
@@ -27,8 +28,8 @@ export function waitResult(snapshot: Snapshot, verbose?: boolean) {
     remainingTurns, canFollowUp, followUpBlockedReason, idleMs, phase, answerState, savedTo, savedChars, saveError } = snapshot;
   const finished = state === "done" || state === "aborted" || state === "error";
   return withNextAction({ sessionId, label, state, turns, toolCallCount,
-    // A text the caller asked to have saved is not returned again; it is in savedTo.
-    ...(savedTo ? { savedTo, savedChars } : { lastText }), ...(saveError ? { saveError } : {}),
+    // A long text the caller asked to have saved is not returned again; it is in savedTo.
+    ...(savedTo ? { savedTo, savedChars } : {}), ...(omitsSavedText(snapshot) ? {} : { lastText }), ...(saveError ? { saveError } : {}),
     ...(answerState ? { answerState } : {}), questions, notices, error, termination,
     remainingTurns, canFollowUp, ...(followUpBlockedReason ? { followUpBlockedReason } : {}),
     ...(finished && usage ? { usage } : {}), ...(idleMs !== undefined ? { idleMs, phase } : {}) });

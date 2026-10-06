@@ -214,6 +214,26 @@ unbind();
   assert.deepEqual([finished.idleMs, finished.phase], [undefined, undefined], "only running delegates report it");
 }
 
+// maxToolCalls counts the model's own calls: calls nested in a codemode script or MCP tool do not count.
+{
+  const w = new PiWorker({ cwd: "/tmp", tools: ["read"], maxTurns: 50, maxDurationMs: 60_000, maxToolCalls: 2 });
+  const session = { tools: ["read"], steers: [], prompt: () => new Promise(() => {}), waitForIdle: async () => {},
+    steer: async (text) => { session.steers.push(text); }, abort: async () => {},
+    getActiveToolNames: () => session.tools, setActiveToolsByName: (names) => { session.tools = names; } };
+  w.session = session;
+  w.track(session, "inspect");
+  w.onEvent({ type: "turn_start" });
+  w.onEvent({ type: "tool_execution_start", toolCallId: "script", toolName: "codemode", args: {} });
+  for (const id of ["n1", "n2", "n3"]) w.onEvent({ type: "tool_execution_start", toolCallId: id, toolName: "read", args: {}, parentToolCallId: "script" });
+  w.onEvent({ type: "turn_end", toolResults: [{}] });
+  assert.deepEqual(session.tools, ["read"], "one own call so far, though four were recorded");
+  w.onEvent({ type: "turn_start" });
+  w.onEvent({ type: "tool_execution_start", toolCallId: "c2", toolName: "read", args: {} });
+  w.onEvent({ type: "turn_end", toolResults: [{}] });
+  assert.deepEqual(session.tools, [], "two own calls: the cap");
+  w.dispose();
+}
+
 // Wall-clock expiry aborts the underlying session and records a diagnostic reason.
 {
   const w = worker(50, 20);

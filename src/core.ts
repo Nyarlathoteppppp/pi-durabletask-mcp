@@ -7,7 +7,7 @@ import type { LaunchRequest } from "./registry.js";
 import { storedJobs, storedSnapshot } from "./durable.js";
 import { compactSnapshot, message } from "./pi/worker.js";
 import { withAttachments } from "./attachments.js";
-import { checkSavePath } from "./save.js";
+import { checkSavePath, omitsSavedText } from "./save.js";
 import type { PiWorker } from "./pi/worker.js";
 import type { Snapshot } from "./types.js";
 import type { FollowUpInfo } from "./continuation.js";
@@ -125,7 +125,7 @@ export interface BatchRequest extends Omit<LaunchRequest, "prompt" | "id" | "lab
 
 export async function startBatch({
   tasks, model, thinking, cwd, tools, extensions, durable, nativeMcp, mcpServers,
-  maxTurns, maxDurationMs, retentionDays, idPrefix, attachments, saveDir,
+  maxTurns, maxDurationMs, maxToolCalls, retentionDays, idPrefix, attachments, saveDir,
 }: BatchRequest) {
   const width = Math.max(String(tasks.length).length, 2);
   const merged = tasks.map((t, i) => ({
@@ -143,6 +143,7 @@ export async function startBatch({
     mcpServers: t.mcpServers ?? mcpServers,
     maxTurns: t.maxTurns ?? maxTurns,
     maxDurationMs: t.maxDurationMs ?? maxDurationMs,
+    maxToolCalls: t.maxToolCalls ?? maxToolCalls,
     // The batch's retentionDays is for its durable tasks; a task may still opt out with durable: false.
     retentionDays: t.retentionDays ?? ((t.durable ?? durable) === true ? retentionDays : undefined),
     id: t.id ?? (idPrefix ? `${idPrefix}-${String(i + 1).padStart(width, "0")}` : undefined),
@@ -369,7 +370,8 @@ export async function waitForMany(
       sessionId: s.sessionId, label: s.label, state: s.state, turns: s.turns, toolCallCount: s.toolCallCount,
       pendingQuestions: s.questions.length,
       ...(s.questions.length ? { questions: s.questions } : {}),
-      ...(done ? (s.savedTo ? { savedTo: s.savedTo, savedChars: s.savedChars } : { lastText: s.lastText }) : {}),
+      ...(done && s.savedTo ? { savedTo: s.savedTo, savedChars: s.savedChars } : {}),
+      ...(done && !omitsSavedText(s) ? { lastText: s.lastText } : {}),
       ...(s.saveError ? { saveError: s.saveError } : {}),
       ...(s.answerState ? { answerState: s.answerState } : {}),
       ...(s.error ? { error: s.error } : {}),

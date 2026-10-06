@@ -21,7 +21,7 @@ const http = createServer(async (req, res) => {
   const emit = (delta, finish_reason = null) => res.write(`data: ${JSON.stringify({
     id: "save", object: "chat.completion.chunk", created: 1, model: request.model,
     choices: [{ index: 0, delta, finish_reason }] })}\n\n`);
-  emit({ role: "assistant", content: body.includes("EMPTY") ? " \n\t " : text });
+  emit({ role: "assistant", content: body.includes("EMPTY") ? " \n\t " : body.includes("SHORT") ? "Short answer." : text });
   emit({}, "stop");
   res.end("data: [DONE]\n\n");
 });
@@ -113,6 +113,12 @@ try {
   assert.equal(badBatch.isError, true);
   assert.equal(await readFile(secret, "utf8"), "do not overwrite");
   await absent(join(dir, "nested", ".env"));
+
+  // A short text is written and also returned: reading the file back would cost more than it saves.
+  const shortPath = join(dir, "short", "result.md");
+  const short = await call("run", { cwd: dir, prompt: "SHORT", tools: [], saveTo: shortPath });
+  assert.deepEqual([short.savedTo, short.lastText], [shortPath, "Short answer."]);
+  assert.equal(await readFile(shortPath, "utf8"), "Short answer.");
 
   // A failed write keeps the answer inline.
   const blockedParent = join(dir, "not-a-directory");

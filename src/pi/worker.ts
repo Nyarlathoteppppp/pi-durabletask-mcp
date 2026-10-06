@@ -13,7 +13,7 @@ import {
 import { DurableJob, forgetOwnedJob, MemoryJob, releaseJob, type Checkpoint, type JobStore } from "../durable.js";
 import { AGENT_DIR, RETENTION_DAYS, STALL_MS } from "../config.js";
 import { JUDGE_ENABLED, judgeAnswer } from "../judge.js";
-import { saveText } from "../save.js";
+import { omitsSavedText, saveText } from "../save.js";
 import { followUpInfo } from "../continuation.js";
 import { secretPathGuard } from "../secrets.js";
 import { createProtectedGrepTool } from "./search.js";
@@ -53,6 +53,8 @@ export interface WorkerOptions extends NativeMcpOptions {
   retentionDays?: number | undefined;
   maxTurns: number;
   maxDurationMs: number;
+  /** Cap on the model's own tool calls for the whole session; nested calls (codemode, MCP) do not count. */
+  maxToolCalls?: number | undefined;
   startedAt?: string;
 }
 
@@ -86,6 +88,7 @@ export class PiWorker {
    */
   private currentRun: WorkerRun;
   readonly maxTurns: number;
+  readonly maxToolCalls: number | undefined;
   readonly maxDurationMs: number;
 
   state: SessionState = "starting";
@@ -161,6 +164,15 @@ export class PiWorker {
     this.questions.clear();
   }
 
+  /** The model's own calls; calls made inside a codemode script or an MCP tool do not count. */
+  private ownToolCalls(): number {
+    return this.toolCalls.filter((call) => !call.parentToolCallId).length;
+  }
+
+  private toolCallsSpent(): boolean {
+    return this.maxToolCalls !== undefined && this.ownToolCalls() >= this.maxToolCalls;
+  }
+
   /** The previous run's text, saved file and answer flag, which a new run replaces. */
   private clearResult(): void {
     this.lastText = "";
@@ -187,6 +199,7 @@ export class PiWorker {
     mcpServers = [],
     maxTurns,
     maxDurationMs,
+    maxToolCalls,
     startedAt,
   }: WorkerOptions) {
     this.id = id ?? randomUUID();
@@ -200,10 +213,11 @@ export class PiWorker {
     this.mcpServers = [...mcpServers];
     this.maxTurns = maxTurns;
     this.maxDurationMs = maxDurationMs;
+    this.maxToolCalls = maxToolCalls;
     this.startedAt = startedAt ?? new Date().toISOString();
     this.currentRun = new WorkerRun(this.startedAt);
     this.options = { id: this.id, label, cwd, model, thinking, tools, extensions, durable, retentionDays, nativeMcp, mcpServers: this.mcpServers, maxTurns, maxDurationMs,
-      startedAt: this.startedAt };
+      ...(maxToolCalls !== undefined ? { maxToolCalls } : {}), startedAt: this.startedAt };
   }
 
   private uiContext(): ExtensionUIContext {
@@ -331,7 +345,7 @@ export class PiWorker {
         this.activeTools = pi.getActiveTools();
       });
       pi.on("context_with_system", (event) => {
-        if (this.turns < this.maxTurns) return;
+        if (this.turns < this.maxTurns && !this.toolCallsSpent()) return;
         // Native tools register asynchronously, including during the first prompt. Enforce
         // the answer-only turn after registration, on the actual request transcript.
         this.lastTurn();
@@ -552,7 +566,7 @@ export class PiWorker {
     run.prompt = prompt;
     run.lastActivityAt = Date.now();
     // A run with one turn left, or a session with maxTurns 1, has only its answer turn.
-    if (this.turns >= this.maxTurns - 1) this.lastTurn(session);
+    if (this.turns >= this.maxTurns - 1 || this.toolCallsSpent()) this.lastTurn(session);
     const remainingMs = Math.max(1, this.maxDurationMs - this.elapsedMs());
     run.deadlineTimer = setTimeout(() => {
       if (this.currentRun !== run) return;
@@ -673,7 +687,8 @@ export class PiWorker {
           break;
         }
         // The last turn gets no tools, so the model answers instead of being cut off at the limit.
-        if (this.turns === this.maxTurns - 1) {
+        // The same once the tool-call cap is reached; a turn's parallel calls may overshoot it.
+        if (this.turns === this.maxTurns - 1 || this.toolCallsSpent()) {
           this.lastTurn();
           void this.session?.steer(LAST_TURN_PROMPT).catch((e: unknown) => {
             this.notices.push({ type: "warning", message: `last-turn steer failed: ${message(e)}`, at: new Date().toISOString() });
@@ -681,10 +696,15 @@ export class PiWorker {
           break;
         }
         const finishAt = Math.max(1, Math.floor(this.maxTurns * 0.75));
+        const calls = this.ownToolCalls();
+        const callsLow = this.maxToolCalls !== undefined && calls >= Math.max(1, Math.floor(this.maxToolCalls * 0.75));
         if (this.questions.size > 0) break;
-        if (this.turns >= finishAt)
-          this.requestFinish(`turn budget ${this.turns}/${this.maxTurns}`,
-            `You have ${this.maxTurns - this.turns} turns left, including your final answer.`);
+        // Models do not count their own calls: tell them the exact numbers, once, whichever budget is closest.
+        const toolNote = this.maxToolCalls === undefined ? ""
+          : ` You have used ${calls} of ${this.maxToolCalls} tool calls; ${this.maxToolCalls - calls} left.`;
+        if (this.turns >= finishAt || callsLow)
+          this.requestFinish(callsLow ? `tool calls ${calls}/${this.maxToolCalls}` : `turn budget ${this.turns}/${this.maxTurns}`,
+            `You have ${this.maxTurns - this.turns} turns left, including your final answer.${toolNote}`);
         else if (this.currentRun.timeShort) {
           const left = Math.max(1, Math.round((this.maxDurationMs - this.elapsedMs()) / 1000));
           this.requestFinish(`time budget ${Math.round(this.elapsedMs() / 1000)}s/${Math.round(this.maxDurationMs / 1000)}s`,
@@ -896,7 +916,8 @@ export class PiWorker {
       runStartedAt: this.currentRun.startedAt,
       finishedAt: this.finishedAt,
       elapsedMs: this.elapsedMs(),
-      limits: { maxTurns: this.maxTurns, maxDurationMs: this.maxDurationMs },
+      limits: { maxTurns: this.maxTurns, maxDurationMs: this.maxDurationMs,
+        ...(this.maxToolCalls !== undefined ? { maxToolCalls: this.maxToolCalls } : {}) },
       termination: this.termination,
       durable: this.durable,
       retentionDays: this.retentionDays,
@@ -923,8 +944,9 @@ export class PiWorker {
 
   /** Only for a finished run, and only when its final text is not a usable conclusion. */
   private answerState(): { answerState?: "missing" | "partial" | "narration" } {
-    // Not gated on isActive: the terminal checkpoint is taken while the run still settles.
-    if (!["done", "aborted", "error"].includes(this.state)) return {};
+    // Only for done: an aborted or failed run already says why it has no conclusion. Not gated on
+    // isActive: the terminal checkpoint is taken while the run still settles.
+    if (this.state !== "done") return {};
     const state = this.lastText.trim() === "" ? "missing" : this.answerFlag;
     return state ? { answerState: state } : {};
   }
@@ -955,9 +977,9 @@ export class PiWorker {
 export function compactSnapshot(full: Snapshot): Snapshot {
   const trace: ToolCallSummary[] = full.toolCalls.slice(-RECENT_CALLS).map((c) => ({ seq: c.seq, name: c.name,
     state: c.state, ms: c.ms, args: c.args && c.args.length > COMPACT_ARGS ? `${c.args.slice(0, COMPACT_ARGS)}…` : c.args }));
-  // A text written to savedTo is not repeated; verbose still has it.
+  // A long text written to savedTo is not repeated; verbose still has it.
   const { lastText, ...rest } = full;
-  return { ...(full.savedTo ? rest : full), toolCalls: trace, notices: full.notices.slice(-RECENT_CALLS) } as Snapshot;
+  return { ...(omitsSavedText(full) ? rest : full), toolCalls: trace, notices: full.notices.slice(-RECENT_CALLS) } as Snapshot;
 }
 
 /** Match committed results to calls; never blindly replay an interrupted side effect. */

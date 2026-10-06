@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- `maxToolCalls` on `spawn`, `run` and `spawn_batch` (batch default, per-task override): a cap on the delegate's own tool calls for the whole session. Models do not track their own calls, so at 75% of the cap the wrap-up reminder tells them the exact count, and at the cap the next turn has no tools and must answer. Calls inside a codemode script or MCP tool do not count; one turn's parallel calls can overshoot the cap. Reported in `limits.maxToolCalls`.
+- A result saved with `saveTo`/`saveDir` that is 1500 characters or shorter is also returned inline: reading the file back would cost more than it saves.
+- `answerState` is reported only for `done` runs; an aborted or failed run already says why it has no conclusion.
+
 ## 0.7.3 (2026-10-06)
 
 - `saveTo` on `spawn`, `run` and `follow_up`, and `saveDir` on `spawn_batch`: when the run finishes as done, its final text is written to that file before the run is reported finished, and results show `savedTo`/`savedChars` instead of the text. Bad or secret paths are refused up front; a failed write keeps the text and adds `saveError`. `wait` and `status` stay read-only.

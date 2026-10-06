@@ -89,6 +89,23 @@ try {
   assert.ok(refused.isError);
   assert.match(refused.content[0].text, /does not support thinking: max; it supports: off, low, medium, high, xhigh/);
 
+  // maxToolCalls: the model is told its exact count at 75%, and loses its tools at the cap, however
+  // many turns remain; a follow_up after the cap is answer-only too.
+  requests.length = 0;
+  await call("spawn", { cwd: dir, id: "capped", prompt: "explore", tools: ["ls"], maxTurns: 20, maxToolCalls: 4 });
+  const capped = await settle("capped");
+  assert.equal(capped.state, "done", JSON.stringify(capped.termination));
+  assert.equal(capped.toolCallCount, 4);
+  assert.equal(capped.lastText, "SUMMARY from what I read");
+  assert.equal(capped.limits.maxToolCalls, 4);
+  assert.ok(!requests.at(-1).tools?.length, "the turn after the cap has no tools");
+  const told = requests.find((r) => JSON.stringify(r.messages).includes("You have used 3 of 4 tool calls"));
+  assert.ok(told, "the model is told how many calls it has used");
+  requests.length = 0;
+  await call("follow_up", { sessionId: "capped", prompt: "more" });
+  await settle("capped");
+  assert.ok(requests.every((r) => !r.tools?.length), "no tools after the cap, also on follow_up");
+
   // With one turn in total, that turn is the last one.
   requests.length = 0;
   await call("spawn", { cwd: dir, id: "single", prompt: "explore", tools: ["ls"], maxTurns: 1 });

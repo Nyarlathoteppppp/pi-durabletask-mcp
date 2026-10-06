@@ -79,6 +79,8 @@ const spawnShape = {
     .max(MAX_DURATION_MS)
     .optional()
     .describe(`Wall-clock deadline in milliseconds; server ceiling ${MAX_DURATION_MS}.`),
+  maxToolCalls: z.number().int().min(1).max(1000).optional()
+    .describe("Cap on the delegate's own tool calls, cumulative across follow_up; it is told its count near the cap, then must answer. Omit for no cap."),
 };
 
 const taskShape = z.object({
@@ -99,6 +101,7 @@ const taskShape = z.object({
   mcpServers: z.array(z.string()).optional(),
   maxTurns: z.number().int().min(1).max(MAX_TURNS).optional(),
   maxDurationMs: z.number().int().min(1_000).max(MAX_DURATION_MS).optional(),
+  maxToolCalls: z.number().int().min(1).max(1000).optional().describe("Overrides the batch `maxToolCalls` for this task alone"),
   retentionDays: retentionDays.describe("Overrides the batch `retentionDays` for this task alone"),
 });
 
@@ -155,6 +158,7 @@ export function registerSpawn(server: McpServer): void {
           .max(MAX_DURATION_MS)
           .optional()
           .describe(`Default wall-clock deadline; server ceiling ${MAX_DURATION_MS} ms`),
+        maxToolCalls: z.number().int().min(1).max(1000).optional().describe("Default cap on each delegate's own tool calls"),
         retentionDays: retentionDays.describe(`Default for every task in this batch. ${RETENTION_HELP}`),
         idPrefix: z
           .string()

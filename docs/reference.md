@@ -204,7 +204,7 @@ absolute file path) on `spawn`, `run` and `follow_up`, or `saveDir` (an absolute
 
 When the run finishes as `done` with text, the server writes it before reporting the run
 finished, so the caller's final `wait` already shows `savedTo` and `savedChars` (characters, not
-bytes) instead of `lastText`; `status` does the same, and `verbose: true` still includes the
+bytes) instead of `lastText` (a text of 1500 characters or less is returned as well); `status` does the same, and `verbose: true` still includes the
 text. Parent directories are created and an existing file is overwritten; two sessions given the
 same path end with the later one. Bad or secret paths are refused before anything starts. A
 failed write keeps `lastText` and adds `saveError`. Aborted or failed runs, and runs with no
@@ -214,7 +214,7 @@ returns its text inline. `wait` and `status` never write files and stay read-onl
 
 ## Checking that a result is a conclusion
 
-Finished results can carry `answerState` when the final text is not a usable conclusion:
+Finished `done` results can carry `answerState` when the final text is not a usable conclusion:
 `missing` (no text), `partial` (cut off by the model's output limit) and, only with the optional
 judge, `narration` (the text only announces or plans work, reports progress, asks the caller for
 information, or refuses). Absent means nothing was detected, not that the text is right.
@@ -691,7 +691,11 @@ tool-using delegate is steered once to stop expanding its investigation, finish 
 and reserve one remaining turn for its conclusion. Slow turns (large context, high thinking) can
 reach the deadline long before that, so once 2/3 of the time budget is used, the same steer is sent
 at the end of the next turn that called tools; a turn that is writing the answer is never followed
-by one. Only one is sent per run. The session's last turn has no tools: at the end of the turn
+by one. Only one is sent per run. `maxToolCalls` caps the delegate's own tool calls for the whole
+session (calls inside a codemode script or MCP tool do not count): models do not count their own
+calls, so the reminder at 75% of the cap states the exact numbers, and once the cap is reached the
+next turn has no tools and must answer. A turn's parallel calls can overshoot the cap by that
+turn's batch. The session's last turn has no tools: at the end of the turn
 before it they are removed and the delegate is told to answer, so a model that ignores the
 reminders gets a tool-free turn to conclude (a run that starts
 with one turn left starts without tools). Timeouts, provider/auth errors or cancellation can still interrupt it. Reaching the

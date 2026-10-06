@@ -21,6 +21,7 @@ const listen = async (handler) => {
 };
 const provider = await listen((request, res) => {
   const last = JSON.stringify(request.messages.at(-1));
+  if (last.includes("HANG")) return;
   res.writeHead(200, { "Content-Type": "text/event-stream" });
   const emit = (delta, finish_reason = null) => res.write(`data: ${JSON.stringify({ id: "a", object: "chat.completion.chunk", created: 1,
     model: request.model, choices: [{ index: 0, delta, finish_reason }] })}\n\n`);
@@ -82,6 +83,11 @@ try {
   const refused = await client.callTool({ name: "follow_up", arguments: { sessionId: "kept", prompt: "more" } });
   assert.equal(refused.isError, true);
   assert.equal((await call("status", { sessionId: "kept" })).answerState, "partial");
+  // An aborted run already says why it has no conclusion; no answerState on top.
+  await call("spawn", { cwd: dir, id: "stopped", prompt: "Review the code. HANG", tools: [] });
+  await call("abort", { sessionId: "stopped" });
+  const stopped = await call("status", { sessionId: "stopped" });
+  assert.deepEqual([stopped.state, stopped.answerState], ["aborted", undefined]);
   const calls = jevCalls.length;
   jevDown = true;
   assert.equal((await finish("down", "Review the code. NARRATE")).answerState, undefined, "judge failure means unknown");

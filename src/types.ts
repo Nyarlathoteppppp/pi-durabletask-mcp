@@ -76,7 +76,7 @@ export interface Snapshot extends FollowUpInfo {
   runStartedAt?: string;
   finishedAt: string | undefined;
   elapsedMs: number;
-  limits: { maxTurns: number; maxDurationMs: number };
+  limits: { maxTurns: number; maxDurationMs: number; maxToolCalls?: number };
   termination: Termination | undefined;
   /** False: in memory only, gone when this MCP process exits. */
   durable: boolean;

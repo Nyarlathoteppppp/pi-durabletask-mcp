@@ -264,6 +264,7 @@ export interface LaunchRequest extends NativeMcpOptions {
   maxTurns?: number | undefined;
   maxDurationMs?: number | undefined;
   retentionDays?: number | undefined;
+  maxToolCalls?: number | undefined;
   /** Write the final text to this file when the run finishes; not persisted with the task. */
   saveTo?: string | undefined;
   /** As saveTo, as <saveDir>/<sessionId>.md, for batches. */
@@ -294,6 +295,7 @@ function makeWorker(req: LaunchRequest & { cwd: string; tools: string[] }): PiWo
     mcpServers: req.mcpServers,
     maxTurns: req.maxTurns ?? SPAWN_DEFAULT_TURNS,
     maxDurationMs: req.maxDurationMs ?? SPAWN_DEFAULT_DURATION_MS,
+    maxToolCalls: req.maxToolCalls,
     // Fixed at creation, so every process applies the same retention whatever its own default.
     retentionDays: req.durable ? req.retentionDays ?? RETENTION_DAYS : undefined,
   });
