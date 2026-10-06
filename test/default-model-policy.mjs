@@ -63,5 +63,5 @@ try {
   if (registry) for (const worker of registry.all()) { worker.dispose(); await registry.forget(worker.id); }
   http.closeAllConnections();
   await new Promise(resolve => http.close(resolve));
-  await rm(dir, { recursive: true, force: true });
+  await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 }

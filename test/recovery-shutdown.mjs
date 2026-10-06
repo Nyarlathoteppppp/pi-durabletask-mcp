@@ -33,5 +33,5 @@ try {
   assert.equal(durable.claimAbandoned(new Set(), 1).records.length, 1, "its lock is free for the next process");
   console.log("  OK -> a claim made just before shutdown is handed back, not registered");
 } finally {
-  await rm(dir, { recursive: true, force: true });
+  await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 }

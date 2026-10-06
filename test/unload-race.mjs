@@ -106,5 +106,5 @@ try {
   await core.forgetSession(active.id);
   console.log("  OK -> resolve and forget find a session that eviction starts unloading meanwhile");
 } finally {
-  await rm(dir, { recursive: true, force: true });
+  await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 }

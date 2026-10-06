@@ -128,5 +128,5 @@ try {
   PiWorker.prototype.start = originalStart;
   await clearWorkers();
   cleanup();
-  await rm(dir, { recursive: true, force: true });
+  await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 }
