@@ -1,7 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.7.4 (2026-10-06)
 
+- codemode without native MCP: naming `codemode` in `tools` (after authorizing it with `PI_DELEGATE_ALLOW_TOOLS`) lets the delegate write a script that calls its other tools, for example several reads at once, with only the script's output returned to the model. Nested calls are traced under the script and pass the same secret-path guard; Pi's model API stays off inside scripts.
+- `PI_DELEGATE_DEFAULT_TOOLS` (comma list) sets the tools of a call that names none, for example `read,grep,find,ls,codemode`; each must be permitted.
+- CI covers Pi 1.0.0 and 1.0.4.
 - `maxToolCalls` on `spawn`, `run` and `spawn_batch` (batch default, per-task override): a cap on the delegate's own tool calls for the whole session. Models do not track their own calls, so at 75% of the cap the wrap-up reminder tells them the exact count, and at the cap the next turn has no tools and must answer. Calls inside a codemode script or MCP tool do not count; one turn's parallel calls can overshoot the cap. Reported in `limits.maxToolCalls`.
 - A result saved with `saveTo`/`saveDir` that is 1500 characters or shorter is also returned inline: reading the file back would cost more than it saves.
 - `answerState` is reported only for `done` runs; an aborted or failed run already says why it has no conclusion.

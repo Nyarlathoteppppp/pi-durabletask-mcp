@@ -17,7 +17,7 @@ import {
   TRACE_ARGS,
   TRACE_RESULT,
 } from "../config.js";
-import { PERMITTED, READ_ONLY_TOOLS } from "../permissions.js";
+import { DEFAULT_TOOLS, PERMITTED, READ_ONLY_TOOLS } from "../permissions.js";
 import { modelScope, preflight } from "../pi/models.js";
 import { json } from "./shared.js";
 import { DURABLE_DIR } from "../durable.js";
@@ -83,7 +83,7 @@ export function registerInit(server: McpServer): void {
 
         permissions: {
           toolsAllowedHere: ALLOW_ALL ? "any (PI_DELEGATE_ALLOW_WRITE=1)" : [...PERMITTED],
-          defaultIfYouOmitTools: [...READ_ONLY_TOOLS],
+          defaultIfYouOmitTools: DEFAULT_TOOLS.length ? [...DEFAULT_TOOLS] : [...READ_ONLY_TOOLS],
           warning:
             "This is not a sandbox. pi has no permission system, so a delegate holding `bash` can " +
             "write and delete files whatever its tool list says. Your prompt is the only other guardrail.",

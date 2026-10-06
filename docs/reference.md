@@ -595,6 +595,22 @@ set, they run with the full privileges of this server's process, and some open s
 that outlive the session. Turn it on per call, for the delegates that need it, rather than leaving it
 on by default. It also costs real startup time, which is why it is off unless asked for.
 
+## Codemode
+
+`codemode` lets a delegate write a JavaScript script that calls its other tools, for example
+several `read`s in parallel, and returns only what the script prints. It is Pi's own tool (see
+Pi's `docs/codemode.md`). Authorize it in the bridge's environment and name it in `tools`, or put
+it in `PI_DELEGATE_DEFAULT_TOOLS`:
+
+```json
+"env": { "PI_DELEGATE_ALLOW_TOOLS": "codemode", "PI_DELEGATE_DEFAULT_TOOLS": "read,grep,find,ls,codemode" }
+```
+
+A script can call only the tools the delegate has, and nested calls pass the same secret-path
+guard; they appear in the trace under the script's call and do not count toward `maxToolCalls`.
+Scripts cannot run Pi's models. In a small trial on one task with Gemini 3.8 Flash, codemode did
+not reliably cut tokens: the model used it unevenly, once for 156 nested reads.
+
 ## Native MCP
 
 Pass `nativeMcp: true` and an explicit `mcpServers` list to `spawn`, `run`, or
@@ -656,6 +672,7 @@ MCP for one task in an enabled batch, pass `nativeMcp: false, mcpServers: []`.
 | `PI_DELEGATE_MAX_CONCURRENT`  | `4`              | Hard ceiling across all active delegates in this server process          |
 | `PI_DELEGATE_MAX_TURNS`       | `50`             | Absolute turn ceiling; per-call budgets may only lower it                 |
 | `PI_DELEGATE_MAX_DURATION_MS` | `900000`         | Absolute wall-clock ceiling; per-call deadlines may only lower it         |
+| `PI_DELEGATE_DEFAULT_TOOLS`   | read-only set    | Tools of a call that names none, e.g. `read,grep,find,ls,codemode`; each must be permitted |
 | `PI_DELEGATE_JUDGE`           | off              | `jev` enables the optional `answerState: "narration"` check |
 | `PI_DELEGATE_JUDGE_ENV_FILE`  | none             | Env file holding `TYPESAFE_API_KEY` (or `OPENROUTER_API_KEY`) for the judge |
 | `PI_DELEGATE_STALL_MS`        | off              | End a run as `stalled` after this long without any event while waiting on the model |

@@ -8,7 +8,7 @@ import {
   MAX_TURNS,
   RETENTION_DAYS,
 } from "../config.js";
-import { PERMITTED, READ_ONLY_TOOLS } from "../permissions.js";
+import { DEFAULT_TOOLS, PERMITTED, READ_ONLY_TOOLS } from "../permissions.js";
 import { runExecution, startBatch, startExecution } from "../core.js";
 import { json, waitResult } from "./shared.js";
 
@@ -51,7 +51,7 @@ const spawnShape = {
     .array(z.string())
     .optional()
     .describe(
-      `Tool allowlist for this delegate. Omit for ${READ_ONLY_TOOLS.join(", ")}; [] disables all tools. ` +
+      `Tool allowlist for this delegate. Omit for ${(DEFAULT_TOOLS.length ? DEFAULT_TOOLS : READ_ONLY_TOOLS).join(", ")}; [] disables all tools. ` +
         `Permitted on this server: ${ALLOW_ALL ? "any" : [...PERMITTED].join(", ")}.`,
     ),
   nativeMcp: z.boolean().optional().describe("Enable Pi native MCP independently of third-party extensions. Requires explicit mcpServers and authorized exact tool names, including codemode/tool_search if used."),

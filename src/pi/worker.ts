@@ -9,6 +9,7 @@ import {
   type CreateAgentSessionResult,
   type FileEntry,
   type InlineExtension,
+  createCodemodeExtension,
 } from "@earendil-works/pi-coding-agent";
 import { DurableJob, forgetOwnedJob, MemoryJob, releaseJob, type Checkpoint, type JobStore } from "../durable.js";
 import { AGENT_DIR, RETENTION_DAYS, STALL_MS } from "../config.js";
@@ -252,7 +253,10 @@ export class PiWorker {
       noContextFiles: true,
       extensionFactories: [secretPathGuard(this.cwd),
         ...(this.nativeMcp && this.toolNames.length ? nativeMcpFactories(this.cwd, this.mcpServers) : []),
-        ...(this.nativeMcp ? [this.nativeExecutionJournal()] : [])],
+        // codemode over the built-in tools, opted into by naming it; its model API stays off.
+        ...(!this.nativeMcp && this.toolNames.includes("codemode")
+          ? [{ name: "delegate-codemode", factory: createCodemodeExtension({ mode: "on", models: false }) }] : []),
+        ...(this.nestedCalls ? [this.nativeExecutionJournal()] : [])],
     });
 
     // The loader is lazy: getExtensions() returns nothing until reload() has run.
@@ -339,6 +343,11 @@ export class PiWorker {
   }
 
   /** SDK nested events bypass Agent.subscribe; awaited extension hooks persist them. */
+  /** Tools that run other tools (native MCP, codemode): their nested calls are journalled too. */
+  private get nestedCalls(): boolean {
+    return this.nativeMcp || this.toolNames.includes("codemode");
+  }
+
   private nativeExecutionJournal(): InlineExtension {
     return { name: "delegate-native-journal", hidden: true, factory: (pi) => {
       pi.on("before_agent_start", () => {
@@ -882,7 +891,7 @@ export class PiWorker {
     this.unsubscribe?.();
     this.journalUnsubscribe?.();
     const session = this.session;
-    if (this.nativeMcp && session) {
+    if (this.nestedCalls && session) {
       // dispose() does not emit session_shutdown; native transports need that event.
       this.nativeClose ??= session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" })
         .then(() => {}).finally(() => session.dispose());
