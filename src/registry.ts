@@ -14,7 +14,7 @@ import { PiWorker, type WorkerOptions } from "./pi/worker.js";
 import { resolveDelegateCwd } from "./workspace.js";
 import type { PiThinkingLevel, TerminationReason } from "./types.js";
 import { publish } from "./statusline/state.js";
-import { claimAbandonedSettled, claimStored, jitter, unclaim, forgetOwnedJob, releaseJob, storageBytes, storedIdInUse, sweep } from "./durable.js";
+import { claimAbandonedSettled, claimStored, jitter, unclaim, forgetOwnedJob, RecoveryStopped, releaseJob, storageBytes, storedIdInUse, sweep } from "./durable.js";
 import { validateNativeMcp, type NativeMcpOptions } from "./pi/native-mcp.js";
 import { checkSavePath, saveDirPath } from "./save.js";
 
@@ -178,10 +178,13 @@ export async function recoverAbandoned(): Promise<void> {
   if (shuttingDown) return;
   if (recovering) return recovering;
   recovering = (async () => {
+    // Failed this round: retried on a later tick, not at once, so a passing failure cannot spend
+    // every attempt within milliseconds.
+    const failed = new Set<string>();
     while (!shuttingDown && activeCount() < MAX_CONCURRENT) {
       // A budget read at each claim attempt, so a retry after waiting sees current capacity and shutdown.
       const records = await claimAbandonedSettled(() => shuttingDown ? undefined
-        : { excludeIds: new Set(sessions.keys()), limit: Math.max(0, MAX_CONCURRENT - activeCount()) });
+        : { excludeIds: new Set([...sessions.keys(), ...failed]), limit: Math.max(0, MAX_CONCURRENT - activeCount()) });
       if (!records.length) break;
       // Shutdown can begin while the claim's promise settles (in the same task). The claim then
       // goes back unused: suspendAll has already taken its snapshot of the workers.
@@ -200,10 +203,20 @@ export async function recoverAbandoned(): Promise<void> {
           await PiWorker.recover({ ...record.options, durable: true }, record.prompt, record.key, worker);
           void worker.run?.then(() => { evictHistory(); sweepStorage(); setImmediate(() => void recoverAbandoned()); });
         } catch (error) {
-          worker.state = "error";
-          worker.error = `Recovery failed: ${String(error)}`;
-          worker.finishedAt = new Date().toISOString();
           process.stderr.write(`[pi-delegate] recovery failed for ${record.options.id}: ${String(error)}\n`);
+          if (error instanceof RecoveryStopped) {
+            // Past its attempts: keep the lock and show the error, so no process retries it forever.
+            worker.state = "error";
+            worker.error = `Recovery failed: ${String(error)}`;
+            worker.finishedAt = new Date().toISOString();
+          } else {
+            // Possibly passing (auth, runtime start): hand it back with the attempt counted, so the
+            // next tick here or elsewhere retries it until the attempts run out.
+            failed.add(worker.id);
+            sessions.delete(worker.id);
+            worker.dispose();
+            releaseJob(record.key);
+          }
         }
       }
     }

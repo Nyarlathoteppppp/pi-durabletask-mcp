@@ -136,6 +136,9 @@ function db(): DatabaseSync {
  * Claim unowned jobs. The lock decides ownership; the row is read again after locking because a
  * concurrent forget deletes the row before it releases the lock.
  */
+/** A job past its recovery attempts: kept by the claiming process and reported, never retried. */
+export class RecoveryStopped extends Error {}
+
 /**
  * `contended` counts jobs whose lock was busy. Usually a live owner holds it, but two processes
  * claiming the same job at the same instant can also both see it busy and both back off: each
@@ -429,7 +432,7 @@ export class DurableJob implements JobStore {
       // Judged only here, where the task is known to be unfinished, so finished history is never
       // reported as exhausted. The caller keeps the lock, so no other host retries it either.
       if (job.needsResume && attempts > MAX_RECOVERY_ATTEMPTS)
-        throw new Error(`Recovery stopped: the job was claimed ${attempts} times without completing a turn. ` +
+        throw new RecoveryStopped(`Recovery stopped: the job was claimed ${attempts} times without completing a turn. ` +
           "Inspect it, then forget it.");
       job.task = Task;
       return job;
