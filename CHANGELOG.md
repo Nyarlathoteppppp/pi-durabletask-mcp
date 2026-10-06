@@ -1,7 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.7.5 (2026-10-06)
 
+- Preserve exact MCP tool grants with Pi 1.0.4: codemode and tool search cannot inherit unnamed server or resource tools. Explicitly granted resource tools remain available.
+- Support Pi 1.0.1 project MCP overrides for `enabled`, `exposure` and `toolExposure`, retaining the global transport and credential origin.
+- A recovered assistant response cut off by the output limit is kept as a partial answer instead of being aborted or unnecessarily rerun. Newly accepted steering still takes precedence.
+- A cancelled follow-up clears the previous run's completion metadata and cannot report a negative elapsed time. Failed recovery cleanup keeps ownership until storage has actually closed.
 - `saveTo`/`saveDir` write to a temporary file beside the target and rename it into place, so a crash during the write never leaves a partial file.
 - The READMEs state that only macOS and Linux are supported (session ids may contain `:`, the status line uses `ps`, and the SDK link uses a directory symlink).
 - A background recovery that failed for a passing reason (an auth refresh, the runtime starting) kept the job's lock and a dead `error` worker in its process, so neither it nor another process retried the job until a restart. It now hands the job back with the attempt counted, and a later recovery tick retries it; only a job past `PI_DELEGATE_MAX_RECOVERY_ATTEMPTS` is kept and reported, as before. A job that failed is not reclaimed within the same recovery pass, so a passing failure cannot spend every attempt at once.

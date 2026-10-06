@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 
 // ---------------------------------------------------------------------------
 // 1. In-process Fixture Branch: run when process.argv[2] === "fixture"
@@ -66,6 +67,10 @@ if (process.argv[2] === "fixture") {
       };
     },
   );
+
+  server.resource("fixture-text", "fixture://text", async (uri) => ({
+    contents: [{ uri: uri.href, text: "FIXTURE_RESOURCE" }],
+  }));
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
@@ -150,7 +155,9 @@ if (process.argv[2] === "fixture") {
             function: {
               name: "codemode",
               arguments: JSON.stringify({
-                code: 'await tools.mcp__coded__effect({ payload: "illegal-mutation" }); return "HACKED";',
+                code: userPrompt.includes("RESOURCE")
+                  ? 'await searchTools("fixture"); text(await tools.list_mcp_resources({ server: "coded" }));'
+                  : 'await tools.mcp__coded__effect({ payload: "illegal-mutation" }); return "HACKED";',
               }),
             },
           },
@@ -296,7 +303,7 @@ if (process.argv[2] === "fixture") {
           PI_DELEGATE_MODEL: "test/one",
           PI_DELEGATE_ALLOW_WRITE: "0",
           PI_DELEGATE_ALLOW_TOOLS:
-            "mcp__direct__echo,mcp__coded__echo,mcp__deferred__echo,codemode,tool_search",
+            "mcp__direct__echo,mcp__coded__echo,mcp__deferred__echo,codemode,tool_search,list_mcp_resources",
           PI_DELEGATE_IGNORE_SCOPE: "1",
         },
       }),
@@ -450,6 +457,23 @@ if (process.argv[2] === "fixture") {
     }
     assert.equal(effectFileExists, false, "Unauthorized effect must not write to effects file");
 
+    console.log("[7b] Codemode/search without named MCP tools cannot inherit server tools");
+    for (const tools of [["codemode"], ["codemode", "tool_search"]]) {
+      const blocked = await call("run", { cwd: dir, verbose: true, nativeMcp: true, mcpServers: ["coded"],
+        prompt: "TRIGGER_CODEMODE_BLOCKED_EFFECT", tools, maxTurns: 5 });
+      assert.match(blocked.lastText, /mcp__coded__effect does not exist/);
+      assert.ok(blocked.toolCalls.some(tc => tc.name === "codemode" && tc.state === "error"));
+      await assert.rejects(readFile(effectsFile, "utf8"), { code: "ENOENT" });
+    }
+
+    console.log("[7c] MCP resource tools also require explicit authorization");
+    const blockedResource = await call("run", { cwd: dir, nativeMcp: true, mcpServers: ["coded"],
+      prompt: "TRIGGER_CODEMODE_BLOCKED_EFFECT RESOURCE", tools: ["codemode"], maxTurns: 5 });
+    assert.match(blockedResource.lastText, /list_mcp_resources does not exist/);
+    const allowedResource = await call("run", { cwd: dir, nativeMcp: true, mcpServers: ["coded"],
+      prompt: "TRIGGER_CODEMODE_BLOCKED_EFFECT RESOURCE", tools: ["codemode", "list_mcp_resources"], maxTurns: 5 });
+    assert.match(allowedResource.lastText, /fixture-text/);
+
     // -------------------------------------------------------------------------
     // Scenario 8: tool_search (deferred exposure) search and call
     // -------------------------------------------------------------------------
@@ -467,6 +491,12 @@ if (process.argv[2] === "fixture") {
     assert.equal(s8.state, "done");
     assert.ok(s8.toolCalls.some((tc) => tc.name === "tool_search"));
     assert.ok(s8.toolCalls.some((tc) => tc.name === "mcp__deferred__echo"));
+
+    const searchOnly = await call("run", { cwd: dir, verbose: true, nativeMcp: true, mcpServers: ["deferred"],
+      prompt: "TRIGGER_DEFERRED_SEARCH", tools: ["tool_search"], maxTurns: 5 });
+    assert.match(searchOnly.lastText, /Tool mcp__deferred__echo not found/);
+    assert.ok(!searchOnly.toolCalls.some(tc => tc.name === "mcp__deferred__echo" && tc.state === "ok"),
+      "search does not authorize unnamed MCP tools");
 
     // -------------------------------------------------------------------------
     // Scenario 9: forget closes corresponding MCP child process
@@ -499,6 +529,36 @@ if (process.argv[2] === "fixture") {
       else assert.deepEqual((await call("status", { sessionId: id })).activeTools, []);
       await call("forget", { sessionId: id });
     }
+
+    console.log("[10] Trusted project overrides preserve the global transport");
+    await mkdir(join(dir, ".pi"));
+    new ProjectTrustStore(agentDir).set(dir, true);
+    const projectConfig = join(dir, ".pi", "mcp.json");
+    const globalConfig = JSON.parse(await readFile(join(agentDir, "mcp.json"), "utf8"));
+    globalConfig.mcpServers.direct.enabled = false;
+    await writeFile(join(agentDir, "mcp.json"), JSON.stringify(globalConfig));
+    await writeFile(projectConfig, JSON.stringify({ mcpServers: {
+      direct: { enabled: true, exposure: "direct", toolExposure: { echo: "direct" } },
+    } }));
+    const overridden = await call("run", { cwd: dir, nativeMcp: true, mcpServers: ["direct"],
+      prompt: "TRIGGER_DIRECT", tools: ["mcp__direct__echo"], maxTurns: 5 });
+    assert.equal(overridden.state, "done", overridden.error);
+    assert.match(overridden.lastText, /echo:direct:hello-direct/, "the override keeps command, args and env");
+
+    await writeFile(projectConfig, JSON.stringify({ mcpServers: { direct: { enabled: false } } }));
+    const disabled = await raw("spawn", { cwd: dir, nativeMcp: true, mcpServers: ["direct"], prompt: "x" });
+    assert.equal(disabled.isError, true);
+    assert.match(disabled.content[0].text, /disabled/);
+
+    await writeFile(projectConfig, JSON.stringify({ mcpServers: { missing: { exposure: "direct" } } }));
+    const missingBase = await raw("spawn", { cwd: dir, nativeMcp: true, mcpServers: ["missing"], prompt: "x" });
+    assert.equal(missingBase.isError, true, "an override needs a global server");
+
+    await writeFile(projectConfig, JSON.stringify({ mcpServers: { direct: {
+      exposure: "direct", auth: { provider: "test" },
+    } } }));
+    const credentials = await raw("spawn", { cwd: dir, nativeMcp: true, mcpServers: ["direct"], prompt: "x" });
+    assert.equal(credentials.isError, true, "project overrides cannot add authentication or other transport fields");
     console.log("  OK -> native direct/codemode/deferred calls, opt-in, precise permissions, batch inheritance and transport cleanup");
   } finally {
     await client.close();

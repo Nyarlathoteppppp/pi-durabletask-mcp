@@ -274,6 +274,11 @@ export class PiWorker {
       thinkingLevel: this.thinkingSpec,
       sessionManager: SessionManager.inMemory(this.cwd, undefined, saved ? repairEntries(saved) : undefined),
       tools: this.toolNames,
+      // Pi 1.0.4 keeps MCP tools implicitly when no mcp__ name is selected. Delegates
+      // require explicit tool grants, including MCP resource tools without that prefix.
+      excludeTools: this.toolNames.some((name) => name.startsWith("mcp__")) ? undefined
+        : ["mcp__*", "list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource"]
+          .filter((name) => !this.toolNames.includes(name)),
       customTools: this.toolNames.includes("grep") ? [defineTool(createProtectedGrepTool(this.cwd))] : [],
       resourceLoader,
     });
