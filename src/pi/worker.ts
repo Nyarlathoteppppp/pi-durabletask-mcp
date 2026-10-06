@@ -161,6 +161,13 @@ export class PiWorker {
     this.questions.clear();
   }
 
+  /** The previous run's text, saved file and answer flag, which a new run replaces. */
+  private clearResult(): void {
+    this.lastText = "";
+    this.answerFlag = undefined;
+    this.saved = undefined;
+  }
+
   private newRun(): WorkerRun {
     this.currentRun.clearTimers();
     return this.currentRun = new WorkerRun(this.currentRun.startedAt);
@@ -418,9 +425,7 @@ export class PiWorker {
       this.currentRun.startedAt = new Date().toISOString();
       // From here this follow_up replaces the previous result, even if it is cancelled before Pi runs;
       // a follow_up refused above leaves that result as it was.
-      this.lastText = "";
-      this.answerFlag = undefined;
-      this.saved = undefined;
+      this.clearResult();
     }
     if (!alreadyStopped && this.state !== "aborted") {
       this.state = "running";
@@ -541,11 +546,9 @@ export class PiWorker {
   private track(session: AgentSession, prompt: string, run = this.newRun()): Promise<void> {
     this.state = "running";
     this.error = undefined;
-    this.lastText = "";
     this.finishedAt = undefined;
     this.termination = undefined;
-    this.answerFlag = undefined;
-    this.saved = undefined;
+    this.clearResult();
     run.prompt = prompt;
     run.lastActivityAt = Date.now();
     // A run with one turn left, or a session with maxTurns 1, has only its answer turn.
@@ -800,6 +803,8 @@ export class PiWorker {
         at: new Date().toISOString(),
       };
     const termination = this.termination;
+    // Cancelling a run that is still starting: the previous result is superseded, not this run's.
+    if (this.state === "starting") this.clearResult();
     this.state = "aborted";
     // Extension dialogs do not automatically observe the agent's abort signal.
     const session = this.session;

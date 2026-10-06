@@ -125,6 +125,8 @@ try {
       const followUp = worker.followUp("next");
       await entered.promise;
       await worker.abort("caller_cancelled");
+      // Already while authentication is still pending.
+      assert.deepEqual([worker.snapshot().savedTo, worker.snapshot().lastText], [undefined, ""], `durable=${durable}: at once`);
       release.resolve();
       await followUp;
       await worker.run;
