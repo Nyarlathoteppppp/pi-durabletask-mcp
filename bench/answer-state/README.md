@@ -18,3 +18,23 @@ stalled) are decided by rules and are not part of this benchmark.
 - Model input per item: the task's first 400 characters and the final text's last 1500.
 
 Results are appended below; only aggregates are published.
+
+## Run 1: development set (the 102 items above), 2026-10-06
+
+`jev-latest` via TypeSafe, prompt as in `src/judge.ts`, 5 s timeout for measurement.
+
+| threshold on Jev's probability | reported | wrong | narration caught |
+|---|---|---|---|
+| none (0.5) | 102 | 7 (4 complete called narration) | 26/29 |
+| 0.7 | 93 | 3 | 26/29 |
+| **0.8** | **88** | **1** | **26/29** |
+| 0.9 | 81 | 1 | 23/29 |
+| 0.95 | 69 | 0 | 22/29 |
+
+Latency p50 about 250 ms, p95 about 300-400 ms; no failed calls. Of the 7 errors at 0.5, two
+had no task text (a server always has one), two were mid-run texts with interim findings, and one
+label looks wrong in hindsight (a progress report answering "how is it going?").
+
+**Frozen policy (chosen on this set, to be confirmed on a held-out set):** report only problems.
+`answerState: "narration"` when Jev says narration with probability >= 0.8; nothing when it says
+complete, is less sure, or fails. `missing` and `partial` come from rules.
