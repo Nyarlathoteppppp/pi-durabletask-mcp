@@ -2,6 +2,14 @@
 
 修改 Worker、取消或恢复逻辑前，先读 [生命周期与持久化时序](docs/worker-lifecycle.md)。其中列出了完成条件、SDK 事件顺序和对应测试。
 
+## Grok 审查使用建议（2026-10-06）
+
+- 实测：`xai/grok-4.7` high 审查本轮修复时持续有事件，但撞上 6 分钟 `deadline`；`follow_up` 续接已读上下文后交出结论。这个案例是任务时限耗尽，未观察到线路错误。
+- 下次建议默认 `thinking: "medium"`、`maxDurationMs: 900000`（15 分钟，受 host 上限约束）；复杂问题再用 high。medium 是待验证的使用建议，尚未做档位对比。
+- 给 diff、指定文件与重点，要求只报告确定问题、结论不超过 400 字。`phase: model` 且 `idleMs` 持续小只说明有事件，不保证有效进展。
+- `wait` 超时后继续等；`termination.reason: deadline` 表示任务已停，有剩余轮次时用 `follow_up` 要求基于已读内容直接总结。轮数与工具次数仍累计，时间预算按 run 重置。
+- OAuth 刷新失败需重新登录 xAI；`429 quota exceeded` 需等额度或换到用户授权的 provider，避免原样反复重试。
+
 ## 下一阶段：故障注入测试（交给 Codex，2026-10-06）
 
 不要再堆正常流程的单元测试。目标是 durable 任务的完整链路：认领锁 → 打开 SQLite/Harness → 存检查点 → 模型完成 → Jev 判断 → 写 `saveTo` 文件 → `recordFinal` → 释放锁。在每个 await 和提交的边界强制杀掉进程一次（SIGKILL），重启一个新的 MCP 进程后检查不变量：
