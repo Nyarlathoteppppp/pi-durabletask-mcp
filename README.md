@@ -50,7 +50,7 @@ To collect results, the main agent loops `wait` with `until: "settled"`. If Pi a
 
 ## Quick start
 
-**Requires Node.js 22.19+ and global Pi.** CI-tested with Pi **1.0.0 and 1.0.2**. Model calls use your own provider credentials and quota.
+**Requires macOS or Linux, Node.js 22.19+ and global Pi.** CI-tested with Pi **1.0.0 and 1.0.4**; Windows is not supported. Model calls use your own provider credentials and quota.
 
 ### 1 · Install
 

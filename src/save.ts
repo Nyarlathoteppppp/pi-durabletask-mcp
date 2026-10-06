@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import { blockedSecretPath } from "./secrets.js";
 
@@ -18,7 +18,15 @@ export function checkSavePath(path: string, name = "saveTo"): void {
 export async function saveText(path: string, text: string): Promise<{ savedTo: string; savedChars: number }> {
   checkSavePath(path);
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, text, "utf8");
+  // Written beside the target and renamed into place, so a crash never leaves a partial file there.
+  const temporary = `${path}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    await writeFile(temporary, text, "utf8");
+    await rename(temporary, path);
+  } catch (error) {
+    await rm(temporary, { force: true }).catch(() => {});
+    throw error;
+  }
   return { savedTo: path, savedChars: text.length };
 }
 
