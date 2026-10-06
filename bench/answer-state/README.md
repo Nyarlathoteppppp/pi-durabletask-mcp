@@ -45,3 +45,21 @@ complete, is less sure, or fails. `missing` and `partial` come from rules.
 16 of them biased towards short or "Let me…/接下来…" openings. Labelled independently by Claude and
 GPT-6.1 sol; 58 agreed (55 complete, 3 narration), 1 dropped (an answer that also promised an undone
 action). sha256 of `private/heldout.json`: `648775a3203bb50e4014cb9e43cbecdfc6318de8b589bc2ae08c49e244ad937e`.
+
+## Run 2: held-out set, frozen policy, 2026-10-06
+
+| threshold | reported | wrong | narration caught |
+|---|---|---|---|
+| 0.5 | 58 | 4 (3 complete called narration) | 2/3 |
+| **0.8 (frozen)** | **46** | **1** | **1/3** |
+| 0.95 | 36 | 0 | 1/3 |
+
+Under the frozen policy the server would have reported `narration` twice: one correct ("I'll split
+Apple utterance tracking…", p 0.99) and one false (a short status note that was in fact the
+conclusion: "the sub-review is already folded into the report, no new findings", p 0.85). A real
+narration ("接着改选择器、组合根和 Home 文案。") scored only 0.65, and a refusal was called complete.
+Latency p50 237 ms, p95 275 ms, no failed calls.
+
+**Conclusion: not shipped.** On a realistic mix, where narration is rare, one false alarm per true
+catch is not the "certain and clearly useful" bar this server applies to Jev. 0.95 had no errors on
+either set, but it was not chosen in advance; using it needs a third held-out set, frozen first.

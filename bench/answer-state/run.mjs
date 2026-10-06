@@ -1,12 +1,13 @@
 // Replays the frozen ground truth through the shipped judge (dist/judge.js) and prints aggregates.
 // Per-item results go to private/, which is not committed.
-// Usage: PI_DELEGATE_JUDGE_ENV_FILE=/path/.env node bench/answer-state/run.mjs [timeoutMs]
+// Usage: PI_DELEGATE_JUDGE_ENV_FILE=/path/.env node bench/answer-state/run.mjs [gt|heldout] [timeoutMs]
 import { readFileSync, writeFileSync } from "node:fs";
 import { classifyAnswer } from "../../dist/judge.js";
 
 const here = new URL(".", import.meta.url).pathname;
-const gt = JSON.parse(readFileSync(`${here}private/gt.json`, "utf8"));
-const timeoutMs = Number(process.argv[2] ?? 5000);
+const set = process.argv[2] ?? "gt";
+const gt = JSON.parse(readFileSync(`${here}private/${set}.json`, "utf8"));
+const timeoutMs = Number(process.argv[3] ?? 5000);
 await classifyAnswer("warm-up", "OK", timeoutMs); // cold start is slower than steady state
 const results = [];
 for (let i = 0; i < gt.length; i += 4) {
@@ -16,7 +17,7 @@ for (let i = 0; i < gt.length; i += 4) {
     return { id: item.id, label: item.label, got: r?.choice, p: r?.p, ms: Math.round(performance.now() - started) };
   })));
 }
-writeFileSync(`${here}private/results-${Date.now()}.json`, JSON.stringify(results, null, 1));
+writeFileSync(`${here}private/results-${set}-${Date.now()}.json`, JSON.stringify(results, null, 1));
 const count = (f) => results.filter(f).length;
 const ms = results.map((r) => r.ms).sort((a, b) => a - b);
 const summary = {
