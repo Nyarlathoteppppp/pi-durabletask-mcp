@@ -21,7 +21,7 @@ Results are appended below; only aggregates are published.
 
 ## Run 1: development set (the 102 items above), 2026-10-06
 
-`jev-latest` via TypeSafe, prompt as in `judge.mjs`, 5 s timeout for measurement.
+`jev-latest` via TypeSafe, prompt as in `src/judge.ts`, 5 s timeout for measurement.
 
 | threshold on Jev's probability | reported | wrong | narration caught |
 |---|---|---|---|

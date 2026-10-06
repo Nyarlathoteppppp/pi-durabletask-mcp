@@ -191,6 +191,42 @@ At most 20 files, 256 KiB each and 1 MiB in total; files must be UTF-8 text. Sec
 inlined once when the call is made: a durable session stores the expanded prompt, and recovery
 never reads the files again. Attaching a file sends it to the delegate's model provider.
 
+## Saving results to a file
+
+A delegate's final text can be long. When the caller only needs it in a file, declare the file
+when starting the work, and the text is not returned into the caller's context: `saveTo` (an
+absolute file path) on `spawn`, `run` and `follow_up`, or `saveDir` (an absolute directory, one
+`<sessionId>.md` per task) on `spawn_batch`.
+
+```json
+{ "cwd": "/repo", "prompt": "Review the attached diff.", "saveTo": "/tmp/scratch/review.md" }
+```
+
+When the run finishes as `done` with text, the server writes it before reporting the run
+finished, so the caller's final `wait` already shows `savedTo` and `savedChars` (characters, not
+bytes) instead of `lastText`; `status` does the same, and `verbose: true` still includes the
+text. Parent directories are created and an existing file is overwritten; two sessions given the
+same path end with the later one. Bad or secret paths are refused before anything starts. A
+failed write keeps `lastText` and adds `saveError`. Aborted or failed runs, and runs with no
+text, write nothing. Each run states its own file: a `follow_up` without `saveTo` returns its text
+inline. The destination is kept in memory only, so a durable run recovered after a restart
+returns its text inline. `wait` and `status` never write files and stay read-only.
+
+## Checking that a result is a conclusion
+
+Finished results can carry `answerState` when the final text is not a usable conclusion:
+`missing` (no text), `partial` (cut off by the model's output limit) and, only with the optional
+judge, `narration` (the text only announces or plans work, reports progress, asks the caller for
+information, or refuses). Absent means nothing was detected, not that the text is right.
+
+The judge is Jev, TypeSafe's fast classification model, enabled with `PI_DELEGATE_JUDGE=jev` and a
+key in `TYPESAFE_API_KEY` (or `OPENROUTER_API_KEY` as a fallback), or in an env file named by
+`PI_DELEGATE_JUDGE_ENV_FILE`. It is asked once per finished run, before the run is reported
+finished, with a 1.5 s limit; on failure there is no judgement. It reports `narration` only at
+probability 0.95 or more. On the project's benchmark that gave no false alarms but caught about two
+thirds of narration on the development set and one in three on a small held-out set; see
+`bench/answer-state/README.md`. The task and final text are sent to TypeSafe.
+
 ## Giving a delegate another turn
 
 A finished delegate can continue with `follow_up`, keeping what it already read in context.
@@ -620,6 +656,8 @@ MCP for one task in an enabled batch, pass `nativeMcp: false, mcpServers: []`.
 | `PI_DELEGATE_MAX_CONCURRENT`  | `4`              | Hard ceiling across all active delegates in this server process          |
 | `PI_DELEGATE_MAX_TURNS`       | `50`             | Absolute turn ceiling; per-call budgets may only lower it                 |
 | `PI_DELEGATE_MAX_DURATION_MS` | `900000`         | Absolute wall-clock ceiling; per-call deadlines may only lower it         |
+| `PI_DELEGATE_JUDGE`           | off              | `jev` enables the optional `answerState: "narration"` check |
+| `PI_DELEGATE_JUDGE_ENV_FILE`  | none             | Env file holding `TYPESAFE_API_KEY` (or `OPENROUTER_API_KEY`) for the judge |
 | `PI_DELEGATE_STALL_MS`        | off              | End a run as `stalled` after this long without any event while waiting on the model |
 | `PI_DELEGATE_RUN_TURNS`       | `12`             | Default turn budget for blocking `run`                                   |
 | `PI_DELEGATE_RUN_DURATION_MS` | `300000`         | Default wall-clock deadline for blocking `run`                           |

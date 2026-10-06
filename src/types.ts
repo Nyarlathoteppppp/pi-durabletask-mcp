@@ -82,6 +82,17 @@ export interface Snapshot extends FollowUpInfo {
   durable: boolean;
   /** Days kept on disk after finishing; absent for non-durable delegates. */
   retentionDays?: number | undefined;
+  /**
+   * Finished runs whose final text is not a usable conclusion: "missing" (no text), "partial" (cut off by
+   * the output limit), "narration" (the optional judge is confident it only announces or plans work).
+   * Absent means no problem was detected, not that the text is correct.
+   */
+  answerState?: "missing" | "partial" | "narration" | undefined;
+  /** The final text was written to this file (the caller asked with saveTo); compact results omit it. */
+  savedTo?: string | undefined;
+  savedChars?: number | undefined;
+  /** Writing the final text failed; it is returned inline instead. */
+  saveError?: string | undefined;
   /** While running: ms since the delegate last produced any event, and what it is waiting on. */
   idleMs?: number | undefined;
   phase?: "model" | "tool" | "agent" | undefined;

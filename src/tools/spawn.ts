@@ -32,6 +32,7 @@ const attachments = z.array(z.string()).optional();
 const spawnShape = {
   prompt: z.string().describe("The task for the pi agent"),
   attachments: attachments.describe(ATTACHMENTS_HELP),
+  saveTo: z.string().optional().describe("Absolute file path: when the run finishes, its final text is written there and results show savedTo instead"),
   model: z.string().optional().describe('Omit for the configured default. Use "provider/modelId" from the models tool to choose another.'),
   thinking: z
     .enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"])
@@ -128,6 +129,7 @@ export function registerSpawn(server: McpServer): void {
       inputSchema: {
         tasks: z.array(taskShape).min(1).max(BATCH_MAX).describe(`1 to ${BATCH_MAX} delegates to start`),
         attachments: attachments.describe(`Default for every task in this batch. ${ATTACHMENTS_HELP}`),
+        saveDir: z.string().optional().describe("Absolute directory: each finished task's final text is written to <sessionId>.md there"),
         model: z.string().optional().describe("Default model for every task in this batch"),
         thinking: z
           .enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"])

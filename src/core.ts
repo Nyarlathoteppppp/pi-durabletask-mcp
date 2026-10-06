@@ -7,6 +7,7 @@ import type { LaunchRequest } from "./registry.js";
 import { storedJobs, storedSnapshot } from "./durable.js";
 import { compactSnapshot, message } from "./pi/worker.js";
 import { withAttachments } from "./attachments.js";
+import { checkSavePath } from "./save.js";
 import type { PiWorker } from "./pi/worker.js";
 import type { Snapshot } from "./types.js";
 import type { FollowUpInfo } from "./continuation.js";
@@ -118,17 +119,19 @@ const WAIT_HINT = "Call wait with this sessionId, until \"settled\".";
 export interface BatchRequest extends Omit<LaunchRequest, "prompt" | "id" | "label"> {
   tasks: AttachedRequest[];
   attachments?: string[] | undefined;
+  saveDir?: string | undefined;
   idPrefix?: string;
 }
 
 export async function startBatch({
   tasks, model, thinking, cwd, tools, extensions, durable, nativeMcp, mcpServers,
-  maxTurns, maxDurationMs, retentionDays, idPrefix, attachments,
+  maxTurns, maxDurationMs, retentionDays, idPrefix, attachments, saveDir,
 }: BatchRequest) {
   const width = Math.max(String(tasks.length).length, 2);
   const merged = tasks.map((t, i) => ({
     prompt: t.prompt,
     attachments: t.attachments ?? attachments,
+    saveDir,
     label: t.label,
     model: t.model ?? model,
     thinking: t.thinking ?? thinking,
@@ -340,6 +343,10 @@ export interface WaitSummary extends FollowUpInfo {
   error?: string;
   termination?: Snapshot["termination"];
   usage?: Snapshot["usage"];
+  savedTo?: string;
+  savedChars?: number;
+  saveError?: string;
+  answerState?: Snapshot["answerState"];
   idleMs?: number;
   phase?: Snapshot["phase"];
 }
@@ -362,7 +369,9 @@ export async function waitForMany(
       sessionId: s.sessionId, label: s.label, state: s.state, turns: s.turns, toolCallCount: s.toolCallCount,
       pendingQuestions: s.questions.length,
       ...(s.questions.length ? { questions: s.questions } : {}),
-      ...(done ? { lastText: s.lastText } : {}),
+      ...(done ? (s.savedTo ? { savedTo: s.savedTo, savedChars: s.savedChars } : { lastText: s.lastText }) : {}),
+      ...(s.saveError ? { saveError: s.saveError } : {}),
+      ...(s.answerState ? { answerState: s.answerState } : {}),
       ...(s.error ? { error: s.error } : {}),
       ...(s.termination ? { termination: s.termination } : {}),
       ...(done && s.usage ? { usage: s.usage } : {}),
@@ -390,15 +399,20 @@ export async function resolveInteraction(sessionId: string, requestId: string, v
   return (await resolve(sessionId)).answer(requestId, value);
 }
 
-export async function followUp(sessionId: string, prompt: string, attachments?: string[]) {
+export async function followUp(sessionId: string, prompt: string, attachments?: string[], saveTo?: string) {
   const text = await withAttachments(prompt, attachments);
+  if (saveTo !== undefined) checkSavePath(saveTo);
   const worker = await resolve(sessionId);
   // forget/eviction can remove a worker while resolve is finishing a shared lazy load.
   if (loaded(sessionId) !== worker)
     throw new Error(`Session ${sessionId} was forgotten or unloaded while loading. Check status before follow_up.`);
   // Let the worker produce the more useful "use steer" error for a live session.
   if (!worker.isActive) assertCapacity();
-  return { ...await worker.followUp(text), state: observedState(worker), next: WAIT_HINT };
+  // Each run states its own destination; a follow_up without saveTo returns its text inline.
+  const previousSaveTo = worker.saveTo;
+  worker.saveTo = saveTo;
+  try { return { ...await worker.followUp(text), state: observedState(worker), next: WAIT_HINT }; }
+  catch (error) { worker.saveTo = previousSaveTo; throw error; }
 }
 
 export async function cancelExecution(sessionId: string) {

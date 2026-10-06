@@ -12,6 +12,8 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { DurableJob, forgetOwnedJob, MemoryJob, releaseJob, type Checkpoint, type JobStore } from "../durable.js";
 import { AGENT_DIR, RETENTION_DAYS, STALL_MS } from "../config.js";
+import { JUDGE_ENABLED, judgeAnswer } from "../judge.js";
+import { saveText } from "../save.js";
 import { followUpInfo } from "../continuation.js";
 import { secretPathGuard } from "../secrets.js";
 import { createProtectedGrepTool } from "./search.js";
@@ -118,6 +120,11 @@ export class PiWorker {
   recoveryKey: string | undefined;
   private journalUnsubscribe: (() => void) | undefined;
   private suspended = false;
+  /** File the next finished run's text goes to, set by whoever starts the run; kept in memory only. */
+  saveTo: string | undefined;
+  private saved: { savedTo: string; savedChars: number } | { saveError: string } | undefined;
+  /** Set when a run finishes: cut off, or judged narration. "missing" is derived from lastText. */
+  private answerFlag: "partial" | "narration" | undefined;
   private recordingStopped = false;
   private inputStarted = false;
   private readonly results: Checkpoint["results"] = {};
@@ -370,6 +377,9 @@ export class PiWorker {
     this.error = snapshot.error;
     this.finishedAt = snapshot.finishedAt;
     this.termination = snapshot.termination;
+    this.answerFlag = snapshot.answerState === "missing" ? undefined : snapshot.answerState;
+    this.saved = snapshot.savedTo ? { savedTo: snapshot.savedTo, savedChars: snapshot.savedChars ?? 0 }
+      : snapshot.saveError ? { saveError: snapshot.saveError } : undefined;
     this.toolCalls.splice(0, this.toolCalls.length, ...snapshot.toolCalls as ToolCall[]);
     this.notices.splice(0, this.notices.length, ...snapshot.notices);
     this.inputStarted = saved.inputStarted;
@@ -527,6 +537,9 @@ export class PiWorker {
     this.lastText = "";
     this.finishedAt = undefined;
     this.termination = undefined;
+    this.answerFlag = undefined;
+    this.saved = undefined;
+    run.prompt = prompt;
     run.lastActivityAt = Date.now();
     // A run with one turn left, or a session with maxTurns 1, has only its answer turn.
     if (this.turns >= this.maxTurns - 1) this.lastTurn(session);
@@ -550,14 +563,32 @@ export class PiWorker {
     const execution = session
       .prompt(prompt)
       .then(() => session.waitForIdle())
-      .then(() => {
+      .then(async () => {
         if (this.currentRun !== run || this.state === "aborted" || this.suspended) return;
         if (run.providerError !== undefined) {
           this.state = "error";
           this.error = run.retriesExhausted
             ? `${run.providerError} (after ${run.retriesExhausted} automatic retries; consider another provider)`
             : run.providerError;
-        } else this.state = "done";
+          return;
+        }
+        // Judge before the run counts as finished, so the caller's final wait carries the result.
+        if (run.stopReason === "length") this.answerFlag = "partial";
+        else if (JUDGE_ENABLED && this.lastText.trim()) {
+          const verdict = await judgeAnswer(run.prompt, this.lastText);
+          // An abort during the call sets termination; this run is then not done.
+          if (this.currentRun !== run || this.suspended || this.termination) return;
+          this.answerFlag = verdict;
+        }
+        if (this.saveTo && this.lastText.trim()) {
+          const path = this.saveTo;
+          const saved = await saveText(path, this.lastText).catch((error: unknown) => ({ saveError: message(error) }));
+          if (this.currentRun !== run) return;
+          // Reported even if an abort arrived meanwhile: the file exists either way.
+          this.saved = saved;
+          if (this.suspended || this.termination) return;
+        }
+        this.state = "done";
       })
       .catch((e: unknown) => {
         if (this.currentRun === run && this.state !== "aborted" && !this.suspended) {
@@ -701,6 +732,7 @@ export class PiWorker {
         // Only the latest assistant message counts, so a turn that recovers after a retry is not failed.
         if (ev.message.role === "assistant") {
           this.currentRun.awaitingModel = false;
+          this.currentRun.stopReason = ev.message.stopReason;
           this.currentRun.providerError =
             ev.message.stopReason === "error" ? ev.message.errorMessage || "provider error" : undefined;
           this.lastText = ev.message.content
@@ -855,6 +887,8 @@ export class PiWorker {
       durable: this.durable,
       retentionDays: this.retentionDays,
       usage: this.usage(),
+      ...this.answerState(),
+      ...(this.saved ?? {}),
       ...this.continuation,
       ...this.liveness(),
     };
@@ -871,6 +905,13 @@ export class PiWorker {
     if (this.state !== "running" || !this.isActive || this.questions.size > 0) return {};
     return { idleMs: Math.max(0, Date.now() - this.currentRun.lastActivityAt),
       phase: this.openCalls.size > 0 ? "tool" : this.currentRun.awaitingModel ? "model" : "agent" };
+  }
+
+  /** Only for a finished run, and only when its final text is not a usable conclusion. */
+  private answerState(): { answerState?: "missing" | "partial" | "narration" } {
+    if (!["done", "aborted", "error"].includes(this.state) || this.isActive) return {};
+    const state = this.lastText.trim() === "" ? "missing" : this.answerFlag;
+    return state ? { answerState: state } : {};
   }
 
   /** Summed from the session's entries, so it survives durable recovery with them. */
@@ -899,7 +940,9 @@ export class PiWorker {
 export function compactSnapshot(full: Snapshot): Snapshot {
   const trace: ToolCallSummary[] = full.toolCalls.slice(-RECENT_CALLS).map((c) => ({ seq: c.seq, name: c.name,
     state: c.state, ms: c.ms, args: c.args && c.args.length > COMPACT_ARGS ? `${c.args.slice(0, COMPACT_ARGS)}…` : c.args }));
-  return { ...full, toolCalls: trace, notices: full.notices.slice(-RECENT_CALLS) };
+  // A text written to savedTo is not repeated; verbose still has it.
+  const { lastText, ...rest } = full;
+  return { ...(full.savedTo ? rest : full), toolCalls: trace, notices: full.notices.slice(-RECENT_CALLS) } as Snapshot;
 }
 
 /** Match committed results to calls; never blindly replay an interrupted side effect. */

@@ -16,6 +16,7 @@ import type { PiThinkingLevel, TerminationReason } from "./types.js";
 import { publish } from "./statusline/state.js";
 import { claimAbandonedSettled, claimStored, jitter, unclaim, forgetOwnedJob, releaseJob, storageBytes, storedIdInUse, sweep } from "./durable.js";
 import { validateNativeMcp, type NativeMcpOptions } from "./pi/native-mcp.js";
+import { checkSavePath, saveDirPath } from "./save.js";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
 
@@ -263,18 +264,24 @@ export interface LaunchRequest extends NativeMcpOptions {
   maxTurns?: number | undefined;
   maxDurationMs?: number | undefined;
   retentionDays?: number | undefined;
+  /** Write the final text to this file when the run finishes; not persisted with the task. */
+  saveTo?: string | undefined;
+  /** As saveTo, as <saveDir>/<sessionId>.md, for batches. */
+  saveDir?: string | undefined;
 }
 
 async function prepare(req: LaunchRequest): Promise<LaunchRequest & { cwd: string; tools: string[] }> {
   if (req.retentionDays !== undefined && req.durable !== true)
     throw new Error("retentionDays applies only to durable delegates; pass durable: true as well.");
+  if (req.saveTo !== undefined) checkSavePath(req.saveTo);
+  if (req.saveDir !== undefined) checkSavePath(req.saveDir, "saveDir");
   const cwd = await resolveDelegateCwd(req.cwd);
   validateNativeMcp(req, cwd);
   return { ...req, cwd, tools: pickTools(req.tools) };
 }
 
 function makeWorker(req: LaunchRequest & { cwd: string; tools: string[] }): PiWorker {
-  return new PiWorker({
+  const worker = new PiWorker({
     id: claimId(req.id),
     label: req.label,
     cwd: req.cwd,
@@ -290,6 +297,8 @@ function makeWorker(req: LaunchRequest & { cwd: string; tools: string[] }): PiWo
     // Fixed at creation, so every process applies the same retention whatever its own default.
     retentionDays: req.durable ? req.retentionDays ?? RETENTION_DAYS : undefined,
   });
+  worker.saveTo = req.saveTo ?? (req.saveDir ? saveDirPath(req.saveDir, worker.id) : undefined);
+  return worker;
 }
 
 async function startWorker(worker: PiWorker, prompt: string): Promise<PiWorker> {

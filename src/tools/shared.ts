@@ -24,9 +24,12 @@ export function batchNextAction(sessions: Array<{ nextAction: NextAction }>): Ne
 export function waitResult(snapshot: Snapshot, verbose?: boolean) {
   if (verbose) return withNextAction(snapshot);
   const { sessionId, label, state, turns, toolCallCount, lastText, questions, notices, error, termination, usage,
-    remainingTurns, canFollowUp, followUpBlockedReason, idleMs, phase } = snapshot;
+    remainingTurns, canFollowUp, followUpBlockedReason, idleMs, phase, answerState, savedTo, savedChars, saveError } = snapshot;
   const finished = state === "done" || state === "aborted" || state === "error";
-  return withNextAction({ sessionId, label, state, turns, toolCallCount, lastText, questions, notices, error, termination,
+  return withNextAction({ sessionId, label, state, turns, toolCallCount,
+    // A text the caller asked to have saved is not returned again; it is in savedTo.
+    ...(savedTo ? { savedTo, savedChars } : { lastText }), ...(saveError ? { saveError } : {}),
+    ...(answerState ? { answerState } : {}), questions, notices, error, termination,
     remainingTurns, canFollowUp, ...(followUpBlockedReason ? { followUpBlockedReason } : {}),
     ...(finished && usage ? { usage } : {}), ...(idleMs !== undefined ? { idleMs, phase } : {}) });
 }

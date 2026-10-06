@@ -38,7 +38,7 @@ To collect results, the main agent loops `wait` with `until: "settled"`. If Pi a
 ## What you can do
 
 - **Separate context:** Pi reads and searches; your main agent collects findings.
-- **Attachments:** pass a diff or notes by file path with `attachments`, instead of pasting them into the prompt.
+- **Attachments and saved results:** pass a diff or notes by file path with `attachments`, and have long results written to a file with `saveTo`, instead of copying text through the main agent.
 - **Multiple models:** `spawn_batch` starts tasks with individually selected models.
 - **Live steering:** `steer` redirects work after the current tool call.
 - **Liveness:** running delegates report `idleMs` and `phase`, so slow reasoning can be told from a hung request; `PI_DELEGATE_STALL_MS` optionally ends a silent request.

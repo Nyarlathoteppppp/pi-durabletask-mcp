@@ -11,7 +11,8 @@ Use the connected server's tools; names below omit client-specific prefixes.
 
 - Call `spawn` with an absolute project `cwd`; put the goal, context, constraints, allowed scope, and required evidence in `prompt`.
 - Omit `model` and `tools` for the configured model and read-only defaults; `init` is optional diagnostics.
-- To review a diff or share long notes, write them to a file and pass its absolute path in `attachments` rather than pasting them into `prompt`.
+- To review a diff or share long notes, write them to a file and pass its absolute path in `attachments` rather than pasting them into `prompt`. When you will process or keep a long result rather than read it, pass `saveTo` (or `saveDir` on `spawn_batch`); results then show `savedTo`.
+- `answerState` on a finished result (`missing`, `partial`, `narration`) means the text is not a usable conclusion; `follow_up` for one. Its absence is not a guarantee.
 - Match the prompt to the model: give fast, small models a bounded checklist (what to grep, what to compare, a tool-call cap); give open-ended bug hunts to stronger reasoning models. `models` lists each model's accepted `thinking` levels.
 - Budget turns with headroom. The last turn has no tools and asks for a conclusion from available evidence; timeouts, provider/auth errors or cancellation can still interrupt it. `usage` in the result shows tokens and cost.
 - While running, `idleMs` is the time since the delegate's last event and `phase` is `model`, `tool` or `agent`. A long `idleMs` in phase `model` is slow reasoning or a hung request; `steer` lands only after the current turn, so decide whether to wait or `abort`.

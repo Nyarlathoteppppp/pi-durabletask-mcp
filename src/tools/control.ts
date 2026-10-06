@@ -113,9 +113,10 @@ export function registerControl(server: McpServer): void {
         sessionId: z.string(),
         prompt: z.string().describe("The next turn for this delegate"),
         attachments: z.array(z.string()).optional().describe("Absolute paths of text files appended to this prompt, as on spawn"),
+        saveTo: z.string().optional().describe("Absolute file path for this run's final text, as on spawn"),
       },
     },
-    async ({ sessionId, prompt, attachments }) => json({ ...await followUp(sessionId, prompt, attachments), nextAction: "wait" }),
+    async ({ sessionId, prompt, attachments, saveTo }) => json({ ...await followUp(sessionId, prompt, attachments, saveTo), nextAction: "wait" }),
   );
 
   server.registerTool(

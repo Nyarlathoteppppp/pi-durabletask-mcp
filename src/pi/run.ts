@@ -15,6 +15,9 @@ export class WorkerRun {
   lastActivityAt = Date.now();
   /** A model request is outstanding: from turn_start to the assistant's message_end. */
   awaitingModel = false;
+  /** This run's prompt and its last assistant message's stop reason, for answerState. */
+  prompt = "";
+  stopReason: string | undefined;
 
   constructor(public startedAt: string) {}
 
