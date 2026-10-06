@@ -120,38 +120,60 @@ try {
       prompt: async () => {}, waitForIdle: async () => {}, abort: async () => {}, dispose: () => {} };
     worker.job = durable ? await DurableJob.open(worker.options, "work") : new MemoryJob();
     const job = worker.job;
-    Object.assign(worker, { state: "done", lastText: "old answer", saved: { savedTo: "/tmp/old.md", savedChars: 10 }, answerFlag: "partial" });
+    const oldAt = "2020-01-01T00:00:00.000Z";
+    Object.assign(worker, { state: "aborted", lastText: "old answer", saved: { savedTo: "/tmp/old.md", savedChars: 10 }, answerFlag: "partial",
+      termination: { reason: "deadline", at: oldAt }, finishedAt: oldAt, error: "old diagnostic" });
     try {
       const followUp = worker.followUp("next");
       await entered.promise;
       await worker.abort("caller_cancelled");
       // Already while authentication is still pending.
       assert.deepEqual([worker.snapshot().savedTo, worker.snapshot().lastText], [undefined, ""], `durable=${durable}: at once`);
+      assert.equal(worker.termination.reason, "caller_cancelled", "this cancellation belongs to the new run");
+      assert.notEqual(worker.termination.at, oldAt);
+      assert.notEqual(worker.finishedAt, oldAt);
+      assert.equal(worker.error, undefined);
+      // Authentication finishes later than cancellation; it must not move the run clock past its end.
+      await new Promise((resolve) => setTimeout(resolve, 5));
       release.resolve();
       await followUp;
       await worker.run;
       const snap = worker.snapshot();
       assert.deepEqual([snap.state, snap.savedTo, snap.lastText], ["aborted", undefined, ""], `durable=${durable}`);
+      assert.equal(snap.termination.reason, "caller_cancelled");
+      assert.equal(snap.runStartedAt, snap.termination.at, "a never-started run has no model execution time");
+      assert.equal(snap.elapsedMs, 0, "late authentication cannot produce a negative duration");
+      if (durable) {
+        const saved = (await job.saved()).snapshot;
+        assert.equal(saved.termination.reason, "caller_cancelled");
+        assert.notEqual(saved.finishedAt, oldAt);
+        assert.equal(saved.error, undefined);
+      }
     } finally {
       worker.dispose();
       await job.forget();
     }
   }
   // A follow_up refused at authentication never ran: the previous result stays as it was.
-  for (const durable of [false, true]) {
+  for (const durable of [false, true]) for (const state of ["done", "aborted"]) {
     rt.getAuth = async () => { throw new Error("refresh failed"); };
-    const options = { id: `refused-${durable}`, cwd: dir, model: "test/one", tools: [], durable, maxTurns: 5, maxDurationMs: 60000 };
+    const options = { id: `refused-${state}-${durable}`, cwd: dir, model: "test/one", tools: [], durable, maxTurns: 5, maxDurationMs: 60000 };
     const worker = new PiWorker(options);
     worker.model = options.model;
     worker.session = { sessionManager: SessionManager.inMemory(dir), messages: [],
       prompt: async () => {}, waitForIdle: async () => {}, abort: async () => {}, dispose: () => {} };
     worker.job = durable ? await DurableJob.open(worker.options, "work") : new MemoryJob();
     const job = worker.job;
-    Object.assign(worker, { state: "done", lastText: "old answer", saved: { savedTo: "/tmp/old.md", savedChars: 10 }, answerFlag: "partial" });
+    const finishedAt = "2020-01-01T00:00:00.000Z";
+    const termination = state === "aborted" ? { reason: "deadline", at: finishedAt } : undefined;
+    Object.assign(worker, { state, lastText: "old answer", saved: { savedTo: "/tmp/old.md", savedChars: 10 }, answerFlag: "partial",
+      finishedAt, termination });
     try {
       await assert.rejects(() => worker.followUp("next"), /refresh failed/);
       const snap = worker.snapshot({ verbose: true });
-      assert.deepEqual([snap.state, snap.savedTo, snap.answerState, snap.lastText], ["done", "/tmp/old.md", "partial", "old answer"], `durable=${durable}`);
+      assert.deepEqual([snap.state, snap.savedTo, snap.answerState, snap.lastText],
+        [state, "/tmp/old.md", state === "done" ? "partial" : undefined, "old answer"], `durable=${durable}`);
+      assert.deepEqual([snap.finishedAt, snap.termination], [finishedAt, termination], "refusal preserves the previous terminal metadata");
     } finally {
       worker.dispose();
       await job.forget();

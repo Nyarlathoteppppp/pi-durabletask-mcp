@@ -73,8 +73,16 @@ preserve these SDK ordering contracts; see `recovery.mjs` and `native-recovery.m
 - Recovery rebuilds the transcript from saved entries and staged results. Missing results become
   unknown-outcome messages: external effects may already have happened, so never blindly replay the call.
   A committed answer or exhausted budget can finish recovery without provider authentication.
+  An assistant message ending in `stop` or `length` with no pending steering is already an answer;
+  recovery records `length` as `done` with `answerState: partial`, without another model request.
 - Accepted steering stays pending until its user message is recorded. Recovery combines it into
   `recoveryInput`; only the matching `message_end` removes that input's steering from the queue.
+
+Failed recovery uses `releaseRecovery()` to dispose the SDK, close the job without resetting
+attempts, then release ownership. A native transport shutdown failure is recorded and job cleanup
+still runs. If the job itself cannot close, keep ownership and retain the worker's error for
+diagnosis; `closing` alone does not confirm the Harness closed. Both lazy loading and background
+recovery use this path. `RecoveryStopped` keeps ownership as before.
 
 ## Tests to consult
 

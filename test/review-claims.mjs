@@ -15,6 +15,7 @@ const brokenFile = join(directory, "broken-provider");
 const clients = new Set();
 const sockets = new Set();
 const heldRequests = new Set();
+let cutRequests = 0;
 let defaultInterrupted = false;
 const waitUntil = async (predicate) => {
   const deadline = Date.now() + 15000;
@@ -42,8 +43,10 @@ const http = createServer(async (req, res) => {
     id: "claims-test", object: "chat.completion.chunk", created: 1, model: "one",
     choices: [{ index: 0, delta, finish_reason }],
   })}\n\n`);
-  emit({ role: "assistant", content: "OK" });
-  emit({}, "stop");
+  const cut = body.includes("CUT_ANSWER");
+  if (cut) cutRequests++;
+  emit({ role: "assistant", content: cut ? "CUT_OK" : "OK" });
+  emit({}, cut ? "length" : "stop");
   res.end("data: [DONE]\n\n");
 });
 http.on("connection", (socket) => { sockets.add(socket); socket.on("close", () => sockets.delete(socket)); });
@@ -152,6 +155,29 @@ try {
   assert.equal(answered.turns, 1, "a committed answer wins even when both budgets are exhausted");
   await rm(brokenFile);
   await close(host);
+  });
+
+  await scenario("4b truncated answer recovery needs no provider or extra turn", async () => {
+    for (const maxTurns of [1, 5]) {
+      const id = `cut-${maxTurns}`;
+      const before = cutRequests;
+      host = await connect({ TEST_CRASH_AFTER_ANSWER: "CUT_OK" });
+      await host.call("spawn", { cwd: directory, id, prompt: "CUT_ANSWER", tools: [], durable: true,
+        maxTurns, maxDurationMs: 60000 }).catch(() => {});
+      await waitUntil(() => { try { process.kill(host.transport.pid, 0); return false; } catch { return true; } });
+      await close(host);
+      assert.equal(catalog("SELECT finished_at FROM jobs WHERE json_extract(options, '$.id') = ?", id)[0].finished_at, null);
+      // Break credentials even with unused budget: recording the saved answer needs no model.
+      await writeFile(brokenFile, "test");
+      host = await connect();
+      await waitUntil(async () => (await host.call("sessions")).sessions.some((s) => s.sessionId === id));
+      const recovered = await settle(host, id);
+      assert.deepEqual([recovered.state, recovered.answerState, recovered.lastText, recovered.turns],
+        ["done", "partial", "CUT_OK", 1]);
+      assert.equal(cutRequests, before + 1, "recovery does not call the model again");
+      await rm(brokenFile);
+      await close(host);
+    }
   });
 
   await scenario("5 no new duplicate on a degraded catalog", async () => {

@@ -122,6 +122,8 @@ export class PiWorker {
   private unsubscribe: (() => void) | undefined;
   private job: JobStore | undefined;
   recoveryKey: string | undefined;
+  /** A failed Harness close retains ownership and its diagnostic worker until cleanup succeeds. */
+  recoveryCleanupFailed = false;
   private journalUnsubscribe: (() => void) | undefined;
   private suspended = false;
   /** File the next finished run's text goes to, set by whoever starts the run; kept in memory only. */
@@ -430,9 +432,9 @@ export class PiWorker {
     // Check credentials only when this run will call the model: spawn, follow_up, or a recovery
     // that still has work. A recovery that only records an answer already given must not fail
     // because a provider's auth broke meanwhile.
+    const last = recover && saved?.inputStarted ? this.session!.messages.at(-1) : undefined;
     const answered = recover && saved?.inputStarted && !this.steering.length &&
-      this.session!.messages.at(-1)?.role === "assistant" &&
-      (this.session!.messages.at(-1) as { stopReason?: string }).stopReason === "stop";
+      last?.role === "assistant" && (last.stopReason === "stop" || last.stopReason === "length");
     // A recovery already past its budget is only marked aborted, so it needs no model either.
     const overBudget = recover && (this.turns >= this.maxTurns || this.elapsedMs() >= this.maxDurationMs);
     const provider = this.model?.includes("/") ? this.model.slice(0, this.model.indexOf("/")) : undefined;
@@ -445,7 +447,7 @@ export class PiWorker {
     // An abort during that await also lets a new follow_up start; this execution is then superseded.
     if (this.suspended || this.currentRun !== run) return;
     if (!recover) {
-      this.currentRun.startedAt = new Date().toISOString();
+      if (this.state !== "aborted") run.startedAt = new Date().toISOString();
       // From here this follow_up replaces the previous result, even if it is cancelled before Pi runs;
       // a follow_up refused above leaves that result as it was.
       this.clearResult();
@@ -472,9 +474,10 @@ export class PiWorker {
           if (this.currentRun !== run) return checkpoint;
           if (alreadyStopped || this.state === "aborted") return this.checkpoint();
           if (recover && checkpoint.inputStarted) {
-            const last = this.session!.messages.at(-1);
-            if (last?.role === "assistant" && last.stopReason === "stop" && !this.steering.length) {
+            // Steering may arrive while job.begin yields; it still needs a model turn.
+            if (answered && !this.steering.length) {
               this.state = "done";
+              if (last?.role === "assistant" && last.stopReason === "length") this.answerFlag = "partial";
               this.finishedAt = new Date().toISOString();
               return this.checkpoint();
             }
@@ -528,9 +531,11 @@ export class PiWorker {
   static async recover(options: WorkerOptions, prompt: string, key: string, worker = new PiWorker(options)): Promise<PiWorker> {
     // Read without scheduling. The journal is closed before start reopens it as executor.
     const job = await DurableJob.open(options, prompt, key);
+    worker.job = job;
     let saved: Checkpoint | undefined;
     try { saved = await job.saved(); }
     finally { await job.close(false); }
+    worker.job = undefined;
     return worker.start(prompt, saved, key);
   }
 
@@ -554,6 +559,20 @@ export class PiWorker {
     await this.nativeClose;
     if (this.job) await this.job.close();
     else if (this.recoveryKey) releaseJob(this.recoveryKey);
+  }
+
+  /** Failed recovery keeps its attempt count; ownership is released only after the job closes. */
+  async releaseRecovery(): Promise<void> {
+    this.dispose();
+    try { await this.nativeClose; }
+    catch (error) {
+      this.notices.push({ type: "warning", message: `recovery native cleanup failed: ${message(error)}`, at: new Date().toISOString() });
+    }
+    // A rejected Harness close must leave ownership held; closing=true alone is not confirmation.
+    try { await this.job?.close(false); }
+    catch (error) { this.recoveryCleanupFailed = true; throw error; }
+    this.recoveryCleanupFailed = false;
+    if (this.recoveryKey) releaseJob(this.recoveryKey);
   }
 
   async forgetPersistent(): Promise<void> {
@@ -824,6 +843,12 @@ export class PiWorker {
     // A finished session has nothing to stop, and its recorded state must not change.
     if (!this.isActive && ["done", "error", "aborted"].includes(this.state))
       throw new Error(`Session ${this.id} is already ${this.state}; there is nothing to abort.`);
+    if (this.state === "starting") {
+      this.clearResult();
+      this.termination = undefined;
+      this.finishedAt = undefined;
+      this.error = undefined;
+    }
     if (!this.termination)
       this.termination = {
         reason,
@@ -832,8 +857,11 @@ export class PiWorker {
         at: new Date().toISOString(),
       };
     const termination = this.termination;
-    // Cancelling a run that is still starting: the previous result is superseded, not this run's.
-    if (this.state === "starting") this.clearResult();
+    // No model execution took place; later authentication must not move its clock past this end.
+    if (this.state === "starting") {
+      run.startedAt = termination.at;
+      this.finishedAt = termination.at;
+    }
     this.state = "aborted";
     // Extension dialogs do not automatically observe the agent's abort signal.
     const session = this.session;

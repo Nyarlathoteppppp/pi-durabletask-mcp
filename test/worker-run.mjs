@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 
 const directory = await mkdtemp(join(tmpdir(), "pi-worker-run-"));
 Object.assign(process.env, { PI_OFFLINE: "1", PI_CODING_AGENT_DIR: join(directory, "agent"),
@@ -9,7 +10,8 @@ Object.assign(process.env, { PI_OFFLINE: "1", PI_CODING_AGENT_DIR: join(director
 await mkdir(join(directory, "agent"));
 const { PiWorker } = await import("../dist/pi/worker.js");
 const { SessionManager } = await import("@earendil-works/pi-coding-agent");
-const { MemoryJob, DurableJob } = await import("../dist/durable.js");
+const { MemoryJob, DurableJob, forgetOwnedJob } = await import("../dist/durable.js");
+const { owns } = await import("../dist/ownership.js");
 const selected = process.argv[2];
 const scenarios = [];
 const scenario = (name, execute) => scenarios.push({ name, execute });
@@ -130,6 +132,77 @@ scenario("budget-write-failure", async () => {
     assert.equal(w.isActive, false);
     assert.match(w.notices.at(-1).message, /checkpoint write failed/);
   } finally { w.dispose(); }
+});
+
+scenario("concurrent-close", async () => {
+  const w = worker("concurrent-close", true);
+  const job = await DurableJob.open(w.options, "work");
+  const entered = Promise.withResolvers(), release = Promise.withResolvers();
+  const close = job.harness.close.bind(job.harness);
+  job.harness.close = async (...args) => { entered.resolve(); await release.promise; return close(...args); };
+  let first, second;
+  try {
+    first = job.close(false);
+    second = job.close(false);
+    let settled = false;
+    second.then(() => { settled = true; });
+    await entered.promise;
+    await new Promise(setImmediate);
+    assert.equal(settled, false, "another close awaits the actual Harness shutdown");
+    release.resolve();
+    await Promise.all([first, second]);
+  } finally { release.resolve(); await Promise.all([first, second]); forgetOwnedJob(job.key); }
+});
+
+scenario("steer-before-recovered-answer", async () => {
+  for (const stopReason of ["stop", "length"]) {
+    const w = worker(`recovered-answer-${stopReason}`);
+    const prompts = [];
+    w.session = session(w, Promise.withResolvers());
+    w.session.messages = [{ role: "assistant", stopReason, content: [{ type: "text", text: "old answer" }] }];
+    w.session.prompt = async (text) => { prompts.push(text); w.lastText = "updated answer"; };
+    w.inputStarted = true;
+    w.state = "running";
+    w.lastText = "old answer";
+    const saved = w.checkpoint();
+    w.job = new MemoryJob();
+    const begin = w.job.begin.bind(w.job);
+    w.job.begin = async (...args) => { w.steering.push("accepted while reopening"); return begin(...args); };
+    try {
+      await w.beginDurable("resume", saved, true);
+      await w.run;
+      assert.equal(prompts.length, 1, "new steering takes precedence over the saved answer");
+      assert.match(prompts[0], /accepted while reopening/);
+      assert.equal(w.lastText, "updated answer");
+    } finally { w.dispose(); await w.job.close(); }
+  }
+});
+
+scenario("recovery-read-close-failure", async () => {
+  const w = worker("read-close-failure", true);
+  const seed = await DurableJob.open(w.options, "work");
+  await seed.close(false);
+  w.recoveryKey = seed.key;
+  const open = DurableJob.open;
+  let job, close, attempts = 0;
+  DurableJob.open = async (...args) => {
+    job = await open.call(DurableJob, ...args);
+    close = job.harness.close.bind(job.harness);
+    job.harness.close = async () => { attempts++; throw new Error("read Harness close failed"); };
+    return job;
+  };
+  try {
+    await assert.rejects(PiWorker.recover(w.options, "work", seed.key, w), /read Harness close failed/);
+    assert.equal(w.job, job, "failed pre-read shutdown stays attached for cleanup");
+    await assert.rejects(w.releaseRecovery(), /read Harness close failed/);
+    assert.equal(attempts, 1, "the rejected shutdown cannot become a successful second close");
+    assert.equal(owns(seed.key), true, "the still-open Harness retains ownership");
+    assert.equal(w.recoveryCleanupFailed, true);
+  } finally {
+    DurableJob.open = open;
+    await close?.(BACKGROUND_CONTEXT);
+    forgetOwnedJob(seed.key);
+  }
 });
 
 try {

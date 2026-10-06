@@ -345,6 +345,7 @@ export class DurableJob implements JobStore {
   private runtime: TaskRuntime<Input, Checkpoint, Checkpoint, object> | undefined;
   private writes: Promise<void> = Promise.resolve();
   private closing = false;
+  private closePromise: Promise<void> | undefined;
   private execute: Execute | undefined;
   /** Turn count at the first save after a recovery claim; one more turn clears `attempts`. */
   private progressFrom: number | undefined;
@@ -502,16 +503,18 @@ export class DurableJob implements JobStore {
     this.writes = this.writes.then(() => runtime.commit(() => ({ status: "running", checkpoint: copy }), context));
     return this.writes;
   }
-  async close(release = true): Promise<void> {
-    if (this.closing) return;
+  close(release = true): Promise<void> {
+    if (this.closePromise) return this.closePromise;
     this.closing = true;
-    await this.writes.catch(() => {});
-    await this.harness.close(context);
-    if (release && owns(this.key)) {
-      // A clean release is not a crash; the next claim starts counting again.
-      db().prepare("UPDATE jobs SET pid = 0, attempts = 0 WHERE key = ?").run(this.key);
-      releaseOwnership(this.key);
-    }
+    return this.closePromise = (async () => {
+      await this.writes.catch(() => {});
+      await this.harness.close(context);
+      if (release && owns(this.key)) {
+        // A clean release is not a crash; the next claim starts counting again.
+        db().prepare("UPDATE jobs SET pid = 0, attempts = 0 WHERE key = ?").run(this.key);
+        releaseOwnership(this.key);
+      }
+    })();
   }
   async forget(): Promise<void> {
     await this.close(false);

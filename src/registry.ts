@@ -14,7 +14,7 @@ import { PiWorker, type WorkerOptions } from "./pi/worker.js";
 import { resolveDelegateCwd } from "./workspace.js";
 import type { PiThinkingLevel, TerminationReason } from "./types.js";
 import { publish } from "./statusline/state.js";
-import { claimAbandonedSettled, claimStored, jitter, unclaim, forgetOwnedJob, RecoveryStopped, releaseJob, storageBytes, storedIdInUse, sweep } from "./durable.js";
+import { claimAbandonedSettled, claimStored, jitter, unclaim, forgetOwnedJob, RecoveryStopped, storageBytes, storedIdInUse, sweep } from "./durable.js";
 import { validateNativeMcp, type NativeMcpOptions } from "./pi/native-mcp.js";
 import { checkSavePath, saveDirPath } from "./save.js";
 
@@ -120,7 +120,18 @@ export async function resolve(id: string): Promise<PiWorker> {
     try {
       await checkStoredPolicy(record.options);
       await PiWorker.recover({ ...record.options, durable: true }, record.prompt, record.key, worker);
-    } catch (error) { worker.dispose(); releaseJob(record.key); throw error; }
+    } catch (error) {
+      try {
+        await worker.releaseRecovery();
+      } catch (cleanupError) {
+        worker.state = "error";
+        worker.error = `Recovery failed: ${String(error)}; recovery cleanup failed: ${String(cleanupError)}`;
+        worker.finishedAt = new Date().toISOString();
+        sessions.set(worker.id, worker);
+        publish(all());
+      }
+      throw error;
+    }
     sessions.set(worker.id, worker);
     touch(worker.id);
     evictHistory(worker);
@@ -164,7 +175,7 @@ export function sweepStorage(force = false): void {
   // Over the size limit, every finished durable session here is unloaded too, so the sweep can
   // delete the oldest; unloaded ones stay readable and reload on follow_up if they survive.
   const over = storageBytes() > STORAGE_LIMIT_BYTES;
-  const expired = all().filter((w) => w.retentionDays !== undefined && !w.isActive && w.finishedAt &&
+  const expired = all().filter((w) => !w.recoveryCleanupFailed && w.retentionDays !== undefined && !w.isActive && w.finishedAt &&
     (over || Date.parse(w.finishedAt) + w.retentionDays * DAY_MS < now));
   void Promise.all(expired.map(unload))
     .then(() => sweep(now))
@@ -210,12 +221,17 @@ export async function recoverAbandoned(): Promise<void> {
             worker.error = `Recovery failed: ${String(error)}`;
             worker.finishedAt = new Date().toISOString();
           } else {
-            // Possibly passing (auth, runtime start): hand it back with the attempt counted, so the
-            // next tick here or elsewhere retries it until the attempts run out.
+            // Possibly passing (auth, runtime start): clean up the executor while keeping the
+            // counted attempt. A cleanup failure keeps the lock and the worker for diagnosis.
             failed.add(worker.id);
-            sessions.delete(worker.id);
-            worker.dispose();
-            releaseJob(record.key);
+            try {
+              await worker.releaseRecovery();
+              sessions.delete(worker.id);
+            } catch (cleanupError) {
+              worker.state = "error";
+              worker.error = `Recovery failed: ${String(error)}; recovery cleanup failed: ${String(cleanupError)}`;
+              worker.finishedAt = new Date().toISOString();
+            }
           }
         }
       }
@@ -256,7 +272,7 @@ export async function abortAll(reason: TerminationReason = "server_shutdown"): P
  */
 export function evictHistory(keep?: PiWorker): void {
   const used = (w: PiWorker): number => lastUsed.get(w.id) ?? Date.parse(w.startedAt);
-  const done = all().filter((w) => !w.isActive && w !== keep).sort((a, b) => used(a) - used(b));
+  const done = all().filter((w) => !w.recoveryCleanupFailed && !w.isActive && w !== keep).sort((a, b) => used(a) - used(b));
   while (sessions.size > HISTORY_LIMIT && done.length) {
     const oldest = done.shift();
     if (!oldest) break;
