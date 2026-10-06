@@ -21,6 +21,21 @@
 | `sessions`    | List sessions, running and finished. Filter by `state`, expand with `verbose`.                                                          |
 | `forget`      | Drop a finished session from history, freeing its id.                                                                                   |
 
+## Edit receipts
+
+`status`, `run` and single/batch `wait` include `touchedFiles` and `editWriteCount`
+when this run has recorded successful `edit` or `write` calls. Paths are the original
+tool arguments (relative paths are relative to the delegate's `cwd`), deduplicated
+by exact spelling; the count includes repeated successful calls to the same path.
+Successful nested calls count even if their enclosing script subsequently fails.
+
+This is an operation receipt, not a Git diff or test verification: it can include
+writes that produced no net change, and it does not observe shell commands or
+external MCP tools. Read-only runs omit both fields. `follow_up` starts a new
+receipt; forks do not inherit it; durable recovery retains the current receipt.
+Older checkpoints without these fields are not reconstructed from cumulative
+history; only new successful events are recorded after recovery.
+
 ## Fork a settled session
 
 Pass `forkFrom` to `spawn`, `run`, or `spawn_batch` to start independent work from a

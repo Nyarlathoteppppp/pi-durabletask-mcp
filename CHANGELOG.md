@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.8 (2026-10-07)
+
+- `status`, `run` and single/batch `wait` include `touchedFiles` and `editWriteCount` for successful edit/write calls in the current run, including nested calls. This is an operation receipt, not a Git diff or test verification; read-only runs omit it.
+- Receipts reset on accepted follow-ups, survive durable recovery and stay out of forked sessions. A follow-up refused during authentication preserves the previous receipt; legacy checkpoints do not infer it from cumulative history.
+
 ## 0.7.7 (2026-10-06)
 
 - Wrap-up prompts respect the requested answer format and length, preserving concrete findings and important limitations without requiring extra sections.

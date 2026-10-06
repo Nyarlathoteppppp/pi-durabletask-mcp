@@ -25,12 +25,14 @@ export function batchNextAction(sessions: Array<{ nextAction: NextAction }>): Ne
 export function waitResult(snapshot: Snapshot, verbose?: boolean) {
   if (verbose) return withNextAction(snapshot);
   const { sessionId, forkedFrom, label, state, turns, toolCallCount, lastText, questions, notices, error, termination, usage,
-    remainingTurns, canFollowUp, followUpBlockedReason, idleMs, phase, answerState, savedTo, savedChars, saveError } = snapshot;
+    remainingTurns, canFollowUp, followUpBlockedReason, idleMs, phase, answerState, savedTo, savedChars, saveError,
+    touchedFiles, editWriteCount } = snapshot;
   const finished = state === "done" || state === "aborted" || state === "error";
   return withNextAction({ sessionId, ...(forkedFrom ? { forkedFrom } : {}), label, state, turns, toolCallCount,
     // A long text the caller asked to have saved is not returned again; it is in savedTo.
     ...(savedTo ? { savedTo, savedChars } : {}), ...(omitsSavedText(snapshot) ? {} : { lastText }), ...(saveError ? { saveError } : {}),
     ...(answerState ? { answerState } : {}), questions, notices, error, termination,
+    ...(editWriteCount ? { touchedFiles, editWriteCount } : {}),
     remainingTurns, canFollowUp, ...(followUpBlockedReason ? { followUpBlockedReason } : {}),
     ...(finished && usage ? { usage } : {}), ...(idleMs !== undefined ? { idleMs, phase } : {}) });
 }

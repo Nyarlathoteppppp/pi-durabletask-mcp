@@ -40,6 +40,8 @@ export interface Notice {
 
 /** One entry in the ordered trace of tools a delegate ran. */
 export interface ToolCall {
+  /** Original edit/write path, retained separately from the clipped diagnostic args. */
+  writePath?: string;
   parentToolCallId?: string;
   seq: number;
   id: string | undefined;
@@ -68,6 +70,9 @@ export interface Snapshot extends FollowUpInfo {
   /** Every call when verbose; otherwise the most recent few. `toolCallCount` is the total. */
   toolCalls: Array<ToolCall | ToolCallSummary>;
   toolCallCount: number;
+  /** Successful edit/write paths and call count in this run, absent when none were recorded. */
+  touchedFiles?: string[];
+  editWriteCount?: number;
   lastText: string;
   questions: QuestionJson[];
   notices: Notice[];

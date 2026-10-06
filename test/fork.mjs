@@ -23,7 +23,11 @@ const http = createServer(async (req, res) => {
     id: "fork-fixture", object: "chat.completion.chunk", created: 1, model: request.model,
     choices: [{ index: 0, delta, finish_reason }], ...(usage ? { usage } : {}),
   })}\n\n`);
-  if (prompt.includes("READ_PARENT") && !request.messages.some((m) => m.role === "tool")) {
+  if (prompt.includes("WRITE_PARENT") && !request.messages.some((m) => m.role === "tool")) {
+    emit({ role: "assistant", tool_calls: [{ index: 0, id: "parent-write", type: "function",
+      function: { name: "write", arguments: JSON.stringify({ path: join(dir, "written.txt"), content: "parent wrote this" }) } }] });
+    emit({}, "tool_calls");
+  } else if (prompt.includes("READ_PARENT") && !request.messages.some((m) => m.role === "tool")) {
     emit({ role: "assistant", tool_calls: [{ index: 0, id: "parent-read", type: "function",
       function: { name: "read", arguments: JSON.stringify({ path: fixture }) } }] });
     emit({}, "tool_calls");
@@ -49,7 +53,7 @@ const open = async () => {
   const client = new Client({ name: "fork", version: "1" });
   const transport = new StdioClientTransport({ command: process.execPath, args: ["dist/index.js"], stderr: "ignore", env: {
     ...process.env, PI_OFFLINE: "1", PI_CODING_AGENT_DIR: agentDir, PI_DELEGATE_STATE_DIR: join(dir, "state"),
-    PI_DELEGATE_MODEL: "test/one", PI_DELEGATE_IGNORE_SCOPE: "1", PI_DELEGATE_STALL_MS: "0",
+    PI_DELEGATE_ALLOW_TOOLS: "write", PI_DELEGATE_MODEL: "test/one", PI_DELEGATE_IGNORE_SCOPE: "1", PI_DELEGATE_STALL_MS: "0",
   } });
   await client.connect(transport);
   clients.add(client);
@@ -83,6 +87,16 @@ try {
   assert.equal(parent.turns, 2);
   assert.equal(parent.toolCallCount, 1);
   assert.equal(parent.usage.totalTokens, 240);
+  await host.call("spawn", { cwd: dir, id: "writing-parent", prompt: "WRITE_PARENT", tools: ["write"], maxTurns: 5 });
+  const writingParent = await host.settle("writing-parent");
+  assert.deepEqual(writingParent.touchedFiles, [join(dir, "written.txt")]);
+  assert.equal(writingParent.editWriteCount, 1);
+  await host.call("spawn", { forkFrom: "writing-parent", id: "readonly-child", prompt: "No edits; just summarize.", tools: [] });
+  const readonlyChild = await host.settle("readonly-child");
+  assert.equal(readonlyChild.forkedFrom, "writing-parent");
+  assert.equal(readonlyChild.touchedFiles, undefined, "fork transcript does not import the parent's writes");
+  assert.equal(readonlyChild.editWriteCount, undefined);
+
   const batch = await host.call("spawn_batch", { forkFrom: "parent", idPrefix: "fork", maxTurns: 4,
     tasks: [{ prompt: "ALPHA" }, { prompt: "BETA", model: "test/two", tools: [] }] });
   const [alphaId, betaId] = batch.sessions.map((s) => s.sessionId);

@@ -10,7 +10,11 @@ implementation; `sessionId` identifies a conversation, and each `follow_up` star
 - `src/registry.ts`: capacity, session lookup, recovery claims and eviction.
 - `PiWorker`: Pi SDK events, run state, cancellation and checkpoint contents.
 - `WorkerRun` (`src/pi/run.ts`): transient control for one run: timers, provider/retry flags,
-  cancellation, finalization and completion. Conversation entries and tool results stay in `PiWorker`.
+  cancellation, finalization, completion and the current run's successful edit/write receipt.
+  Conversation entries and tool results stay in `PiWorker`. Receipt paths come from raw start-event
+  arguments, not clipped diagnostic JSON; successful end events update them before checkpoints.
+  Authentication refusal keeps the previous receipt; accepted follow-ups clear it. Recovery restores
+  it from the snapshot, while forks copy only transcript entries and start with an empty receipt.
 - `MemoryJob` / `DurableJob`: execution storage. Memory saves are no-ops; durable saves commit to SQLite.
 
 ## Starting and finishing a run

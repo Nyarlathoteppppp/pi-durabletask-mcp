@@ -123,12 +123,15 @@ try {
     const oldAt = "2020-01-01T00:00:00.000Z";
     Object.assign(worker, { state: "aborted", lastText: "old answer", saved: { savedTo: "/tmp/old.md", savedChars: 10 }, answerFlag: "partial",
       termination: { reason: "deadline", at: oldAt }, finishedAt: oldAt, error: "old diagnostic" });
+    worker.onEvent({ type: "tool_execution_start", toolCallId: "prior-write", toolName: "write", args: { path: "old.txt" } });
+    worker.onEvent({ type: "tool_execution_end", toolCallId: "prior-write", toolName: "write", isError: false, result: { content: [] } });
     try {
       const followUp = worker.followUp("next");
       await entered.promise;
       await worker.abort("caller_cancelled");
       // Already while authentication is still pending.
       assert.deepEqual([worker.snapshot().savedTo, worker.snapshot().lastText], [undefined, ""], `durable=${durable}: at once`);
+      assert.equal(worker.snapshot().touchedFiles, undefined, "cancellation during auth clears the previous receipt at once");
       assert.equal(worker.termination.reason, "caller_cancelled", "this cancellation belongs to the new run");
       assert.notEqual(worker.termination.at, oldAt);
       assert.notEqual(worker.finishedAt, oldAt);
@@ -168,11 +171,14 @@ try {
     const termination = state === "aborted" ? { reason: "deadline", at: finishedAt } : undefined;
     Object.assign(worker, { state, lastText: "old answer", saved: { savedTo: "/tmp/old.md", savedChars: 10 }, answerFlag: "partial",
       finishedAt, termination });
+    worker.onEvent({ type: "tool_execution_start", toolCallId: "prior-write", toolName: "write", args: { path: "old.txt" } });
+    worker.onEvent({ type: "tool_execution_end", toolCallId: "prior-write", toolName: "write", isError: false, result: { content: [] } });
     try {
       await assert.rejects(() => worker.followUp("next"), /refresh failed/);
       const snap = worker.snapshot({ verbose: true });
       assert.deepEqual([snap.state, snap.savedTo, snap.answerState, snap.lastText],
         [state, "/tmp/old.md", state === "done" ? "partial" : undefined, "old answer"], `durable=${durable}`);
+      assert.deepEqual([snap.touchedFiles, snap.editWriteCount], [["old.txt"], 1], "authentication refusal preserves the previous receipt");
       assert.deepEqual([snap.finishedAt, snap.termination], [finishedAt, termination], "refusal preserves the previous terminal metadata");
     } finally {
       worker.dispose();

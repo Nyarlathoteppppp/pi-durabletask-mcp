@@ -189,9 +189,15 @@ export class PiWorker {
     this.saved = undefined;
   }
 
-  private newRun(): WorkerRun {
+  private newRun(preserveReceipt = false): WorkerRun {
     this.currentRun.clearTimers();
-    return this.currentRun = new WorkerRun(this.currentRun.startedAt);
+    const run = new WorkerRun(this.currentRun.startedAt);
+    // A follow_up may be refused during authentication, leaving the previous result intact.
+    if (preserveReceipt) {
+      run.touchedFiles = new Set(this.currentRun.touchedFiles);
+      run.editWriteCount = this.currentRun.editWriteCount;
+    }
+    return this.currentRun = run;
   }
 
   constructor({
@@ -446,6 +452,9 @@ export class PiWorker {
     this.answerFlag = snapshot.answerState === "missing" ? undefined : snapshot.answerState;
     this.saved = snapshot.savedTo ? { savedTo: snapshot.savedTo, savedChars: snapshot.savedChars ?? 0 }
       : snapshot.saveError ? { saveError: snapshot.saveError } : undefined;
+    // Old checkpoints have no receipt. Their cumulative tool trace cannot establish a run boundary.
+    this.currentRun.touchedFiles = new Set(snapshot.touchedFiles ?? []);
+    this.currentRun.editWriteCount = snapshot.editWriteCount ?? 0;
     this.toolCalls.splice(0, this.toolCalls.length, ...snapshot.toolCalls as ToolCall[]);
     this.notices.splice(0, this.notices.length, ...snapshot.notices);
     this.inputStarted = saved.inputStarted;
@@ -459,7 +468,7 @@ export class PiWorker {
   }
 
   private async beginDurable(prompt: string, saved?: Checkpoint, recover = false): Promise<void> {
-    const run = this.newRun();
+    const run = this.newRun(true);
     if (saved) this.restoreSnapshot(saved);
     else this.inputStarted = false;
     const alreadyStopped = recover && saved && !["starting", "running"].includes(saved.snapshot.state);
@@ -485,6 +494,8 @@ export class PiWorker {
       // From here this follow_up replaces the previous result, even if it is cancelled before Pi runs;
       // a follow_up refused above leaves that result as it was.
       this.clearResult();
+      run.touchedFiles.clear();
+      run.editWriteCount = 0;
     }
     if (!alreadyStopped && this.state !== "aborted") {
       this.state = "running";
@@ -777,11 +788,13 @@ export class PiWorker {
 
       case "tool_execution_start": {
         if (ev.toolCallId && this.toolCalls.some((call) => call.id === ev.toolCallId)) break;
+        const path = (ev.args as { path?: unknown } | undefined)?.path;
         const call: ToolCall = {
           seq: this.toolCalls.length + 1,
           id: ev.toolCallId,
           name: ev.toolName,
           args: clipArgs(ev.args),
+          ...((ev.toolName === "edit" || ev.toolName === "write") && typeof path === "string" ? { writePath: path } : {}),
           state: "running",
           startedAt: Date.now(),
           ...("parentToolCallId" in ev ? { parentToolCallId: ev.parentToolCallId as string } : {}),
@@ -798,6 +811,10 @@ export class PiWorker {
           (ev.toolCallId ? this.openCalls.get(ev.toolCallId) ?? this.toolCalls.find((c) => c.id === ev.toolCallId) : undefined) ??
           [...this.toolCalls].reverse().find((c) => c.state === "running" && c.name === ev.toolName);
         if (call) {
+          if (call.state === "running" && !ev.isError && call.writePath !== undefined) {
+            this.currentRun.touchedFiles.add(call.writePath);
+            this.currentRun.editWriteCount++;
+          }
           call.state = ev.isError ? "error" : "ok";
           call.ms = call.startedAt === undefined ? call.ms ?? 0 : Date.now() - call.startedAt;
           call.result = flatten(ev.result);
@@ -879,6 +896,8 @@ export class PiWorker {
       throw new Error(`Session ${this.id} is already ${this.state}; there is nothing to abort.`);
     if (this.state === "starting") {
       this.clearResult();
+      run.touchedFiles.clear();
+      run.editWriteCount = 0;
       this.termination = undefined;
       this.finishedAt = undefined;
       this.error = undefined;
@@ -980,6 +999,9 @@ export class PiWorker {
       turns: this.turns,
       toolCalls: this.toolCalls,
       toolCallCount: this.toolCalls.length,
+      ...(this.currentRun.editWriteCount ? {
+        touchedFiles: [...this.currentRun.touchedFiles], editWriteCount: this.currentRun.editWriteCount,
+      } : {}),
       lastText: this.lastText,
       questions: this.pendingQuestions(),
       notices: this.notices,

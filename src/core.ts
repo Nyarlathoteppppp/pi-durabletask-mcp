@@ -362,6 +362,8 @@ export interface WaitSummary extends FollowUpInfo {
   state: string;
   turns: number;
   toolCallCount: number;
+  touchedFiles?: Snapshot["touchedFiles"];
+  editWriteCount?: number;
   pendingQuestions: number;
   /** Present while it waits for an answer, so answer needs no extra status call. */
   questions?: Snapshot["questions"];
@@ -394,6 +396,7 @@ export async function waitForMany(
     return {
       sessionId: s.sessionId, label: s.label, state: s.state, turns: s.turns, toolCallCount: s.toolCallCount,
       ...(s.forkedFrom ? { forkedFrom: s.forkedFrom } : {}),
+      ...(s.editWriteCount ? { touchedFiles: s.touchedFiles, editWriteCount: s.editWriteCount } : {}),
       pendingQuestions: s.questions.length,
       ...(s.questions.length ? { questions: s.questions } : {}),
       ...(done && s.savedTo ? { savedTo: s.savedTo, savedChars: s.savedChars } : {}),

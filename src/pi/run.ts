@@ -18,6 +18,9 @@ export class WorkerRun {
   /** This run's prompt and its last assistant message's stop reason, for answerState. */
   prompt = "";
   stopReason: string | undefined;
+  /** Successful edit/write events in this run; paths are the original tool arguments. */
+  touchedFiles = new Set<string>();
+  editWriteCount = 0;
 
   constructor(public startedAt: string) {}
 

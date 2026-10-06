@@ -28,6 +28,11 @@ PiWorker.prototype.start = async function (prompt) {
       const run = Promise.withResolvers();
       runs.set(this.id, run);
       this.onEvent({ type: "turn_start" });
+      if (text === "edit-instant") {
+        this.onEvent({ type: "tool_execution_start", toolCallId: "written", toolName: "write", args: { path: "receipt.txt" } });
+        this.onEvent({ type: "tool_execution_end", toolCallId: "written", toolName: "write", isError: false, result: { content: [] } });
+        this.lastText = "wrote receipt.txt"; run.resolve();
+      }
       if (text === "instant") { this.lastText = "instant result"; run.resolve(); }
       await run.promise;
     },
@@ -38,7 +43,7 @@ PiWorker.prototype.start = async function (prompt) {
     dispose: () => {},
   };
   void this.track(this.session, prompt);
-  if (prompt === "instant") await this.run;
+  if (prompt === "instant" || prompt === "edit-instant") await this.run;
   return this;
 };
 const raw = (name, args = {}) => client.callTool({ name, arguments: args });
@@ -60,6 +65,15 @@ try {
   const instantFollow = await call("follow_up", { sessionId: instant.sessionId, prompt: "instant" });
   assert.equal(instantFollow.nextAction, "wait");
   await call("forget", { sessionId: instant.sessionId });
+
+  const edited = await call("run", { cwd: dir, id: "edit-result", prompt: "edit-instant", tools: [] });
+  const collected = await call("wait", { sessionId: edited.sessionId, until: "settled" });
+  const batchCollected = await call("wait", { sessionIds: [edited.sessionId], until: "all_settled" });
+  for (const result of [edited, collected, batchCollected.sessions[0], await call("status", { sessionId: edited.sessionId })]) {
+    assert.deepEqual(result.touchedFiles, ["receipt.txt"]);
+    assert.equal(result.editWriteCount, 1);
+  }
+  await call("forget", { sessionId: edited.sessionId });
 
   const started = await core.startExecution({ cwd: dir, id: "core-start", prompt: "work", tools: [] });
   const w = registry.loaded(started.sessionId);
