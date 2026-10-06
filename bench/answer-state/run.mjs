@@ -1,8 +1,8 @@
-// Replays the frozen ground truth through the shipped judge (dist/judge.js) and prints aggregates.
+// Replays the frozen ground truth through the judge in judge.mjs and prints aggregates.
 // Per-item results go to private/, which is not committed.
 // Usage: PI_DELEGATE_JUDGE_ENV_FILE=/path/.env node bench/answer-state/run.mjs [gt|heldout] [timeoutMs]
 import { readFileSync, writeFileSync } from "node:fs";
-import { classifyAnswer } from "../../dist/judge.js";
+import { classifyAnswer } from "./judge.mjs";
 
 const here = new URL(".", import.meta.url).pathname;
 const set = process.argv[2] ?? "gt";

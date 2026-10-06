@@ -1,16 +1,12 @@
 import { readFileSync } from "node:fs";
 
 /**
- * Optional semantic checks by Jev, a fast classification model (TypeSafe). Off unless
- * PI_DELEGATE_JUDGE=jev. A judgement is a single fixed value; on any failure or timeout there is
- * none, and callers must treat a missing value as unknown, never as a pass.
+ * Jev (TypeSafe's fast classification model) as evaluated for answerState. Not shipped in the
+ * server: see README.md. On any failure or timeout a call returns undefined.
  */
-export const JUDGE_ENABLED = process.env.PI_DELEGATE_JUDGE === "jev";
 const TIMEOUT_MS = 1_500;
 
-interface Transport { url: string; model: string; key: string }
-
-function fromEnvFile(path: string | undefined, name: string): string | undefined {
+function fromEnvFile(path, name) {
   if (!path) return undefined;
   try {
     const line = readFileSync(path, "utf8").split("\n").find((l) => l.startsWith(`${name}=`));
@@ -19,7 +15,7 @@ function fromEnvFile(path: string | undefined, name: string): string | undefined
 }
 
 /** TypeSafe's own API first; OpenRouter's Jev route only as a fallback. The key may live in an env file. */
-function transport(env = process.env): Transport | undefined {
+function transport(env = process.env) {
   const file = env.PI_DELEGATE_JUDGE_ENV_FILE;
   const typesafe = env.TYPESAFE_API_KEY ?? fromEnvFile(file, "TYPESAFE_API_KEY");
   if (typesafe) return { url: env.PI_DELEGATE_JUDGE_URL ?? "https://api.typesafe.ai/v1/systemone", model: "jev-latest", key: typesafe };
@@ -29,11 +25,10 @@ function transport(env = process.env): Transport | undefined {
     : undefined;
 }
 
-let cached: Transport | undefined | null = null;
+let cached = null;
 
 /** One choice question; returns the chosen option and its probability, or undefined on any failure. */
-export async function choose<T extends string>(state: unknown, question: { instructions: string; criteria: Record<T, string> },
-  timeoutMs = TIMEOUT_MS): Promise<{ choice: T; p: number } | undefined> {
+export async function choose(state, question, timeoutMs = TIMEOUT_MS) {
   if (cached === null) cached = transport();
   if (!cached) return undefined;
   try {
@@ -44,11 +39,11 @@ export async function choose<T extends string>(state: unknown, question: { instr
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (!response.ok) { await response.body?.cancel().catch(() => {}); return undefined; }
-    const answer = ((await response.json()) as { answers?: { q?: { choice?: unknown; probabilities?: Record<string, unknown> } } }).answers?.q;
+    const answer = (await response.json()).answers?.q;
     const choice = answer?.choice;
     const p = typeof choice === "string" ? answer?.probabilities?.[choice] : undefined;
     return typeof choice === "string" && choice in question.criteria && typeof p === "number" && p >= 0 && p <= 1
-      ? { choice: choice as T, p } : undefined;
+      ? { choice, p } : undefined;
   } catch { return undefined; }
 }
 
@@ -63,6 +58,6 @@ const ANSWER_QUESTION = {
 };
 
 /** Jev's own call on a finished run's final text, with its probability. */
-export function classifyAnswer(task: string, finalText: string, timeoutMs?: number) {
+export function classifyAnswer(task, finalText, timeoutMs) {
   return choose({ TASK: task.slice(0, 1_500), FINAL_TEXT: finalText.slice(-3_000) }, ANSWER_QUESTION, timeoutMs);
 }

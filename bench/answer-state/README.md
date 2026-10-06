@@ -21,7 +21,7 @@ Results are appended below; only aggregates are published.
 
 ## Run 1: development set (the 102 items above), 2026-10-06
 
-`jev-latest` via TypeSafe, prompt as in `src/judge.ts`, 5 s timeout for measurement.
+`jev-latest` via TypeSafe, prompt as in `judge.mjs`, 5 s timeout for measurement.
 
 | threshold on Jev's probability | reported | wrong | narration caught |
 |---|---|---|---|
@@ -63,3 +63,6 @@ Latency p50 237 ms, p95 275 ms, no failed calls.
 **Conclusion: not shipped.** On a realistic mix, where narration is rare, one false alarm per true
 catch is not the "certain and clearly useful" bar this server applies to Jev. 0.95 had no errors on
 either set, but it was not chosen in advance; using it needs a third held-out set, frozen first.
+
+A rerun of the development set after moving the judge into this folder gave 0.922 instead of 0.931:
+one item flipped. Jev's answers vary slightly between identical calls.
