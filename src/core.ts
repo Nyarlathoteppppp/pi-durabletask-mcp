@@ -357,6 +357,7 @@ export async function waitForState(
 /** One line per session: enough to decide what to read next, plus the answer once it is done. */
 export interface WaitSummary extends FollowUpInfo {
   sessionId: string;
+  forkedFrom?: string;
   label: string | undefined;
   state: string;
   turns: number;
@@ -392,6 +393,7 @@ export async function waitForMany(
     const done = TERMINAL.has(s.state);
     return {
       sessionId: s.sessionId, label: s.label, state: s.state, turns: s.turns, toolCallCount: s.toolCallCount,
+      ...(s.forkedFrom ? { forkedFrom: s.forkedFrom } : {}),
       pendingQuestions: s.questions.length,
       ...(s.questions.length ? { questions: s.questions } : {}),
       ...(done && s.savedTo ? { savedTo: s.savedTo, savedChars: s.savedChars } : {}),

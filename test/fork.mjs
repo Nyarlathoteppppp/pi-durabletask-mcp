@@ -87,6 +87,9 @@ try {
     tasks: [{ prompt: "ALPHA" }, { prompt: "BETA", model: "test/two", tools: [] }] });
   const [alphaId, betaId] = batch.sessions.map((s) => s.sessionId);
   const [alpha, beta] = await Promise.all([host.settle(alphaId), host.settle(betaId)]);
+  const summaries = await host.call("wait", { sessionIds: ["parent", alphaId, betaId], until: "all_settled" });
+  assert.ok(!Object.hasOwn(summaries.sessions[0], "forkedFrom"), "ordinary sessions omit fork provenance");
+  assert.deepEqual(summaries.sessions.slice(1).map((s) => s.forkedFrom), ["parent", "parent"]);
   for (const child of [alpha, beta]) {
     assert.equal(child.state, "done");
     assert.equal(child.forkedFrom, "parent");

@@ -67,12 +67,14 @@ const COMPACT_ARGS = 120;
 
 const LAST_TURN_PROMPT =
   "This is your last turn, and your tools have been removed. Answer now from the evidence already collected. " +
-  "Include concrete evidence, uncertainty, blockers, and the next action.";
+  "Follow the user's requested format and length. Preserve concrete findings and important limitations; " +
+  "do not add unrequested sections.";
 
 const FINALIZE_PROMPT =
   "Stop expanding the investigation. Reserve one remaining turn for your final answer; use other " +
   "remaining turns only for essential checks needed to support your conclusion. Return the best conclusion from " +
-  "the evidence already collected. Include concrete evidence, uncertainty, blockers, and the next action.";
+  "the evidence already collected. Follow the user's requested format and length. Preserve concrete findings " +
+  "and important limitations; do not add unrequested sections.";
 
 /**
  * One delegated Pi session. The SDK remains live for steering and questions; durable

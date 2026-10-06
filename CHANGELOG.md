@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.7 (2026-10-06)
+
+- Wrap-up prompts respect the requested answer format and length, preserving concrete findings and important limitations without requiring extra sections.
+- Batch `wait` summaries include `forkedFrom` for forked sessions; ordinary sessions omit it.
+- The bundled skill explains when to fork a shared facts session for parallel questions and when to continue with `follow_up`.
+
 ## 0.7.6 (2026-10-06)
 
 - `forkFrom` on `spawn`, `run` and `spawn_batch`: start independent tasks from a settled session's history, with fresh budgets and child-only usage. Omitted execution settings inherit from the parent and are revalidated. `forkedFrom` reports the source in results and session lists.

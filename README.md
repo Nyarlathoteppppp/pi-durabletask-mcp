@@ -40,14 +40,30 @@ To collect results, the main agent loops `wait` with `until: "settled"`. If Pi a
 - **Separate context:** Pi reads and searches; your main agent collects findings.
 - **Attachments and saved results:** pass a diff or notes by file path with `attachments`, and have long results written to a file with `saveTo`, instead of copying text through the main agent.
 - **Multiple models:** `spawn_batch` starts tasks with individually selected models.
-- **Read once, ask many:** fork a completed memory or durable session into independent `spawn`, `run`, or `spawn_batch` tasks with fresh budgets.
+- **Read once, ask many:** `forkFrom` creates independent tasks from a settled session, with fresh budgets and child-only `usage`. Batch `wait` includes `forkedFrom` to identify their parent.
 - **Live steering:** `steer` redirects work after the current tool call.
 - **Liveness:** running delegates report `idleMs` and `phase`, so slow reasoning can be told from a hung request; `PI_DELEGATE_STALL_MS` optionally ends a silent request.
 - **Follow-ups:** `follow_up` keeps context in the same long-lived session; turns accumulate.
-- **Final-turn wrap-up:** tools are disabled on the last turn and the model is asked to provide a final answer; results include token usage and cost.
+- **Final-turn wrap-up:** tools are disabled on the last turn; the model is asked to follow your answer format and length while preserving important findings and limitations. Results include token usage and cost.
 - **Recovery:** explicit `durable: true` saves checkpoints to SQLite.
 - **Handoff:** leave a note for the next Claude/Codex window.
 - **Native MCP:** `nativeMcp` explicitly selects servers and tool permissions; third-party extensions are enabled separately.
+
+<details>
+<summary>Example: fork one review into two independent questions</summary>
+
+Once `explore-01` has finished, call `spawn_batch`:
+
+```json
+{
+  "forkFrom": "explore-01",
+  "tasks": [{ "prompt": "Check authz." }, { "prompt": "Check validation." }]
+}
+```
+
+Omitted `cwd`, `model`, and `tools` inherit from the parent and are revalidated. Collect results with batch `wait`. The inherited history is still sent to the provider, so cache or token savings are not guaranteed.
+
+</details>
 
 ## Quick start
 
