@@ -129,7 +129,27 @@ try {
       await followUp;
       await worker.run;
       const snap = worker.snapshot();
-      assert.deepEqual([snap.state, snap.savedTo, snap.answerState], ["aborted", undefined, undefined], `durable=${durable}`);
+      assert.deepEqual([snap.state, snap.savedTo, snap.lastText], ["aborted", undefined, ""], `durable=${durable}`);
+    } finally {
+      worker.dispose();
+      await job.forget();
+    }
+  }
+  // A follow_up refused at authentication never ran: the previous result stays as it was.
+  for (const durable of [false, true]) {
+    rt.getAuth = async () => { throw new Error("refresh failed"); };
+    const options = { id: `refused-${durable}`, cwd: dir, model: "test/one", tools: [], durable, maxTurns: 5, maxDurationMs: 60000 };
+    const worker = new PiWorker(options);
+    worker.model = options.model;
+    worker.session = { sessionManager: SessionManager.inMemory(dir), messages: [],
+      prompt: async () => {}, waitForIdle: async () => {}, abort: async () => {}, dispose: () => {} };
+    worker.job = durable ? await DurableJob.open(worker.options, "work") : new MemoryJob();
+    const job = worker.job;
+    Object.assign(worker, { state: "done", lastText: "old answer", saved: { savedTo: "/tmp/old.md", savedChars: 10 }, answerFlag: "partial" });
+    try {
+      await assert.rejects(() => worker.followUp("next"), /refresh failed/);
+      const snap = worker.snapshot({ verbose: true });
+      assert.deepEqual([snap.state, snap.savedTo, snap.answerState, snap.lastText], ["done", "/tmp/old.md", "partial", "old answer"], `durable=${durable}`);
     } finally {
       worker.dispose();
       await job.forget();

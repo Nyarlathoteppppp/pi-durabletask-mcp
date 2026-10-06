@@ -27,7 +27,10 @@ function isInside(parent: string, child: string): boolean {
  * Resolve symlinks in the deepest existing ancestor, then append the rest. A path that does not
  * exist yet, such as a file about to be written, must not hide a symlinked parent directory.
  */
-function canonicalize(path: string, depth = 0): string {
+/** Too many dangling links to follow: such a path is treated as secret (the OS follows up to 40). */
+const LINK_LIMIT = Symbol("link limit");
+
+function canonicalize(path: string, depth = 0): string | typeof LINK_LIMIT {
   const absolute = resolve(path);
   const missing: string[] = [];
   for (let current = absolute; ; current = dirname(current)) {
@@ -36,8 +39,10 @@ function canonicalize(path: string, depth = 0): string {
     } catch {
       // A dangling symlink names its target, not itself: writing through it creates the target.
       try {
-        if (depth < 32 && lstatSync(current).isSymbolicLink())
+        if (lstatSync(current).isSymbolicLink()) {
+          if (depth >= 32) return LINK_LIMIT;
           return canonicalize(join(resolve(dirname(current), readlinkSync(current)), ...[...missing].reverse()), depth + 1);
+        }
       } catch { /* not a link, or unreadable: treat as missing */ }
       if (dirname(current) === current) return absolute;
       missing.push(basename(current));
@@ -45,28 +50,33 @@ function canonicalize(path: string, depth = 0): string {
   }
 }
 
+/** Canonical form of a known location; a pathological link chain there falls back to the plain path. */
+const known = (path: string): string => { const c = canonicalize(path); return c === LINK_LIMIT ? resolve(path) : c; };
+
 export function blockedSecretPath(path: string, cwd: string, homeDir = homedir()): string | undefined {
   const absolute = isAbsolute(path) ? resolve(path) : resolve(cwd, path);
-  const resolved = canonicalize(absolute);
-  const home = canonicalize(homeDir);
+  const canonical = canonicalize(absolute);
+  if (canonical === LINK_LIMIT) return absolute;
+  const resolved = canonical;
+  const home = known(homeDir);
 
   // A sensitive name stays sensitive when it is a symlink to an ordinary filename.
   const segments = [absolute.split(sep), resolved.split(sep)];
   if (segments.some((parts) => parts.includes(".env"))) return resolved;
 
   for (const name of SENSITIVE_DIRS) {
-    const dir = canonicalize(join(home, name));
+    const dir = known(join(home, name));
     if (isInside(dir, resolved)) return resolved;
     // Unrooted copies such as repo/.ssh, including symlinked directories.
     if (segments.some((parts) => parts.includes(name))) return resolved;
   }
 
   for (const segments of SENSITIVE_FILES) {
-    const file = canonicalize(join(home, ...segments));
+    const file = known(join(home, ...segments));
     if (resolved === file || isInside(file, resolved)) return resolved;
   }
   // Pi keeps its credentials in PI_CODING_AGENT_DIR when that is set, not only under ~/.pi/agent.
-  if (resolved === canonicalize(join(AGENT_DIR, "auth.json"))) return resolved;
+  if (resolved === known(join(AGENT_DIR, "auth.json"))) return resolved;
   return undefined;
 }
 

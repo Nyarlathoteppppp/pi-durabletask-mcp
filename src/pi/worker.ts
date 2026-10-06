@@ -163,8 +163,6 @@ export class PiWorker {
 
   private newRun(): WorkerRun {
     this.currentRun.clearTimers();
-    this.answerFlag = undefined;
-    this.saved = undefined;
     return this.currentRun = new WorkerRun(this.currentRun.startedAt);
   }
 
@@ -416,7 +414,14 @@ export class PiWorker {
     // that await still wins; cancelled runs commit their terminal state without prompting Pi.
     // An abort during that await also lets a new follow_up start; this execution is then superseded.
     if (this.suspended || this.currentRun !== run) return;
-    if (!recover) this.currentRun.startedAt = new Date().toISOString();
+    if (!recover) {
+      this.currentRun.startedAt = new Date().toISOString();
+      // From here this follow_up replaces the previous result, even if it is cancelled before Pi runs;
+      // a follow_up refused above leaves that result as it was.
+      this.lastText = "";
+      this.answerFlag = undefined;
+      this.saved = undefined;
+    }
     if (!alreadyStopped && this.state !== "aborted") {
       this.state = "running";
       this.finishedAt = undefined;
@@ -539,6 +544,8 @@ export class PiWorker {
     this.lastText = "";
     this.finishedAt = undefined;
     this.termination = undefined;
+    this.answerFlag = undefined;
+    this.saved = undefined;
     run.prompt = prompt;
     run.lastActivityAt = Date.now();
     // A run with one turn left, or a session with maxTurns 1, has only its answer turn.

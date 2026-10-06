@@ -97,7 +97,11 @@ try {
   // A dangling link to a secret name must not be followed into creating it.
   const dangling = join(dir, "dangling.md");
   await symlink(join(dir, "nested", ".env"), dangling);
-  for (const [saveTo, error] of [["relative.md", /absolute path/], [secret, /secret path/], [alias, /secret path/], [dangling, /secret path/]]) {
+  // Also through a chain longer than the checker follows: it fails closed.
+  let chain = join(dir, "nested", ".env");
+  for (let i = 0; i < 34; i++) { const link = join(dir, `chain-${i}.md`); await symlink(chain, link); chain = link; }
+  for (const [saveTo, error] of [["relative.md", /absolute path/], [secret, /secret path/], [alias, /secret path/], [dangling, /secret path/],
+    [chain, /secret path/]]) {
     for (const [name, args] of [["run", { cwd: dir, prompt: "answer", tools: [] }], ["spawn", { cwd: dir, prompt: "answer", tools: [] }],
       ["follow_up", { sessionId: "run", prompt: "again" }]]) {
       const refused = await raw(name, { ...args, saveTo });
