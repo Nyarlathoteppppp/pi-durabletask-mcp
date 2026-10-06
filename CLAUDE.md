@@ -2,7 +2,7 @@
 
 修改 Worker、取消或恢复逻辑前，先读 [生命周期与持久化时序](docs/worker-lifecycle.md)。其中列出了完成条件、SDK 事件顺序和对应测试。
 
-## 存活信号与挂起保护（2026-10-06，本地提交，未推送未发布）
+## 存活信号与挂起保护（2026-10-06，0.7.0）
 
 起因：GLM-5.3 一轮思考 9 分钟没有任何输出，调用方分不清是在思考还是请求挂住了。灵算 astra 先评审设计，Claude 实现，Pi 的 Codex 6.1 sol 审了两轮。
 - 运行中的 `status`、`wait` 和批量汇总返回 `idleMs` 和 `phase`（`model`：模型请求未返回，从 `turn_start` 或 `auto_retry_start` 到助手的 `message_end`；`tool`：本进程的 `openCalls` 不为空；`agent`：两者之间）。有待回答的问题时不返回。`sessions` 列表不返回（它是历史视图）。

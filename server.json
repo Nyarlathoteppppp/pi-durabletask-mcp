@@ -3,7 +3,7 @@
   "name": "io.github.Nyarlathoteppppp/pi-durabletask-mcp",
   "title": "Pi Durabletask MCP",
   "description": "Delegate Claude/Codex tasks to configured Pi, with steering and optional SQLite restart recovery.",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "repository": {
     "url": "https://github.com/Nyarlathoteppppp/pi-durabletask-mcp",
     "source": "github"
@@ -13,7 +13,7 @@
     {
       "registryType": "npm",
       "identifier": "pi-durabletask-mcp",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "transport": { "type": "stdio" }
     }
   ]
