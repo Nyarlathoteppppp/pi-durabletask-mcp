@@ -2,6 +2,17 @@
 
 修改 Worker、取消或恢复逻辑前，先读 [生命周期与持久化时序](docs/worker-lifecycle.md)。其中列出了完成条件、SDK 事件顺序和对应测试。
 
+## 下一阶段：故障注入测试（交给 Codex，2026-10-06）
+
+不要再堆正常流程的单元测试。目标是 durable 任务的完整链路：认领锁 → 打开 SQLite/Harness → 存检查点 → 模型完成 → Jev 判断 → 写 `saveTo` 文件 → `recordFinal` → 释放锁。在每个 await 和提交的边界强制杀掉进程一次（SIGKILL），重启一个新的 MCP 进程后检查不变量：
+- 同一个任务同时最多一个所有者；锁一定会被释放（进程死了由内核释放）；
+- 已完成的任务不会被重新执行，未完成的会被恢复，或者在 `PI_DELEGATE_MAX_RECOVERY_ATTEMPTS` 次后作为错误报告出来；
+- catalog 的 `finished_at`/`snapshot` 和 Harness 里任务的状态一致；
+- 不会出现写了一半的 `saveTo` 文件（现在是先写临时文件再改名）；
+- `answerState`/`savedTo` 不会挂到错误的那次运行上；
+- 结果未知的工具调用被标为 interrupted，不会被重放。
+已有可以参考的：`test/recovery.mjs`、`test/native-recovery.mjs`、`test/recovery-server.mjs`（有故障钩子）、`test/claim-race.mjs`。
+
 ## answerState（Jev）评估结论（2026-10-06）：不上线
 
 详见 `bench/answer-state/README.md`。开发集 102 条，阈值 0.8 时只错 1 条；但冻结规则后，在接近真实比例的留出集（58 条，其中过渡语 3 条）上，报出的 2 条 `narration` 错了 1 条，精确率 1/2，达不到"非常管用、确定"的标准。判断代码移到了 `bench/answer-state/judge.mjs`，不随包发布。要用 0.95 的阈值，需要先冻结，再做第三轮留出集。
