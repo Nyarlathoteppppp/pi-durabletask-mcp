@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.2 (2026-10-06)
+
+No change to the server's behaviour.
+
+- Every test that runs the registry in-process retries its temporary-directory cleanup, since queued registry writes can land during it (seen once in CI as `ENOTEMPTY`).
+- `bench/answer-state/`: an evaluation of Jev, a fast classification model, for telling a delegate's real conclusion from narration such as "Let me look at…". Ground truth was frozen before any Jev call; on a held-out set the frozen policy reported narration twice with one false alarm, so the feature is not shipped. Only aggregates are published; the texts stay private.
+
 ## 0.7.0 (2026-10-06)
 
 - While a delegate runs, `status`, `wait` and batch summaries report `idleMs` (time since its last event; stream deltas, including reasoning, count) and `phase` (`model` while a model request is outstanding, `tool` while a tool runs, `agent` in between; neither while a question waits for an answer). Before, a delegate silent for minutes in one model turn looked the same as one making progress.
