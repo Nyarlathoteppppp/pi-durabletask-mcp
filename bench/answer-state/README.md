@@ -38,3 +38,10 @@ label looks wrong in hindsight (a progress report answering "how is it going?").
 **Frozen policy (chosen on this set, to be confirmed on a held-out set):** report only problems.
 `answerState: "narration"` when Jev says narration with probability >= 0.8; nothing when it says
 complete, is less sure, or fails. `missing` and `partial` come from rules.
+
+## Held-out set (frozen before evaluating the policy)
+
+59 further turn-ending texts from the user's Pi sessions, none used above, sampled at random with
+16 of them biased towards short or "Let me…/接下来…" openings. Labelled independently by Claude and
+GPT-6.1 sol; 58 agreed (55 complete, 3 narration), 1 dropped (an answer that also promised an undone
+action). sha256 of `private/heldout.json`: `648775a3203bb50e4014cb9e43cbecdfc6318de8b589bc2ae08c49e244ad937e`.
