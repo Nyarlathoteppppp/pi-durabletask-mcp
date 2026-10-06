@@ -62,5 +62,6 @@ try {
   assert.equal(registry.loaded("abandoned"), undefined, "no recovery after shutdown began");
   console.log("  OK -> recovery retry re-reads capacity and shutdown");
 } finally {
-  await rm(dir, { recursive: true, force: true });
+  // Registry's queued state/retention writes can land while recursive cleanup is in progress.
+  await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 }

@@ -4,6 +4,8 @@
 
 ## 存活信号与挂起保护（2026-10-06，0.7.0）
 
+0.7.0 已发布到 GitHub、npm（latest）及 MCP Registry。tag 首次 CI 的 Node 24 + Pi 1.0.0 在 `recovery-capacity` 断言通过后，临时目录删除遇到后台写入，报 `ENOTEMPTY`；维护补丁仅给这个测试的 `rm` 加有限重试，不改发布包或运行逻辑。
+
 起因：GLM-5.3 一轮思考 9 分钟没有任何输出，调用方分不清是在思考还是请求挂住了。灵算 astra 先评审设计，Claude 实现，Pi 的 Codex 6.1 sol 审了两轮。
 - 运行中的 `status`、`wait` 和批量汇总返回 `idleMs` 和 `phase`（`model`：模型请求未返回，从 `turn_start` 或 `auto_retry_start` 到助手的 `message_end`；`tool`：本进程的 `openCalls` 不为空；`agent`：两者之间）。有待回答的问题时不返回。`sessions` 列表不返回（它是历史视图）。
 - `PI_DELEGATE_STALL_MS` 默认关闭：在 `model` 阶段超过这个时长没有任何事件，就以 `stalled` 结束，之后可以 `follow_up`。重试的退避时间不计入沉默。已知限制：开启扩展时，扩展处理 `message_end` 的耗时会被算作模型时间（文档已写明）。
