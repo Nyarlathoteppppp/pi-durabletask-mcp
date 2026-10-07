@@ -25,15 +25,68 @@ scenario("creation-failure", async () => {
     const prompt = Promise.withResolvers();
     w.session = session(w, prompt);
     w.state = "done";
+    w.lastText = "previous answer";
+    w.turns = 20;
     w.job = durable ? await DurableJob.open(w.options, "previous") : new MemoryJob();
     w.job.begin = async () => { throw new Error("task creation failed"); };
     try {
-      await assert.rejects(w.followUp("next"), /task creation failed/);
+      await assert.rejects(w.followUp("next", { maxTurns: 4, maxToolCalls: 3 }), /task creation failed/);
       assert.equal(w.state, "done");
       assert.equal(w.isActive, false, "failed task creation releases finalization activity");
-      assert.equal(w.continuation.canFollowUp, true);
+      assert.equal(w.continuation.canFollowUp, false, "failed renewal cannot grant quota");
+      assert.equal(w.maxTurns, 20);
+      assert.equal(w.maxToolCalls, undefined);
+      assert.deepEqual(w.snapshot().budgetStart, { turns: 0, toolCalls: 0 });
+      assert.equal(w.lastText, "previous answer", "failed creation keeps the previous result");
     } finally { w.dispose(); await w.job.forget(); }
   }
+});
+
+scenario("cancel-creation-failure", async () => {
+  for (const durable of [false, true]) {
+    const w = worker(`cancel-creation-${durable}`, durable);
+    w.session = session(w, Promise.withResolvers());
+    w.state = "done"; w.turns = 20; w.lastText = "previous answer";
+    w.job = durable ? await DurableJob.open(w.options, "previous") : new MemoryJob();
+    const entered = Promise.withResolvers(), release = Promise.withResolvers();
+    let cancelled;
+    w.job.save = async checkpoint => { cancelled = checkpoint; };
+    w.job.begin = async (_prompt, checkpoint) => {
+      assert.equal(checkpoint.snapshot.limits.maxTurns, 4, "staged task checkpoint contains requested quota");
+      entered.resolve(); await release.promise; throw new Error("creation failed after cancellation");
+    };
+    const starting = w.followUp("next", { maxTurns: 4, maxToolCalls: 3 });
+    const rejected = assert.rejects(starting, /creation failed after cancellation/);
+    try {
+      await entered.promise;
+      await w.abort("caller_cancelled");
+      release.resolve(); await rejected;
+      assert.equal(w.state, "aborted", "creation refusal cannot override cancellation");
+      assert.equal(w.termination.reason, "caller_cancelled");
+      assert.equal(w.maxTurns, 20);
+      assert.equal(w.maxToolCalls, undefined);
+      assert.equal(cancelled.snapshot.limits.maxTurns, 20, "cancellation cannot save provisional quota to the previous task");
+      assert.equal(cancelled.snapshot.limits.maxToolCalls, undefined);
+      assert.deepEqual(cancelled.snapshot.budgetStart, { turns: 0, toolCalls: 0 });
+      assert.equal(w.isActive, false);
+    } finally { release.resolve(); await rejected; w.dispose(); await w.job.forget(); }
+  }
+});
+
+scenario("legacy-budget", async () => {
+  const w = worker("legacy-budget");
+  w.session = session(w, Promise.withResolvers()); w.state = "done"; w.turns = 3;
+  const saved = w.checkpoint();
+  delete saved.snapshot.budgetStart;
+  saved.snapshot.limits = { maxTurns: 5, maxDurationMs: 10000, maxToolCalls: 2 };
+  w.restoreSnapshot(saved);
+  assert.deepEqual(w.snapshot().budgetStart, { turns: 0, toolCalls: 0 });
+  assert.equal(w.continuation.remainingTurns, 2, "old checkpoints keep cumulative budget semantics");
+  assert.equal(w.maxToolCalls, 2);
+  assert.throws(() => w.followUp("invalid", { maxTurns: 51 }), /maxTurns must/);
+  assert.throws(() => w.followUp("invalid", { maxToolCalls: 0 }), /maxToolCalls must/);
+  assert.equal(w.state, "done");
+  w.dispose();
 });
 
 scenario("old-completion", async () => {

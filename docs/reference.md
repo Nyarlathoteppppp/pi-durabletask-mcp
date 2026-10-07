@@ -292,11 +292,23 @@ This is the cheap way to have a conversation with a delegate. Spawning a fresh o
 re-explaining the task and paying for it to re-read the same files, and its answer arrives
 with none of the reasoning that led there.
 
-Turns are cumulative across follow-ups, and `follow_up` is refused once `maxTurns` is used up.
+Counts and usage remain cumulative across follow-ups. Omit budget fields to keep the current
+remaining quotas. Pass `maxTurns` and/or `maxToolCalls` to explicitly give this run a fresh quota
+for that dimension; omitted dimensions retain their previous boundary. For example:
+
+```json
+{ "sessionId": "search-audit-01", "prompt": "Verify the remaining claim", "maxTurns": 8, "maxToolCalls": 6 }
+```
+
+This also restores previously removed tools from the original grant, subject to the remaining
+quotas. `limits` describes the current quotas; `budgetStart` records the cumulative turn/own-call
+counts at their last explicit renewal. The checkpoints retain both across restarts, so recovery
+never grants extra quota. An exhausted turn quota requires an explicit `maxTurns` to continue.
 `status`, `wait`, `sessions` and `handoff read` report `remainingTurns`, `canFollowUp` and,
 when blocked, `followUpBlockedReason`. Readiness covers state and the turn budget;
 ownership, concurrency capacity and provider authentication are checked when `follow_up` is called.
-An active run, pending finalization or exhausted turn budget cannot be followed up yet.
+An active run or pending finalization cannot be followed up. An exhausted turn budget can be renewed explicitly.
+`canFollowUp` reports readiness **without** a renewal; `turn_budget_exhausted` can be resolved by passing `maxTurns`.
 The wall-clock limit (`maxDurationMs`) applies to each run instead: the spawn and every
 `follow_up` get the full limit, so a durable delegate kept for days can still be continued.
 Time a run spends interrupted by a server restart counts against that run.
@@ -756,11 +768,11 @@ tool-using delegate is steered once to stop expanding its investigation, finish 
 and reserve one remaining turn for its conclusion. Slow turns (large context, high thinking) can
 reach the deadline long before that, so once 2/3 of the time budget is used, the same steer is sent
 at the end of the next turn that called tools; a turn that is writing the answer is never followed
-by one. Only one is sent per run. `maxToolCalls` caps the delegate's own tool calls for the whole
-session (calls inside a codemode script or MCP tool do not count): models do not count their own
+by one. Only one is sent per run. `maxToolCalls` caps the delegate's own tool calls, shared with
+follow-ups unless explicitly renewed there (calls inside a codemode script or MCP tool do not count): models do not count their own
 calls, so the reminder at 75% of the cap states the exact numbers, and once the cap is reached the
 next turn has no tools and must answer. A turn's parallel calls can overshoot the cap by that
-turn's batch. The session's last turn has no tools: at the end of the turn
+turn's batch. The current quota's last turn has no tools: at the end of the turn
 before it they are removed and the delegate is told to answer, so a model that ignores the
 reminders gets a tool-free turn to conclude (a run that starts
 with one turn left starts without tools). Timeouts, provider/auth errors or cancellation can still interrupt it. Reaching the

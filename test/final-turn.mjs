@@ -11,18 +11,20 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 // instead of being aborted at the turn limit with nothing to show.
 const dir = await mkdtemp(join(tmpdir(), "pi-delegate-final-turn-"));
 const requests = [];
+let requestNo = 0;
 const http = createServer(async (req, res) => {
   let body = "";
   for await (const chunk of req) body += chunk;
   const request = JSON.parse(body);
   requests.push(request);
+  requestNo++;
   res.writeHead(200, { "Content-Type": "text/event-stream" });
   const emit = (delta, finish_reason = null) => res.write(`data: ${JSON.stringify({
     id: "final", object: "chat.completion.chunk", created: 1, model: request.model, choices: [{ index: 0, delta, finish_reason }] })}\n\n`);
   // A model that never stops exploring while it has tools.
   if (request.tools?.length) {
     const name = request.tools[0].function.name;
-    emit({ role: "assistant", tool_calls: [{ index: 0, id: `call_${requests.length}`, type: "function",
+    emit({ role: "assistant", tool_calls: [{ index: 0, id: `call_${requestNo}`, type: "function",
       function: { name, arguments: JSON.stringify(name === "ls" ? { path: dir } : { message: "probe" }) } }] });
     emit({}, "tool_calls");
   } else {
@@ -105,6 +107,46 @@ try {
   await call("follow_up", { sessionId: "capped", prompt: "more" });
   await settle("capped");
   assert.ok(requests.every((r) => !r.tools?.length), "no tools after the cap, also on follow_up");
+  const beforeCallRenewal = await call("status", { sessionId: "capped" });
+  requests.length = 0;
+  await call("follow_up", { sessionId: "capped", prompt: "two more checks", maxToolCalls: 2 });
+  const afterCallRenewal = await settle("capped");
+  assert.equal(afterCallRenewal.turns, beforeCallRenewal.turns + 3);
+  assert.equal(afterCallRenewal.toolCallCount, 6);
+  assert.equal(afterCallRenewal.limits.maxTurns, 20);
+  assert.deepEqual(afterCallRenewal.budgetStart, { turns: 0, toolCalls: 4 }, "call-only renewal preserves the turn boundary");
+  assert.equal(requests.filter(r => r.tools?.length).length, 2);
+
+  // Explicit renewal grants only this run fresh quotas; ordinary follow_up remains cumulative.
+  for (const durable of [false, true]) {
+    const id = `renew-${durable}`;
+    await call("spawn", { cwd: dir, id, prompt: "explore", tools: ["ls"], maxTurns: 3, maxToolCalls: 2, durable });
+    const before = await settle(id);
+    assert.equal(before.remainingTurns, 0);
+    const refused = await client.callTool({ name: "follow_up", arguments: { sessionId: id, prompt: "again" } });
+    assert.ok(refused.isError, "no implicit renewal");
+    requests.length = 0;
+    await call("follow_up", { sessionId: id, prompt: "explore again", maxTurns: 4, maxToolCalls: 2 });
+    const after = await settle(id);
+    assert.equal(after.state, "done");
+    assert.equal(after.turns, 6, "turn count remains cumulative");
+    assert.equal(after.toolCallCount, 4, "tool trace remains cumulative");
+    assert.equal(after.remainingTurns, 1);
+    assert.equal(after.limits.maxTurns, 4, "limits describe the renewed quota, not a cumulative boundary");
+    assert.deepEqual(after.budgetStart, { turns: 3, toolCalls: 2 });
+    assert.equal(after.usage.input, before.usage.input + 300);
+    assert.equal(requests.filter(r => r.tools?.length).length, 2, "previously removed tools return with fresh quotas");
+    assert.ok(requests[0].messages.some(m => JSON.stringify(m).includes("SUMMARY from what I read")), "history is retained");
+    await call("follow_up", { sessionId: id, prompt: "plain follow-up" });
+    assert.equal((await settle(id)).turns, 7);
+    const toolOnly = await client.callTool({ name: "follow_up", arguments: { sessionId: id, prompt: "again", maxToolCalls: 2 } });
+    assert.ok(toolOnly.isError, "renewing calls does not renew exhausted turns");
+    requests.length = 0;
+    await call("follow_up", { sessionId: id, prompt: "answer only", maxTurns: 2 });
+    const turnOnly = await settle(id);
+    assert.equal(turnOnly.toolCallCount, 4, "renewing turns does not renew exhausted calls");
+    assert.ok(requests.every(r => !r.tools?.length));
+  }
 
   // With one turn in total, that turn is the last one.
   requests.length = 0;
@@ -123,6 +165,15 @@ try {
       assert.equal(snap.toolCalls.length, maxTurns - 1, "no native calls during the answer turn");
       assert.ok(!requests.at(-1).tools?.length, "native tools stay absent from the answer request");
       assert.deepEqual(snap.activeTools, []);
+      requests.length = 0;
+      await call("follow_up", { sessionId: id, prompt: "explore again", maxTurns: 3, maxToolCalls: 1 });
+      const renewed = await settle(id);
+      assert.equal(renewed.state, "done");
+      assert.equal(renewed.turns, maxTurns + 2);
+      assert.equal(renewed.toolCallCount, maxTurns);
+      assert.deepEqual(requests[0].tools.map(t => t.function.name), ["mcp__direct__echo"], "renewal reactivates only the original native grant");
+      assert.ok(!requests.at(-1).tools?.length);
+      assert.deepEqual(renewed.activeTools, []);
     }
   }
   console.log("  OK -> the last turn has no tools, so a delegate that keeps exploring still answers");

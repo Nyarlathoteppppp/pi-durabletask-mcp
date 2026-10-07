@@ -8,6 +8,7 @@ import { storedJobs, storedSnapshot } from "./durable.js";
 import { compactSnapshot, message } from "./pi/worker.js";
 import { withAttachments } from "./attachments.js";
 import { checkSavePath, omitsSavedText } from "./save.js";
+import type { FollowUpBudget } from "./pi/run.js";
 import type { PiWorker } from "./pi/worker.js";
 import type { Snapshot } from "./types.js";
 import type { FollowUpInfo } from "./continuation.js";
@@ -445,7 +446,7 @@ export async function resolveInteraction(sessionId: string, requestId: string, v
   return (await resolve(sessionId)).answer(requestId, value);
 }
 
-export async function followUp(sessionId: string, prompt: string, attachments?: string[], saveTo?: string) {
+export async function followUp(sessionId: string, prompt: string, attachments?: string[], saveTo?: string, budget: FollowUpBudget = {}) {
   const text = await withAttachments(prompt, attachments);
   if (saveTo !== undefined) checkSavePath(saveTo);
   const worker = await resolve(sessionId);
@@ -457,7 +458,7 @@ export async function followUp(sessionId: string, prompt: string, attachments?: 
   // Each run states its own destination; a follow_up without saveTo returns its text inline.
   const previousSaveTo = worker.saveTo;
   worker.saveTo = saveTo;
-  try { return { ...await worker.followUp(text), state: observedState(worker), next: WAIT_HINT }; }
+  try { return { ...await worker.followUp(text, budget), state: observedState(worker), next: WAIT_HINT }; }
   catch (error) { worker.saveTo = previousSaveTo; throw error; }
 }
 

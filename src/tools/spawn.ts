@@ -74,7 +74,7 @@ const spawnShape = {
     .min(1)
     .max(MAX_TURNS)
     .optional()
-    .describe(`Maximum model/tool turns for the whole session, cumulative across follow_up; server ceiling ${MAX_TURNS}.`),
+    .describe(`Turn quota shared with follow_up unless explicitly renewed there; server ceiling ${MAX_TURNS}.`),
   maxDurationMs: z
     .number()
     .int()
@@ -83,7 +83,7 @@ const spawnShape = {
     .optional()
     .describe(`Wall-clock deadline in milliseconds; server ceiling ${MAX_DURATION_MS}.`),
   maxToolCalls: z.number().int().min(1).max(1000).optional()
-    .describe("Cap on the delegate's own tool calls, cumulative across follow_up; it is told its count near the cap, then must answer. Omit for no cap."),
+    .describe("Own-tool-call quota shared with follow_up unless explicitly renewed there; the delegate is told its count near the cap, then must answer. Omit for no cap."),
 };
 
 const taskShape = z.object({

@@ -22,7 +22,7 @@ Use the connected server's tools; names below omit client-specific prefixes.
 - Keep the returned `sessionId`; loop `wait` with `until: "settled"` until finished. Answer pending questions using `questions[].id` as `answer.requestId`, then wait again.
 - For independent tasks, use `spawn_batch`; for multiple angles on the same material, collect facts in a parent first, then batch with `forkFrom`. Wait with `sessionIds`, answer questions, then continue with returned `continueIds` until none remain.
 - Follow `nextAction`: `wait` to keep collecting, `answer` to resolve pending questions, `finish` when this run ends—not necessarily successfully; check `state`, `error`, `termination` and the result.
-- Use `steer` while running, `follow_up` when finished; fork to change model/tools or create an independent branch. Follow-ups share the turn budget; forks start fresh.
+- Use `steer` while running, `follow_up` when finished; fork to change model/tools or create an independent branch. Follow-ups keep remaining quotas; pass `maxTurns`/`maxToolCalls` to renew them. Forks start fresh.
 - Cancelling `wait` only stops waiting; use `abort` to stop the delegate.
 
 ## Recovery and handoff

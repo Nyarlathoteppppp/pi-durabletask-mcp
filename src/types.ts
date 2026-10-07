@@ -80,6 +80,8 @@ export interface Snapshot extends FollowUpInfo {
   startedAt: string;
   /** Start of the current run (spawn or latest follow_up); the wall-clock limit applies from here. */
   runStartedAt?: string;
+  /** Cumulative counters when the current quotas were explicitly renewed; absent means zero. */
+  budgetStart?: { turns: number; toolCalls: number };
   finishedAt: string | undefined;
   elapsedMs: number;
   limits: { maxTurns: number; maxDurationMs: number; maxToolCalls?: number };

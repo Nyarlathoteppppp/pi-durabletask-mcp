@@ -45,7 +45,7 @@ To collect results, the main agent loops `wait` with `until: "settled"`. If Pi a
 - **Read once, ask many:** `forkFrom` creates independent tasks from a settled session, with fresh budgets and child-only `usage`. Batch `wait` includes `forkedFrom` to identify their parent.
 - **Live steering:** `steer` redirects work after the current tool call.
 - **Liveness:** running delegates report `idleMs` and `phase`, so slow reasoning can be told from a hung request; `PI_DELEGATE_STALL_MS` optionally ends a silent request.
-- **Follow-ups:** `follow_up` keeps context in the same long-lived session; turns accumulate.
+- **Follow-ups:** `follow_up` keeps context and can request additional turn or tool-call budget.
 - **Final-turn wrap-up:** tools are disabled on the last turn; the model is asked to follow your answer format and length while preserving important findings and limitations. Results include token usage and cost.
 - **Recovery:** explicit `durable: true` saves checkpoints to SQLite.
 - **Handoff:** leave a note for the next Claude/Codex window.

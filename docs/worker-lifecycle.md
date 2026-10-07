@@ -10,7 +10,7 @@ implementation; `sessionId` identifies a conversation, and each `follow_up` star
 - `src/registry.ts`: capacity, session lookup, recovery claims and eviction.
 - `PiWorker`: Pi SDK events, run state, cancellation and checkpoint contents.
 - `WorkerRun` (`src/pi/run.ts`): transient control for one run: timers, provider/retry flags,
-  cancellation, finalization, completion and the current run's successful edit/write receipt.
+  cancellation, finalization, completion, budget boundaries and the current run's successful edit/write receipt.
   Conversation entries and tool results stay in `PiWorker`. Receipt paths come from raw start-event
   arguments, not clipped diagnostic JSON; successful end events update them before checkpoints.
   Authentication refusal keeps the previous receipt; accepted follow-ups clear it. Recovery restores
@@ -43,7 +43,15 @@ clear `settling`; final catalog failures become an `error` state without discard
 or rejecting the completion promise.
 `agent_end` alone is insufficient too: SDK listeners and automatic retries may still be pending.
 
-Turns accumulate across follow-ups; the time budget restarts per run. Recovery keeps the run's
+Counts accumulate across follow-ups. `WorkerRun.budget` holds quotas and their cumulative start
+counters. A follow-up's explicit `maxTurns`/`maxToolCalls` stages a renewal only for that dimension after auth;
+omitted dimensions keep their boundary. The new task's initial snapshot persists `limits` and
+`budgetStart` atomically with task creation. Creation failure before prompting restores the prior
+budget/result. The live quota changes only when task creation succeeds (or its committed executor
+starts first); cancellation during creation cannot write a provisional quota to the old task.
+Tools are reactivated from original grants only when the task executes. Old snapshots
+without `budgetStart` use zero origins. Recovery restores these counters, never renews them.
+The time budget restarts per run. Recovery keeps the run's
 original clock, so downtime counts. The last turn has no tools. Native MCP registration is async:
 the `context_with_system` hook also removes tool declarations from the final provider request.
 

@@ -13,7 +13,7 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { DurableJob, forgetOwnedJob, MemoryJob, releaseJob, type Checkpoint, type JobStore } from "../durable.js";
-import { AGENT_DIR, RETENTION_DAYS, STALL_MS } from "../config.js";
+import { AGENT_DIR, MAX_TURNS, RETENTION_DAYS, STALL_MS } from "../config.js";
 import { JUDGE_ENABLED, judgeAnswer } from "../judge.js";
 import { omitsSavedText, saveText } from "../save.js";
 import { followUpInfo } from "../continuation.js";
@@ -35,7 +35,7 @@ import { assertProviderReady, assertThinkingSupported, resolveModel } from "./mo
 import { getRuntime } from "./runtime.js";
 import { clipArgs, flatten } from "./trace.js";
 import { createUiContext, Question } from "./ui.js";
-import { WorkerRun } from "./run.js";
+import { WorkerRun, type FollowUpBudget, type RunBudget } from "./run.js";
 
 type AgentSession = CreateAgentSessionResult["session"];
 
@@ -55,7 +55,7 @@ export interface WorkerOptions extends NativeMcpOptions {
   retentionDays?: number | undefined;
   maxTurns: number;
   maxDurationMs: number;
-  /** Cap on the model's own tool calls for the whole session; nested calls (codemode, MCP) do not count. */
+  /** Initial own-tool-call quota; follow-ups share it unless renewed. Nested calls (codemode, MCP) do not count. */
   maxToolCalls?: number | undefined;
   startedAt?: string;
   forkedFrom?: string;
@@ -93,12 +93,14 @@ export class PiWorker {
   readonly startedAt: string;
   /**
    * Control state of the current spawn or follow_up. The wall-clock limit applies
-   * per run, so a session can be continued days later; turns stay cumulative. Downtime during a
+   * per run, so a session can be continued days later. Cumulative counts are kept separately from quotas. Downtime during a
    * run still counts, since recovery keeps this value.
    */
   private currentRun: WorkerRun;
-  readonly maxTurns: number;
-  readonly maxToolCalls: number | undefined;
+  get maxTurns(): number { return this.currentRun.budget.maxTurns; }
+  get maxToolCalls(): number | undefined { return this.currentRun.budget.maxToolCalls; }
+  private get budgetTurns(): number { return this.turns - this.currentRun.budget.turnStart; }
+  private budgetToolCalls(): number { return this.ownToolCalls() - this.currentRun.budget.toolCallStart; }
   readonly maxDurationMs: number;
 
   state: SessionState = "starting";
@@ -162,7 +164,7 @@ export class PiWorker {
   }
 
   get continuation() {
-    return followUpInfo(this.state, this.turns, this.maxTurns,
+    return followUpInfo(this.state, this.budgetTurns, this.maxTurns,
       this.recoveryCleanupFailed ? "cleanup_failed"
         : this.isActive ? (["starting", "running"].includes(this.state) ? "running" : "finalizing")
         : !this.session ? "not_started" : undefined);
@@ -183,7 +185,7 @@ export class PiWorker {
   }
 
   private toolCallsSpent(): boolean {
-    return this.maxToolCalls !== undefined && this.ownToolCalls() >= this.maxToolCalls;
+    return this.maxToolCalls !== undefined && this.budgetToolCalls() >= this.maxToolCalls;
   }
 
   /** The previous run's text, saved file and answer flag, which a new run replaces. */
@@ -195,7 +197,7 @@ export class PiWorker {
 
   private newRun(preserveReceipt = false): WorkerRun {
     this.currentRun.clearTimers();
-    const run = new WorkerRun(this.currentRun.startedAt);
+    const run = new WorkerRun(this.currentRun.startedAt, { ...this.currentRun.budget });
     // A follow_up may be refused during authentication, leaving the previous result intact.
     if (preserveReceipt) {
       run.touchedFiles = new Set(this.currentRun.touchedFiles);
@@ -233,11 +235,9 @@ export class PiWorker {
     this.extensionsEnabled = extensions;
     this.nativeMcp = nativeMcp;
     this.mcpServers = [...mcpServers];
-    this.maxTurns = maxTurns;
     this.maxDurationMs = maxDurationMs;
-    this.maxToolCalls = maxToolCalls;
     this.startedAt = startedAt ?? new Date().toISOString();
-    this.currentRun = new WorkerRun(this.startedAt);
+    this.currentRun = new WorkerRun(this.startedAt, { maxTurns, maxToolCalls, turnStart: 0, toolCallStart: 0 });
     this.options = { id: this.id, label, cwd, model, thinking, tools, extensions, durable, retentionDays, nativeMcp, mcpServers: this.mcpServers, maxTurns, maxDurationMs,
       ...(maxToolCalls !== undefined ? { maxToolCalls } : {}), startedAt: this.startedAt,
       ...(forkedFrom ? { forkedFrom, usageBaseline } : {}) };
@@ -407,7 +407,7 @@ export class PiWorker {
         this.activeTools = pi.getActiveTools();
       });
       pi.on("context_with_system", (event) => {
-        if (this.turns < this.maxTurns && !this.toolCallsSpent()) return;
+        if (this.budgetTurns < this.maxTurns && !this.toolCallsSpent()) return;
         // Native tools register asynchronously, including during the first prompt. Enforce
         // the answer-only turn after registration, on the actual request transcript.
         this.lastTurn();
@@ -454,6 +454,8 @@ export class PiWorker {
   private restoreSnapshot(saved: Checkpoint): void {
     const snapshot = saved.snapshot;
     this.currentRun.startedAt = snapshot.runStartedAt ?? snapshot.startedAt;
+    this.currentRun.budget = { maxTurns: snapshot.limits.maxTurns, maxToolCalls: snapshot.limits.maxToolCalls,
+      turnStart: snapshot.budgetStart?.turns ?? 0, toolCallStart: snapshot.budgetStart?.toolCalls ?? 0 };
     this.state = snapshot.state;
     this.turns = snapshot.turns;
     this.lastText = snapshot.lastText;
@@ -478,7 +480,11 @@ export class PiWorker {
     this.recoveryInput = saved.recoveryInput;
   }
 
-  private async beginDurable(prompt: string, saved?: Checkpoint, recover = false): Promise<void> {
+  private async beginDurable(prompt: string, saved?: Checkpoint, recover = false, budget: FollowUpBudget = {}): Promise<void> {
+    const previousBudget = { ...this.currentRun.budget };
+    const previousRun = this.currentRun;
+    const previousResult = { text: this.lastText, flag: this.answerFlag, saved: this.saved,
+      finishedAt: this.finishedAt, error: this.error, termination: this.termination };
     const run = this.newRun(true);
     if (saved) this.restoreSnapshot(saved);
     else this.inputStarted = false;
@@ -490,7 +496,7 @@ export class PiWorker {
     const answered = recover && saved?.inputStarted && !this.steering.length &&
       last?.role === "assistant" && (last.stopReason === "stop" || last.stopReason === "length");
     // A recovery already past its budget is only marked aborted, so it needs no model either.
-    const overBudget = recover && (this.turns >= this.maxTurns || this.elapsedMs() >= this.maxDurationMs);
+    const overBudget = recover && (this.budgetTurns >= this.maxTurns || this.elapsedMs() >= this.maxDurationMs);
     const provider = this.model?.includes("/") ? this.model.slice(0, this.model.indexOf("/")) : undefined;
     if (!alreadyStopped && !answered && !overBudget && provider) {
       try { await assertProviderReady(provider); }
@@ -515,8 +521,26 @@ export class PiWorker {
       this.termination = undefined;
     }
     run.settling = true;
+    let accepted = false;
     try {
-      const { done } = await this.job!.begin(prompt, this.checkpoint(), async (input, checkpoint, signal) => {
+      // Stage quotas in the new task's checkpoint without changing the old task's live state.
+      // abort() during creation must not save an uncommitted renewal into the previous task.
+      const checkpoint = this.checkpoint();
+      const renewed = !recover && this.state !== "aborted" && (budget.maxTurns !== undefined || budget.maxToolCalls !== undefined);
+      const nextBudget = renewed ? this.nextBudget(budget) : { ...run.budget };
+      if (renewed) {
+        checkpoint.snapshot.limits = { ...checkpoint.snapshot.limits,
+          maxTurns: nextBudget.maxTurns, ...(nextBudget.maxToolCalls !== undefined ? { maxToolCalls: nextBudget.maxToolCalls } : {}) };
+        checkpoint.snapshot.budgetStart = { turns: nextBudget.turnStart, toolCalls: nextBudget.toolCallStart };
+        Object.assign(checkpoint.snapshot, followUpInfo(this.state, this.turns - nextBudget.turnStart, nextBudget.maxTurns));
+      }
+      const acceptBudget = (): void => {
+        if (accepted || this.currentRun !== run) return;
+        accepted = true;
+        run.budget = nextBudget;
+        run.restoreTools = renewed;
+      };
+      const { done } = await this.job!.begin(prompt, checkpoint, async (input, checkpoint, signal) => {
         const suspend = (): void => {
           run.clearTimers();
           if (this.currentRun !== run) return;
@@ -528,6 +552,7 @@ export class PiWorker {
         try {
           // A durable task's creation also yields; cancellation may arrive while it commits.
           if (this.currentRun !== run) return checkpoint;
+          acceptBudget();
           if (alreadyStopped || this.state === "aborted") return this.checkpoint();
           if (recover && checkpoint.inputStarted) {
             // Steering may arrive while job.begin yields; it still needs a model turn.
@@ -548,8 +573,8 @@ export class PiWorker {
               (this.steering.length ? "\nPending steering instructions:\n" + this.steering.join("\n") : "");
             this.recoveryInput ??= { text: input, steeringCount: this.steering.length };
           }
-          if (this.turns >= this.maxTurns || this.elapsedMs() >= this.maxDurationMs) {
-            await this.abort(this.turns >= this.maxTurns ? "max_turns" : "deadline");
+          if (this.budgetTurns >= this.maxTurns || this.elapsedMs() >= this.maxDurationMs) {
+            await this.abort(this.budgetTurns >= this.maxTurns ? "max_turns" : "deadline");
           } else await this.track(this.session!, input, run);
           if (this.suspended) {
             // suspend() first drains a checkpoint, then closes the Harness. If the SDK
@@ -561,6 +586,8 @@ export class PiWorker {
           return this.checkpoint();
         } finally { signal.removeEventListener("abort", suspend); }
       }, recover);
+      // Harness may run the callback before begin() returns; either path accepts only once.
+      acceptBudget();
       run.completion = done.then(() => {}).catch((error: unknown) => {
         if (this.currentRun !== run || this.suspended) return;
         this.state = "error";
@@ -580,8 +607,31 @@ export class PiWorker {
     } catch (error) {
       run.settling = false;
       run.clearTimers();
+      if (!accepted && this.currentRun === run && !this.inputStarted) {
+        run.budget = previousBudget;
+        run.restoreTools = false;
+        if (this.state !== "aborted") {
+          run.startedAt = previousRun.startedAt;
+          run.touchedFiles = new Set(previousRun.touchedFiles);
+          run.editWriteCount = previousRun.editWriteCount;
+          this.lastText = previousResult.text;
+          this.answerFlag = previousResult.flag;
+          this.saved = previousResult.saved;
+          this.finishedAt = previousResult.finishedAt;
+          this.error = previousResult.error;
+          this.termination = previousResult.termination;
+        }
+      }
       throw error;
     }
+  }
+
+  /** Compute explicit renewals; omitted dimensions keep their existing boundary. */
+  private nextBudget(budget: FollowUpBudget): RunBudget {
+    const next = { ...this.currentRun.budget };
+    if (budget.maxTurns !== undefined) { next.maxTurns = budget.maxTurns; next.turnStart = this.turns; }
+    if (budget.maxToolCalls !== undefined) { next.maxToolCalls = budget.maxToolCalls; next.toolCallStart = this.ownToolCalls(); }
+    return next;
   }
 
   static async recover(options: WorkerOptions, prompt: string, key: string, worker = new PiWorker(options)): Promise<PiWorker> {
@@ -657,8 +707,13 @@ export class PiWorker {
     this.clearResult();
     run.prompt = prompt;
     run.lastActivityAt = Date.now();
+    if (run.restoreTools) {
+      session.setActiveToolsByName(this.toolNames);
+      this.activeTools = session.getActiveToolNames();
+      run.restoreTools = false;
+    }
     // A run with one turn left, or a session with maxTurns 1, has only its answer turn.
-    if (this.turns >= this.maxTurns - 1 || this.toolCallsSpent()) this.lastTurn(session);
+    if (this.budgetTurns >= this.maxTurns - 1 || this.toolCallsSpent()) this.lastTurn(session);
     const remainingMs = Math.max(1, this.maxDurationMs - this.elapsedMs());
     run.deadlineTimer = setTimeout(() => {
       if (this.currentRun !== run) return;
@@ -731,33 +786,44 @@ export class PiWorker {
    * history in durable checkpoints, so the delegate still remembers everything it read and said. This
    * is the difference between a conversation and re-explaining yourself to a fresh agent.
    */
-  followUp(prompt: string): { sessionId: string; state: SessionState; turnsSoFar: number } | Promise<{ sessionId: string; state: SessionState; turnsSoFar: number }> {
+  followUp(prompt: string, budget: FollowUpBudget = {}): { sessionId: string; state: SessionState; turnsSoFar: number } | Promise<{ sessionId: string; state: SessionState; turnsSoFar: number }> {
     if (this.recoveryCleanupFailed) throw new Error(`Session ${this.id} cleanup failed; inspect status before continuing.`);
     if (!this.session) throw new Error(`Session ${this.id} never started, nothing to follow up on.`);
     if (this.isActive)
       throw new Error(
         `Session ${this.id} is ${this.state}. Use \`steer\` to redirect a delegate that is still working.`,
       );
-    if (this.turns >= this.maxTurns) {
+    for (const [name, ceiling] of [["maxTurns", MAX_TURNS], ["maxToolCalls", 1000]] as const) {
+      const value = budget[name];
+      if (value !== undefined && (!Number.isInteger(value) || value < 1 || value > ceiling))
+        throw new Error(`${name} must be an integer from 1 to ${ceiling}.`);
+    }
+    if (budget.maxTurns === undefined && this.budgetTurns >= this.maxTurns) {
       throw new Error(
-        `Session ${this.id} already used ${this.turns}/${this.maxTurns} turns. Spawn a new delegate instead of follow_up.`,
+        `Session ${this.id} already used ${this.budgetTurns}/${this.maxTurns} turns. Pass maxTurns to follow_up for a fresh quota, or spawn a new delegate.`,
       );
     }
     if (this.job) {
       const previous = this.state;
       this.state = "starting";
-      const starting = this.beginDurable(prompt);
+      const starting = this.beginDurable(prompt, undefined, false, budget);
       const run = this.currentRun;
       return starting.then(() => {
         if (this.currentRun === run) this.onChange?.();
         return { sessionId: this.id, state: this.state, turnsSoFar: this.turns };
       }, (error: unknown) => {
         // Refused before anything ran (for example, a provider whose credentials fail).
-        if (this.currentRun === run) { this.state = previous; this.onChange?.(); }
+        if (this.currentRun === run) {
+          if (this.state !== "aborted") this.state = previous;
+          this.onChange?.();
+        }
         throw error;
       });
     }
-    void this.track(this.session, prompt);
+    const run = this.newRun();
+    run.budget = this.nextBudget(budget);
+    run.restoreTools = budget.maxTurns !== undefined || budget.maxToolCalls !== undefined;
+    void this.track(this.session, prompt, run);
     this.onChange?.();
     return { sessionId: this.id, state: this.state, turnsSoFar: this.turns };
   }
@@ -775,13 +841,13 @@ export class PiWorker {
         // A tool-free turn is normally the final answer. Budget only an agent that is
         // continuing the tool loop, so a conclusion at the limit is not thrown away.
         if (this.state !== "running" || this.suspended || ev.toolResults.length === 0) break;
-        if (this.turns >= this.maxTurns) {
-          this.abortForBudget("max_turns", { limit: this.maxTurns, observed: this.turns });
+        if (this.budgetTurns >= this.maxTurns) {
+          this.abortForBudget("max_turns", { limit: this.maxTurns, observed: this.budgetTurns });
           break;
         }
         // The last turn gets no tools, so the model answers instead of being cut off at the limit.
         // The same once the tool-call cap is reached; a turn's parallel calls may overshoot it.
-        if (this.turns === this.maxTurns - 1 || this.toolCallsSpent()) {
+        if (this.budgetTurns === this.maxTurns - 1 || this.toolCallsSpent()) {
           this.lastTurn();
           void this.session?.steer(LAST_TURN_PROMPT).catch((e: unknown) => {
             this.notices.push({ type: "warning", message: `last-turn steer failed: ${message(e)}`, at: new Date().toISOString() });
@@ -789,15 +855,15 @@ export class PiWorker {
           break;
         }
         const finishAt = Math.max(1, Math.floor(this.maxTurns * 0.75));
-        const calls = this.ownToolCalls();
+        const calls = this.budgetToolCalls();
         const callsLow = this.maxToolCalls !== undefined && calls >= Math.max(1, Math.floor(this.maxToolCalls * 0.75));
         if (this.questions.size > 0) break;
         // Models do not count their own calls: tell them the exact numbers, once, whichever budget is closest.
         const toolNote = this.maxToolCalls === undefined ? ""
           : ` You have used ${calls} of ${this.maxToolCalls} tool calls; ${this.maxToolCalls - calls} left.`;
-        if (this.turns >= finishAt || callsLow)
-          this.requestFinish(callsLow ? `tool calls ${calls}/${this.maxToolCalls}` : `turn budget ${this.turns}/${this.maxTurns}`,
-            `You have ${this.maxTurns - this.turns} turns left, including your final answer.${toolNote}`);
+        if (this.budgetTurns >= finishAt || callsLow)
+          this.requestFinish(callsLow ? `tool calls ${calls}/${this.maxToolCalls}` : `turn budget ${this.budgetTurns}/${this.maxTurns}`,
+            `You have ${this.maxTurns - this.budgetTurns} turns left, including your final answer.${toolNote}`);
         else if (this.currentRun.timeShort) {
           const left = Math.max(1, Math.round((this.maxDurationMs - this.elapsedMs()) / 1000));
           this.requestFinish(`time budget ${Math.round(this.elapsedMs() / 1000)}s/${Math.round(this.maxDurationMs / 1000)}s`,
@@ -969,7 +1035,7 @@ export class PiWorker {
     const hadTools = session.getActiveToolNames().length > 0;
     session.setActiveToolsByName([]);
     this.activeTools = [];
-    if (hadTools) this.notices.push({ type: "warning", message: `turn ${this.turns}/${this.maxTurns}: tools removed for the last turn`, at: new Date().toISOString() });
+    if (hadTools) this.notices.push({ type: "warning", message: `turn ${this.budgetTurns}/${this.maxTurns}: tools removed for the last turn`, at: new Date().toISOString() });
   }
 
   /** Steer once per run toward a final answer, whichever budget gets close first. */
@@ -1025,6 +1091,7 @@ export class PiWorker {
       error: this.error,
       startedAt: this.startedAt,
       runStartedAt: this.currentRun.startedAt,
+      budgetStart: { turns: this.currentRun.budget.turnStart, toolCalls: this.currentRun.budget.toolCallStart },
       finishedAt: this.finishedAt,
       elapsedMs: this.elapsedMs(),
       limits: { maxTurns: this.maxTurns, maxDurationMs: this.maxDurationMs,

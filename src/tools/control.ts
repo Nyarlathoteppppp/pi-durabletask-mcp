@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { HISTORY_LIMIT } from "../config.js";
+import { HISTORY_LIMIT, MAX_TURNS } from "../config.js";
 import {
   cancelExecution, followUp, forgetSession, getState, listSessions, resolveInteraction,
   steerExecution, waitForMany, waitForState,
@@ -105,18 +105,21 @@ export function registerControl(server: McpServer): void {
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
       description:
         "Send another prompt to a delegate that has already finished, keeping everything it read " +
-        "and said. Turns are cumulative: follow_up is refused once maxTurns is used up. The " +
+        "and said. Omit budget fields to use remaining quotas; pass maxTurns/maxToolCalls for fresh " +
+        "quotas for this run. Counts and usage remain cumulative. The " +
         "wall-clock limit applies to each run. Memory sessions can continue while retained here; " +
         "durable sessions can continue after reconnecting while retained on disk. " +
         "For a live session, use `steer`.",
       inputSchema: {
         sessionId: z.string(),
         prompt: z.string().describe("The next turn for this delegate"),
+        maxTurns: z.number().int().min(1).max(MAX_TURNS).optional().describe("Fresh turn quota for this run; omitted keeps the remaining budget"),
+        maxToolCalls: z.number().int().min(1).max(1000).optional().describe("Fresh own-tool-call quota for this run; omitted keeps the remaining budget"),
         attachments: z.array(z.string()).optional().describe("Absolute paths of text files appended to this prompt, as on spawn"),
         saveTo: z.string().optional().describe("Absolute file path for this run's final text, as on spawn"),
       },
     },
-    async ({ sessionId, prompt, attachments, saveTo }) => json({ ...await followUp(sessionId, prompt, attachments, saveTo), nextAction: "wait" }),
+    async ({ sessionId, prompt, attachments, saveTo, maxTurns, maxToolCalls }) => json({ ...await followUp(sessionId, prompt, attachments, saveTo, { maxTurns, maxToolCalls }), nextAction: "wait" }),
   );
 
   server.registerTool(

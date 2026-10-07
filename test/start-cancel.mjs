@@ -126,7 +126,7 @@ try {
     worker.onEvent({ type: "tool_execution_start", toolCallId: "prior-write", toolName: "write", args: { path: "old.txt" } });
     worker.onEvent({ type: "tool_execution_end", toolCallId: "prior-write", toolName: "write", isError: false, result: { content: [] } });
     try {
-      const followUp = worker.followUp("next");
+      const followUp = worker.followUp("next", { maxTurns: 9, maxToolCalls: 4 });
       await entered.promise;
       await worker.abort("caller_cancelled");
       // Already while authentication is still pending.
@@ -142,6 +142,8 @@ try {
       await followUp;
       await worker.run;
       const snap = worker.snapshot();
+      assert.equal(snap.limits.maxTurns, 5, "cancellation during auth grants no quota");
+      assert.equal(snap.limits.maxToolCalls, undefined);
       assert.deepEqual([snap.state, snap.savedTo, snap.lastText], ["aborted", undefined, ""], `durable=${durable}`);
       assert.equal(snap.termination.reason, "caller_cancelled");
       assert.equal(snap.runStartedAt, snap.termination.at, "a never-started run has no model execution time");
@@ -174,8 +176,11 @@ try {
     worker.onEvent({ type: "tool_execution_start", toolCallId: "prior-write", toolName: "write", args: { path: "old.txt" } });
     worker.onEvent({ type: "tool_execution_end", toolCallId: "prior-write", toolName: "write", isError: false, result: { content: [] } });
     try {
-      await assert.rejects(() => worker.followUp("next"), /refresh failed/);
+      await assert.rejects(() => worker.followUp("next", { maxTurns: 9, maxToolCalls: 4 }), /refresh failed/);
       const snap = worker.snapshot({ verbose: true });
+      assert.equal(snap.limits.maxTurns, 5, "refused authentication grants no quota");
+      assert.equal(snap.limits.maxToolCalls, undefined);
+      assert.deepEqual(snap.budgetStart, { turns: 0, toolCalls: 0 });
       assert.deepEqual([snap.state, snap.savedTo, snap.answerState, snap.lastText],
         [state, "/tmp/old.md", state === "done" ? "partial" : undefined, "old answer"], `durable=${durable}`);
       assert.deepEqual([snap.touchedFiles, snap.editWriteCount], [["old.txt"], 1], "authentication refusal preserves the previous receipt");

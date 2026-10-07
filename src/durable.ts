@@ -207,7 +207,7 @@ export function storedSnapshot(id: string): Snapshot | undefined {
   ).get(AGENT_DIR, id) as { snapshot: string } | undefined;
   if (!row) return undefined;
   const snapshot = JSON.parse(row.snapshot) as Snapshot;
-  return { ...snapshot, ...followUpInfo(snapshot.state, snapshot.turns, snapshot.limits.maxTurns) };
+  return { ...snapshot, ...followUpInfo(snapshot.state, snapshot.turns - (snapshot.budgetStart?.turns ?? 0), snapshot.limits.maxTurns) };
 }
 
 /**
@@ -216,15 +216,17 @@ export function storedSnapshot(id: string): Snapshot | undefined {
  */
 export function catalogSession(id: string): FollowUpInfo & { pid: number; finished: boolean; startedAt?: string; cwd?: string } | undefined {
   const row = db().prepare(
-    "SELECT pid, finished_at, options, json_extract(snapshot, '$.state') AS state, json_extract(snapshot, '$.turns') AS turns " +
+    "SELECT pid, finished_at, options, json_extract(snapshot, '$.state') AS state, " +
+    "json_extract(snapshot, '$.turns') AS turns, json_extract(snapshot, '$.budgetStart.turns') AS turn_start, " +
+    "json_extract(snapshot, '$.limits.maxTurns') AS max_turns " +
     "FROM jobs WHERE agent_dir = ? AND json_extract(options, '$.id') = ? ORDER BY rowid DESC LIMIT 1",
   ).get(AGENT_DIR, id) as {
-    pid: number; finished_at: number | null; options: string; state: Snapshot["state"] | null; turns: number | null;
+    pid: number; finished_at: number | null; options: string; state: Snapshot["state"] | null; turns: number | null; turn_start: number | null; max_turns: number | null;
   } | undefined;
   if (!row) return undefined;
   const options = JSON.parse(row.options) as WorkerOptions;
   return { pid: row.pid, finished: row.finished_at !== null, startedAt: options.startedAt, cwd: options.cwd,
-    ...(row.state !== null && row.turns !== null ? followUpInfo(row.state, row.turns, options.maxTurns)
+    ...(row.state !== null && row.turns !== null ? followUpInfo(row.state, row.turns - (row.turn_start ?? 0), row.max_turns ?? options.maxTurns)
       : { canFollowUp: false, followUpBlockedReason: row.finished_at === null ? "running" as const : "status_required" as const }) };
 }
 
@@ -267,10 +269,11 @@ export function storedJobs(cwd?: string): Array<FollowUpInfo & {
 }> {
   // Project/history browsing needs only these fields, not the full conversation snapshot.
   const rows = db().prepare("SELECT key, options, finished_at, json_extract(snapshot, '$.state') AS state, " +
-    "json_extract(snapshot, '$.turns') AS turns FROM jobs WHERE agent_dir = ? AND finished_at IS NOT NULL" +
+    "json_extract(snapshot, '$.turns') AS turns, json_extract(snapshot, '$.budgetStart.turns') AS turn_start, " +
+    "json_extract(snapshot, '$.limits.maxTurns') AS max_turns FROM jobs WHERE agent_dir = ? AND finished_at IS NOT NULL" +
     (cwd === undefined ? "" : " AND json_extract(options, '$.cwd') = ?") + " ORDER BY finished_at DESC")
     .all(...(cwd === undefined ? [AGENT_DIR] : [AGENT_DIR, cwd])) as {
-      key: string; options: string; finished_at: number; state: Snapshot["state"] | null; turns: number | null;
+      key: string; options: string; finished_at: number; state: Snapshot["state"] | null; turns: number | null; turn_start: number | null; max_turns: number | null;
     }[];
   return rows.filter((row) => !owns(row.key)).map((row) => {
     const options = JSON.parse(row.options) as WorkerOptions;
@@ -278,7 +281,7 @@ export function storedJobs(cwd?: string): Array<FollowUpInfo & {
       ...(options.forkedFrom === undefined ? {} : { forkedFrom: options.forkedFrom }),
       finishedAt: new Date(row.finished_at).toISOString(),
       ...(row.state !== null && row.turns !== null
-        ? { state: row.state, turns: row.turns, ...followUpInfo(row.state, row.turns, options.maxTurns) }
+        ? { state: row.state, turns: row.turns, ...followUpInfo(row.state, row.turns - (row.turn_start ?? 0), row.max_turns ?? options.maxTurns) }
         : { canFollowUp: false, followUpBlockedReason: "status_required" as const }) };
   });
 }

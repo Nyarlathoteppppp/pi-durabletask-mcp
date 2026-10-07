@@ -1,4 +1,17 @@
-/** Transient control state for one spawn/follow-up. The worker owns the conversation and journal. */
+export interface FollowUpBudget {
+  maxTurns?: number;
+  maxToolCalls?: number;
+}
+
+/** Quotas and cumulative counters at their most recent explicit renewal. */
+export interface RunBudget {
+  maxTurns: number;
+  maxToolCalls?: number;
+  turnStart: number;
+  toolCallStart: number;
+}
+
+/** Control state for one spawn/follow-up. The worker owns the conversation and journal. */
 export class WorkerRun {
   deadlineTimer: NodeJS.Timeout | undefined;
   finishTimer: NodeJS.Timeout | undefined;
@@ -11,6 +24,8 @@ export class WorkerRun {
   abortPromise: Promise<void> | undefined;
   completion: Promise<void> | undefined;
   settling = false;
+  /** Re-enable the original grants only after a renewed task has been created. */
+  restoreTools = false;
   /** Last SDK event of this run (stream deltas included); silence beyond it is idleMs. */
   lastActivityAt = Date.now();
   /** A model request is outstanding: from turn_start to the assistant's message_end. */
@@ -22,7 +37,7 @@ export class WorkerRun {
   touchedFiles = new Set<string>();
   editWriteCount = 0;
 
-  constructor(public startedAt: string) {}
+  constructor(public startedAt: string, public budget: RunBudget) {}
 
   clearTimers(): void {
     if (this.deadlineTimer) clearTimeout(this.deadlineTimer);
