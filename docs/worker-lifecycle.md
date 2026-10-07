@@ -94,6 +94,15 @@ still runs. If the job itself cannot close, keep ownership and retain the worker
 diagnosis; `closing` alone does not confirm the Harness closed. Both lazy loading and background
 recovery use this path. `RecoveryStopped` keeps ownership as before.
 
+Ordinary unload and forget also keep a diagnostic worker if executor cleanup fails while
+its durable row remains. Eviction/sweeps skip it, and follow-up is blocked with
+`cleanup_failed`. Native shutdown rejection is recorded without skipping job close.
+The installed durable SDK caches its close promise, including rejection. A failed
+executor close is diagnostic, not automatically retryable: inspect the error and
+restart the host to release process locks rather than force-unlocking a live executor.
+Tool results are correlated only by SDK `toolCallId`, including parallel/nested calls;
+never guess a write's success from its tool name.
+
 ## Tests to consult
 
 All paths below are under `test/`; use temporary state as `offline.mjs` does.
@@ -104,6 +113,7 @@ All paths below are under `test/`; use temporary state as `offline.mjs` does.
 | Run identity, failed creation, cancellation/final catalog write errors | `worker-run.mjs` |
 | Completion visibility, immediate follow-up | `wait-finalization.mjs` |
 | Recovery, steering admission, tool barriers | `recovery.mjs`, `native-recovery.mjs` |
+| Unload/forget cleanup failure and ownership diagnostics | `unload-failure.mjs`, `unload-race.mjs`, `recovery-failure.mjs` |
 | Shutdown during execution | `pause-race.mjs` |
 | Memory checkpoint overhead | `memory-checkpoint.mjs` |
 | Fork isolation, inherited configuration, usage and bootstrap recovery | `fork.mjs`, `fork-seed.mjs` |

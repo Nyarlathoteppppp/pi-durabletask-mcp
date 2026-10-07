@@ -1,4 +1,4 @@
-import { realpath } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, resolve, sep } from "node:path";
 
@@ -22,6 +22,7 @@ export async function resolveDelegateCwd(cwd: string | undefined): Promise<strin
   } catch {
     throw new Error(`cwd does not exist: ${cwd}`);
   }
+  if (!(await stat(candidate)).isDirectory()) throw new Error(`cwd must be a directory: ${cwd}`);
   if (candidate === resolve(sep)) {
     throw new Error("cwd must not be the filesystem root.");
   }

@@ -62,7 +62,17 @@ const unloading = new Map<string, Promise<void>>();
 function unload(worker: PiWorker): Promise<void> {
   sessions.delete(worker.id);
   lastUsed.delete(worker.id);
-  const done = worker.unload().catch((error: unknown) => { process.stderr.write(`[pi-delegate] unload failed: ${String(error)}\n`); })
+  const done = worker.unload().catch((error: unknown) => {
+    // Failed executor cleanup still owns its store. Keep a diagnostic worker instead of
+    // leaving an owned catalog row that resolve can no longer find or reclaim.
+    worker.recoveryCleanupFailed = true;
+    worker.state = "error";
+    worker.error = `Unload cleanup failed: ${String(error)}`;
+    sessions.set(worker.id, worker);
+    touch(worker.id);
+    publish(all());
+    process.stderr.write(`[pi-delegate] unload failed: ${String(error)}\n`);
+  })
     .finally(() => unloading.delete(worker.id));
   unloading.set(worker.id, done);
   return done;
@@ -161,7 +171,20 @@ export async function forget(id: string): Promise<void> {
     throw new Error(`Session ${id} is still ${worker.state}. Call abort first.`);
   worker.dispose();
   sessions.delete(id);
-  await worker.forgetPersistent();
+  try { await worker.forgetPersistent(); }
+  catch (error) {
+    // As for unload, a still-present store must keep its owner reachable. If its row was
+    // already removed, the orphan sweep owns the remaining cleanup instead.
+    if (storedIdInUse(id)) {
+      worker.recoveryCleanupFailed = true;
+      worker.state = "error";
+      worker.error = `Forget cleanup failed: ${String(error)}`;
+      sessions.set(id, worker);
+      touch(id);
+      publish(all());
+    }
+    throw error;
+  }
 }
 
 let lastSweep = 0;

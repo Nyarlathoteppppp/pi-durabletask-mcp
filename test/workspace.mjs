@@ -17,11 +17,14 @@ assert.ok(blockedSecretPath(join(home, ".ssh", "id_rsa"), "/tmp"));
 assert.ok(blockedSecretPath(join(home, ".grok", "auth.json"), "/tmp"));
 assert.ok(blockedSecretPath(join(home, ".pi", "agent", "auth.json"), "/tmp"));
 assert.ok(blockedSecretPath(join("/tmp", ".env"), "/tmp"));
+for (const name of [".env.local", ".env.production", ".env.development", ".env.example"])
+  assert.ok(blockedSecretPath(join("/tmp", name), "/tmp"), `${name} is sensitive`);
+assert.equal(blockedSecretPath(join("/tmp", ".environment"), "/tmp"), undefined);
 assert.equal(blockedSecretPath(join("/tmp", "README.md"), "/tmp"), undefined);
 
 // A file that does not exist yet under a symlinked secret directory is still blocked.
 {
-  const { mkdtempSync, mkdirSync, symlinkSync, rmSync } = await import("node:fs");
+  const { mkdtempSync, mkdirSync, symlinkSync, rmSync, writeFileSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
   const root = mkdtempSync(join(tmpdir(), "pi-delegate-secret-link-"));
   const fakeHome = join(root, "home");
@@ -30,6 +33,13 @@ assert.equal(blockedSecretPath(join("/tmp", "README.md"), "/tmp"), undefined);
   mkdirSync(repo);
   symlinkSync(join(fakeHome, ".ssh"), join(repo, "link"));
   try {
+    writeFileSync(join(repo, "ordinary.txt"), "not a directory");
+    await assert.rejects(() => resolveDelegateCwd(join(repo, "ordinary.txt")), /directory/);
+    symlinkSync(join(repo, "ordinary.txt"), join(repo, "file-link"));
+    await assert.rejects(() => resolveDelegateCwd(join(repo, "file-link")), /directory/);
+    writeFileSync(join(repo, ".env.local"), "fake secret");
+    symlinkSync(join(repo, ".env.local"), join(repo, "env-link"));
+    assert.ok(blockedSecretPath(join(repo, "env-link"), repo, fakeHome), "alias to .env.*");
     assert.ok(blockedSecretPath(join(repo, "link", "new-key"), repo, fakeHome), "symlinked parent, missing file");
     assert.ok(blockedSecretPath(join(repo, "link", "deeper", "new-key"), repo, fakeHome), "missing intermediate directory");
     assert.equal(blockedSecretPath(join(repo, "plain", "new-file"), repo, fakeHome), undefined);

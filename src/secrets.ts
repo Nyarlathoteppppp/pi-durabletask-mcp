@@ -13,7 +13,7 @@ const SENSITIVE_FILES = [
 
 /** The same secret rules must apply to files visited inside a recursive search. */
 export const SECRET_SEARCH_EXCLUDES = [
-  "**/.env", "**/.env/**",
+  "**/.env", "**/.env/**", "**/.env.*", "**/.env.*/**",
   ...SENSITIVE_DIRS.flatMap((name) => [`**/${name}`, `**/${name}/**`]),
   ...SENSITIVE_FILES.map((segments) => `**/${segments.join("/")}`),
 ];
@@ -62,7 +62,7 @@ export function blockedSecretPath(path: string, cwd: string, homeDir = homedir()
 
   // A sensitive name stays sensitive when it is a symlink to an ordinary filename.
   const segments = [absolute.split(sep), resolved.split(sep)];
-  if (segments.some((parts) => parts.includes(".env"))) return resolved;
+  if (segments.some((parts) => parts.some((part) => part === ".env" || part.startsWith(".env.")))) return resolved;
 
   for (const name of SENSITIVE_DIRS) {
     const dir = known(join(home, name));

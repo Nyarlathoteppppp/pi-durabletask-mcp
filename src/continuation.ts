@@ -2,7 +2,7 @@
 export interface FollowUpInfo {
   remainingTurns?: number;
   canFollowUp: boolean;
-  followUpBlockedReason?: "running" | "finalizing" | "turn_budget_exhausted" | "not_started" | "status_required";
+  followUpBlockedReason?: "running" | "finalizing" | "turn_budget_exhausted" | "not_started" | "status_required" | "cleanup_failed";
 }
 
 export function followUpInfo(

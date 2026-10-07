@@ -94,6 +94,8 @@ try {
 
   await writeFile(join(dir, "public.txt"), "before\nTEST_MARKER public\nafter\n");
   await writeFile(join(dir, ".env"), "TEST_MARKER FAKE_SECRET_ENV\n");
+  for (const name of [".env.local", ".env.production", ".env.development"])
+    await writeFile(join(dir, name), "TEST_MARKER FAKE_SECRET_ENV_VARIANT\n");
   await mkdir(join(dir, ".ssh"));
   await writeFile(join(dir, ".ssh", "id_fake"), "TEST_MARKER FAKE_SECRET_SSH\n");
   await symlink(join(dir, ".env"), join(dir, "alias.txt"));
@@ -106,6 +108,7 @@ try {
   assert.match(output, /after/);
   assert.doesNotMatch(output, /FAKE_SECRET|\.env|id_fake/);
   await assert.rejects(() => runGrep({ pattern: "TEST_MARKER", path: ".env" }), /private credential path/);
+  await assert.rejects(() => runGrep({ pattern: "TEST_MARKER", path: ".env.local" }), /private credential path/);
   await assert.rejects(() => runGrep({ pattern: "TEST_MARKER", path: "alias.txt" }), /private credential path/);
   assert.match((await runGrep({ pattern: "not-present" })).content[0].text, /No matches/);
   await assert.rejects(() => runGrep({ pattern: "[" }), /ripgrep failed/);

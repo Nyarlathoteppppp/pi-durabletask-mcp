@@ -23,6 +23,22 @@ const receipt = (w) => { const s = w.snapshot(); return [s.touchedFiles, s.editW
 const w = make("receipt");
 try {
   assert.deepEqual(receipt(w), [undefined, undefined], "read-only results carry no receipt");
+  const parallel = make("parallel");
+  try {
+    parallel.state = "running";
+    parallel.currentRun.awaitingModel = true;
+    start(parallel, "a", "write", { path: "parallel-a.txt" });
+    start(parallel, "b", "write", { path: "parallel-b.txt" });
+    // An uncorrelated event must not be guessed onto either concurrent write.
+    end(parallel, undefined, "write");
+    assert.deepEqual(receipt(parallel), [undefined, undefined]);
+    end(parallel, "b", "write", true);
+    assert.equal(parallel.snapshot().phase, "tool");
+    end(parallel, "a", "write");
+    assert.deepEqual(receipt(parallel), [["parallel-a.txt"], 1]);
+    assert.equal(parallel.openCalls.size, 0);
+    assert.equal(parallel.snapshot().phase, "model", "properly correlated ends restore model liveness");
+  } finally { parallel.dispose(); }
   // path comes after large content in the raw arguments; the compact JSON cannot supply it.
   start(w, "write", "write", { content: "x".repeat(4000), path: "a.txt" });
   assert.deepEqual(receipt(w), [undefined, undefined], "pending calls are not successes");

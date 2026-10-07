@@ -196,6 +196,10 @@ For a loaded worker, `spawn`, `follow_up` and `status` now follow `wait`'s state
 while final-result submission or cancellation cleanup is still active, an internally
 terminal worker is shown as `running`, not finished.
 
+If executor cleanup fails, the loaded diagnostic session remains queryable and reports
+`canFollowUp: false`, `followUpBlockedReason: cleanup_failed`. Its durable ownership is
+retained until the executor closes; a native shutdown error alone does not block job cleanup.
+
 ### Provider failures
 
 Pi retries transient provider failures itself (stream drops, 429/5xx, timeouts), following
@@ -227,7 +231,7 @@ lie outside `cwd`, for example in the caller's scratchpad:
 ```
 
 At most 20 files, 256 KiB each and 1 MiB in total; files must be UTF-8 text. Secret paths
-(`.env`, `~/.ssh`, Pi's `auth.json` and the like) are refused, also through a symlink. The text is
+(`.env`, `.env.*`, `~/.ssh`, Pi's `auth.json` and the like) are refused, also through a symlink. The text is
 inlined once when the call is made: a durable session stores the expanded prompt, and recovery
 never reads the files again. Attaching a file sends it to the delegate's model provider.
 
@@ -457,7 +461,9 @@ before a session is even created.
 
 Omit `tools` to use those defaults. Pass `tools: []` to disable all tools for a delegate.
 Recursive `grep` excludes the credential paths covered by the secret-path guard, including
-`.env` and private configuration directories, even when searching their parent directory.
+`.env`, `.env.*` (including templates such as `.env.example`) and private configuration
+directories, even when searching their parent directory. `find`/`ls` may list filenames;
+they do not read file contents.
 The protected grep uses `rg` from the server's `PATH`.
 
 To widen that, name the extra tools on the server:

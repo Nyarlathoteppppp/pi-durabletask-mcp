@@ -131,7 +131,7 @@ export class PiWorker {
   private unsubscribe: (() => void) | undefined;
   private job: JobStore | undefined;
   recoveryKey: string | undefined;
-  /** A failed Harness close retains ownership and its diagnostic worker until cleanup succeeds. */
+  /** A failed executor close retains ownership and its diagnostic worker until cleanup succeeds. */
   recoveryCleanupFailed = false;
   private journalUnsubscribe: (() => void) | undefined;
   private suspended = false;
@@ -163,7 +163,8 @@ export class PiWorker {
 
   get continuation() {
     return followUpInfo(this.state, this.turns, this.maxTurns,
-      this.isActive ? (["starting", "running"].includes(this.state) ? "running" : "finalizing")
+      this.recoveryCleanupFailed ? "cleanup_failed"
+        : this.isActive ? (["starting", "running"].includes(this.state) ? "running" : "finalizing")
         : !this.session ? "not_started" : undefined);
   }
 
@@ -611,18 +612,26 @@ export class PiWorker {
   /** Drop a finished delegate from memory. A durable one stays on disk until retention removes it. */
   async unload(): Promise<void> {
     this.dispose();
-    await this.nativeClose;
-    if (this.job) await this.job.close();
-    else if (this.recoveryKey) releaseJob(this.recoveryKey);
+    await this.closeNative();
+    try {
+      if (this.job) await this.job.close();
+      else if (this.recoveryKey) releaseJob(this.recoveryKey);
+    } catch (error) { this.recoveryCleanupFailed = true; throw error; }
+    this.recoveryCleanupFailed = false;
+  }
+
+  /** Native shutdown errors must not prevent closing the durable executor. */
+  private async closeNative(): Promise<void> {
+    try { await this.nativeClose; }
+    catch (error) {
+      this.notices.push({ type: "warning", message: `native cleanup failed: ${message(error)}`, at: new Date().toISOString() });
+    }
   }
 
   /** Failed recovery keeps its attempt count; ownership is released only after the job closes. */
   async releaseRecovery(): Promise<void> {
     this.dispose();
-    try { await this.nativeClose; }
-    catch (error) {
-      this.notices.push({ type: "warning", message: `recovery native cleanup failed: ${message(error)}`, at: new Date().toISOString() });
-    }
+    await this.closeNative();
     // A rejected Harness close must leave ownership held; closing=true alone is not confirmation.
     try { await this.job?.close(false); }
     catch (error) { this.recoveryCleanupFailed = true; throw error; }
@@ -631,7 +640,7 @@ export class PiWorker {
   }
 
   async forgetPersistent(): Promise<void> {
-    await this.nativeClose;
+    await this.closeNative();
     if (this.job) await this.job.forget();
     else if (this.recoveryKey) forgetOwnedJob(this.recoveryKey);
   }
@@ -723,6 +732,7 @@ export class PiWorker {
    * is the difference between a conversation and re-explaining yourself to a fresh agent.
    */
   followUp(prompt: string): { sessionId: string; state: SessionState; turnsSoFar: number } | Promise<{ sessionId: string; state: SessionState; turnsSoFar: number }> {
+    if (this.recoveryCleanupFailed) throw new Error(`Session ${this.id} cleanup failed; inspect status before continuing.`);
     if (!this.session) throw new Error(`Session ${this.id} never started, nothing to follow up on.`);
     if (this.isActive)
       throw new Error(
@@ -815,11 +825,8 @@ export class PiWorker {
       }
 
       case "tool_execution_end": {
-        // pi does not always echo the call id back, so fall back to the newest open call
-        // of the same name rather than losing the timing entirely.
-        const call =
-          (ev.toolCallId ? this.openCalls.get(ev.toolCallId) ?? this.toolCalls.find((c) => c.id === ev.toolCallId) : undefined) ??
-          [...this.toolCalls].reverse().find((c) => c.state === "running" && c.name === ev.toolName);
+        // SDK ordinary and nested events carry a call ID. Never guess between parallel calls.
+        const call = this.openCalls.get(ev.toolCallId) ?? this.toolCalls.find((c) => c.id === ev.toolCallId);
         if (call) {
           if (call.state === "running" && !ev.isError && call.writePath !== undefined) {
             this.currentRun.touchedFiles.add(call.writePath);
@@ -829,7 +836,7 @@ export class PiWorker {
           call.ms = call.startedAt === undefined ? call.ms ?? 0 : Date.now() - call.startedAt;
           call.result = flatten(ev.result);
           delete call.startedAt;
-          if (ev.toolCallId) this.openCalls.delete(ev.toolCallId);
+          this.openCalls.delete(ev.toolCallId);
         }
         break;
       }

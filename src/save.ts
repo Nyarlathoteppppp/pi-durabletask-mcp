@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import { blockedSecretPath } from "./secrets.js";
@@ -19,7 +20,7 @@ export async function saveText(path: string, text: string): Promise<{ savedTo: s
   checkSavePath(path);
   await mkdir(dirname(path), { recursive: true });
   // Written beside the target and renamed into place, so a crash never leaves a partial file there.
-  const temporary = `${path}.${process.pid}.${Date.now()}.tmp`;
+  const temporary = `${path}.${randomUUID()}.tmp`;
   try {
     await writeFile(temporary, text, "utf8");
     await rename(temporary, path);
