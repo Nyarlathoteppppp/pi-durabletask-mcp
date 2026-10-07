@@ -38,8 +38,8 @@ Choose a provider/model per role: one checks permissions, one researches sources
 
 | | Highlights |
 | :--- | :--- |
-| **Delegate & Explore** | **Parallel models:** select with `models`, dispatch with `spawn_batch`. **Shared context:** `forkFrom` a settled session. **Web research:** opt-in [Exa search and fetch](docs/research.md). **Native MCP:** selected servers/tools; Pi extensions configured separately. |
-| **Refine & Report** | **Adjust the direction:** `steer` live work, `follow_up` finished work, and renew budgets as needed. **Pass materials, keep results:** `attachments` and `saveTo`, with summaries, original report references, token usage and cost. |
+| **Delegate & Explore** | **Parallel models:** select with `models`, dispatch with `spawn_batch`. **Shared context:** `forkFrom` a settled session. **Web research:** opt-in [Exa search and fetch](docs/research.md). **Native MCP:** selected [optional integrations](docs/optional-tools.md); Pi extensions configured separately. |
+| **Refine & Report** | **Adjust the direction:** `steer` live work, `follow_up` finished work, and renew budgets as needed. **Pass materials, keep results:** `attachments` and `saveTo`, with summaries, original report references, an opt-in [team index](docs/workflows/codemode-coordinator.md#saved-team-index), token usage and cost. |
 | **Permissions & Recovery** | **Authorized implementation:** ordinary delegates can edit or run commands and report successful changed-file paths. **Visible progress:** `idleMs`, `phase` and execution budgets. **Optional single-session recovery:** SQLite checkpoints and cross-window `handoff`. |
 
 Teams support Codemode loops, conditions and parallel calls. They currently use one level of memory-only, read-only children, with opt-in Exa; permit `codemode` and pass `tools: ["codemode"]`. For a single task, use an ordinary delegate.

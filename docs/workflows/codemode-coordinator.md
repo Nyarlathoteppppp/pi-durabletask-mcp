@@ -67,6 +67,21 @@ shows a bounded follow-up that keeps both reports; run it in the same coordinato
 session and replace its placeholder with the claim. A new coordinator does not inherit
 the first one's dispatch membership or codemode storage.
 
+## Saved team index
+
+With `coordinator.saveDir`, the four tools also return `reportIndex`: a unique
+`team-<UUID>.json` in that directory. It records task labels/indexes, actual models,
+session IDs, observed state/errors and successfully saved original/follow-up report
+references. Original report bodies remain in their own files; prompts and report
+bodies are not copied into the index. Index IO failure returns `reportIndexError`
+without undoing a successful dispatch or follow-up.
+
+The index updates only when the coordinator starts, waits, reads or follows up;
+check `updatedAt`/task `observedAt`. It can be stale if the coordinator ends without
+collecting its children. A new window can read the files, but the index does not
+restore a team, transfer ownership or resume memory-only sessions. Omit `saveDir`
+for no index IO. This is a report snapshot, not a runtime checkpoint.
+
 ## Boundaries
 
 - **Memory-only, one level, read-only child tools**: built-ins (`read`, `grep`,

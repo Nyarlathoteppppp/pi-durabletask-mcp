@@ -1,0 +1,11 @@
+description: Read-only symbol navigation for Pi delegates
+prompt: |
+  Use symbol tools for definitions and references; use Pi tools for ordinary text.
+  Do not perform edits through Serena.
+fixed_tools:
+  - get_symbols_overview
+  - find_symbol
+  - find_referencing_symbols
+  - activate_project
+  - initial_instructions
+single_project: false

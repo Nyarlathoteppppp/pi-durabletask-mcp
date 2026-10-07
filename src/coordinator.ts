@@ -7,6 +7,7 @@ import { BATCH_MAX, MAX_DURATION_MS, MAX_TURNS } from "./config.js";
 import { READ_ONLY_TOOLS } from "./permissions.js";
 import type { startBatch, waitForMany, getState, followUp } from "./core.js";
 import { withNextAction, batchNextAction } from "./tools/shared.js";
+import { createCoordinatorReport } from "./coordinator-report.js";
 
 const RESEARCH_TOOLS = ["mcp__exa__web_search_exa", "mcp__exa__web_fetch_exa"];
 
@@ -33,6 +34,8 @@ type Operations = { startBatch: typeof startBatch; waitForMany: typeof waitForMa
 
 /** Runtime closures only: neither these definitions nor dispatch membership go into SQLite. */
 export function createCoordinatorTools(options: z.output<typeof coordinatorSchema>, cwd: string, core: Operations): ToolDefinition[] {
+  const report = createCoordinatorReport(options, cwd);
+  const reportFields = async () => report ? await report.flush() : {};
   const dispatched = new Set<number>();
   const owned = new Set<string>();
   /** Dispatches still starting: a wait for "all launched children" includes them. */
@@ -60,6 +63,7 @@ export function createCoordinatorTools(options: z.output<typeof coordinatorSchem
     defineTool({
       name: "delegate_start_batch", label: "Start planned delegates", exposure: "codemode",
       description: "Launch caller-approved tasks by zero-based taskIndexes (omit for all unlaunched). Started tasks run once; startup failures can be retried. " +
+        (report ? "With saveDir, reportIndex is a best-effort team snapshot updated by these tools, possibly stale; not recovery or an automatic final refresh. " : "") +
         "Failed scripts leave children running but discard that script's store writes. Recover their IDs/state with delegate_wait({timeoutMs:0}), without launching more work. " +
         "The coordinator also occupies a concurrency slot; start smaller batches if capacity is full. Plans: " +
         JSON.stringify(options.tasks.map((t, index) => ({ index, label: t.label, prompt: t.prompt, model: t.model }))),
@@ -68,10 +72,11 @@ export function createCoordinatorTools(options: z.output<typeof coordinatorSchem
         signal?.throwIfAborted();
         const { taskIndexes } = start.parse(params);
         const indexes = [...new Set(taskIndexes ?? options.tasks.map((_, i) => i).filter((i) => !dispatched.has(i)))];
-        if (!indexes.length) return result({ sessionIds: [...owned], sessions: [], requested: 0, started: 0 });
+        if (!indexes.length) return result({ sessionIds: [...owned], sessions: [], requested: 0, started: 0, ...await reportFields() });
         for (const i of indexes) if (dispatched.has(i)) throw new Error(`Task ${i} already dispatched; call delegate_wait or delegate_get.`);
         // Reserve indexes before the first await so parallel script calls cannot double-dispatch.
         indexes.forEach((i) => dispatched.add(i));
+        let batch: Awaited<ReturnType<Operations["startBatch"]>>;
         try {
           const launched = core.startBatch({ cwd, saveDir: options.saveDir, forkFrom: options.forkFrom, tasks: indexes.map((i) => {
             const { research = options.research ?? false, ...task } = options.tasks[i]!;
@@ -79,21 +84,28 @@ export function createCoordinatorTools(options: z.output<typeof coordinatorSchem
               durable: false, extensions: false, nativeMcp: research, mcpServers: research ? ["exa"] : [] };
           }) })
             // Owned as soon as started, so a wait tracking this dispatch sees its children.
-            .then((started) => { started.sessionIds.forEach((id) => owned.add(id)); return started; });
+            .then((started) => {
+              started.sessionIds.forEach((id) => owned.add(id));
+              // Register metadata before a concurrent wait can observe the launched children.
+              report?.started(started.sessions.map((s) => ({ ...s, taskIndex: indexes[s.index]! })),
+                started.failures?.map((f) => ({ ...f, taskIndex: indexes[f.index]! })));
+              return started;
+            });
           starting.add(launched);
-          const batch = await launched.finally(() => starting.delete(launched));
-          // Unlike an execution error on a returned session, a startup failure has no child
-          // to inspect or resume. Allow that plan item to be retried without rerunning siblings.
-          batch.failures?.forEach((f) => dispatched.delete(indexes[f.index]!));
-          return result({ ...batch,
-            sessions: batch.sessions.map((s) => ({ ...s, taskIndex: indexes[s.index] })),
-            ...(batch.failures ? { failures: batch.failures.map((f) => ({ ...f, taskIndex: indexes[f.index] })) } : {}),
-          });
+          batch = await launched.finally(() => starting.delete(launched));
         } catch (error) {
           // Core validation/admission failed before launch; the same plan may be retried later.
           indexes.forEach((i) => dispatched.delete(i));
           throw error;
         }
+        // Only genuine startup failures are retryable. Index IO is outside the launch catch:
+        // failure to publish a snapshot must not discard receipts or release dispatched tasks.
+        batch.failures?.forEach((f) => dispatched.delete(indexes[f.index]!));
+        return result({ ...batch,
+          sessions: batch.sessions.map((s) => ({ ...s, taskIndex: indexes[s.index] })),
+          ...(batch.failures ? { failures: batch.failures.map((f) => ({ ...f, taskIndex: indexes[f.index] })) } : {}),
+          ...await reportFields(),
+        });
       },
     }),
     defineTool({
@@ -104,9 +116,22 @@ export function createCoordinatorTools(options: z.output<typeof coordinatorSchem
         const args = wait.parse(params);
         // A script may dispatch and wait at once; children of a dispatch still starting count as launched.
         if (!args.sessionIds) await Promise.allSettled([...starting]);
-        const batch = await core.waitForMany(own(args.sessionIds ?? [...owned]), { timeoutMs: args.timeoutMs, until: "all_settled", signal });
+        const ids = own(args.sessionIds ?? [...owned]);
+        const versions = report && new Map(ids.map((id) => [id, report.version(id)]));
+        const batch = await core.waitForMany(ids, { timeoutMs: args.timeoutMs, until: "all_settled", signal });
+        report?.observe(batch.sessions, versions);
+        if (report && versions) {
+          // A wait spanning a follow-up may return the new run without a savedTo version hint.
+          // Reobserve only those children, tagged with the version at query time. A failed
+          // refresh leaves a possibly stale index, but must not change the original wait result.
+          await Promise.allSettled(ids.filter((id) => versions.get(id) !== report.version(id)).map(async (id) => {
+            const version = report.version(id);
+            const latest = await core.getState(id);
+            report.observe([latest], new Map([[id, version]]));
+          }));
+        }
         const sessions = batch.sessions.map(({ lastText: _report, ...s }) => withNextAction(s));
-        return result({ ...batch, sessions, nextAction: batchNextAction(sessions) });
+        return result({ ...batch, sessions, nextAction: batchNextAction(sessions), ...await reportFields() });
       },
     }),
     defineTool({
@@ -116,10 +141,13 @@ export function createCoordinatorTools(options: z.output<typeof coordinatorSchem
       async execute(_id, params) {
         const { sessionId } = get.parse(params);
         own([sessionId]);
+        const versions = report && new Map([[sessionId, report.version(sessionId)]]);
+        const snapshot = await core.getState(sessionId, true);
+        report?.observe([snapshot], versions);
         const { label, state, lastText, questions, error, termination, answerState, usage, savedTo, savedChars, saveError,
-          remainingTurns, canFollowUp, followUpBlockedReason } = await core.getState(sessionId, true);
-        return result(withNextAction({ sessionId, label, state, lastText, questions, error, termination, answerState, usage,
-          savedTo, savedChars, saveError, remainingTurns, canFollowUp, followUpBlockedReason }));
+          remainingTurns, canFollowUp, followUpBlockedReason } = snapshot;
+        return result({ ...withNextAction({ sessionId, label, state, lastText, questions, error, termination, answerState, usage,
+          savedTo, savedChars, saveError, remainingTurns, canFollowUp, followUpBlockedReason }), ...await reportFields() });
       },
     }),
     defineTool({
@@ -134,7 +162,9 @@ export function createCoordinatorTools(options: z.output<typeof coordinatorSchem
         const { sessionId, prompt, maxTurns, maxToolCalls } = follow.parse(params);
         own([sessionId]);
         const saveTo = options.saveDir ? join(options.saveDir, `${sessionId}.follow-up-${randomUUID()}.md`) : undefined;
-        return result({ ...await core.followUp(sessionId, prompt, undefined, saveTo, { maxTurns, maxToolCalls }), nextAction: "wait" });
+        const receipt = await core.followUp(sessionId, prompt, undefined, saveTo, { maxTurns, maxToolCalls });
+        report?.followed(receipt, saveTo);
+        return result({ ...receipt, nextAction: "wait", ...await reportFields() });
       },
     }),
   ];

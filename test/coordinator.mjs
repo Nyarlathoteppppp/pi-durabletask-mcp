@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -22,12 +22,22 @@ if (process.argv[2] === "exa-fixture") {
 const dir = await mkdtemp(join(tmpdir(), "pi-coordinator-"));
 const sockets = new Set();
 const inherited = [];
+const targetReports = [];
 const http = createServer(async (req, res) => {
   let body = "";
   for await (const chunk of req) body += chunk;
   const request = JSON.parse(body);
   const users = request.messages.filter((m) => m.role === "user");
   const prompt = JSON.stringify(users.at(-1).content);
+  // Capture the actual codemode reply seen by the provider; diagnostic traces are clipped.
+  if (prompt.includes("TARGET_COORDINATOR") && request.messages.at(-1).role === "tool") {
+    const text = request.messages.at(-1).content;
+    const value = JSON.parse(text.split("\nOutput:\n\n").at(-1));
+    if (value?.original) {
+      if (!targetReports.length) targetReports.push(value.original);
+      if (value.updated) targetReports.push(value.updated);
+    }
+  }
   if (prompt.includes("FAIL_CHILD")) {
     res.writeHead(400, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: { message: "intentional child failure" } })); return;
@@ -122,7 +132,12 @@ try {
   const full = await call("status", { sessionId: "boss", verbose: true });
   const started = full.toolCalls.find((t) => t.name === "delegate_start_batch");
   assert.equal(started.state, "ok", JSON.stringify(started));
-  const batch = JSON.parse(started.result);
+  // Tool trace results are intentionally shortened; check the persisted team projection instead.
+  const indexes = (await readdir(coordinator.saveDir)).filter((p) => /^team-.*\.json$/.test(p));
+  assert.equal(indexes.length, 1);
+  const savedTeam = JSON.parse(await readFile(join(coordinator.saveDir, indexes[0]), "utf8"));
+  const batch = { sessionIds: savedTeam.tasks.map((s) => s.sessionId), sessions: savedTeam.tasks };
+  assert.deepEqual(savedTeam.tasks.map((s) => s.state), ["done", "error"]);
   assert.equal(batch.sessionIds.length, 2);
   assert.deepEqual(batch.sessions.map((s) => s.taskIndex), [0, 1]);
   for (const id of batch.sessionIds) {
@@ -157,7 +172,7 @@ try {
   const targetBoss=await settle("target-boss");
   assert.equal(targetBoss.state,"done",targetBoss.error);
   const targetFull=await call("status",{sessionId:"target-boss",verbose:true});
-  const getReports=targetFull.toolCalls.filter(t=>t.name==="delegate_get").map(t=>JSON.parse(t.result));
+  const getReports=targetReports;
   assert.equal(getReports.length,2);
   const [original,updated]=getReports;
   assert.equal(original.remainingTurns,0);
