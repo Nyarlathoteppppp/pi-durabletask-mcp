@@ -31,9 +31,9 @@ const ATTACHMENTS_HELP =
 const attachments = z.array(z.string()).optional();
 
 const spawnShape = {
-  coordinator: coordinatorSchema.optional().describe("Opt-in memory-only codemode orchestration of caller-planned read-only children; needs codemode, e.g. tools:[\"codemode\"]. Children have independent budgets and count toward server concurrency. Cancelling the coordinator leaves children running; use ordinary abort to stop them."),
-  prompt: z.string().describe("The task for the pi agent"),
-  forkFrom: z.string().optional().describe("Start a new task from a settled session's history; budgets are fresh. Omitted cwd/model/tools inherit from the parent and are revalidated."),
+  coordinator: coordinatorSchema.optional().describe("Opt-in memory-only orchestration of caller-planned read-only children. Omitted prompt gives a concise synthesis with disagreements, failed coverage and original report references; omitted tools selects codemode, subject to server permissions. Children have independent budgets and count toward concurrency. Cancelling the coordinator leaves children running."),
+  prompt: z.string().optional().describe("The task for the pi agent. Required for ordinary delegates; omit with coordinator for the default dispatch/wait/synthesis workflow. A supplied prompt replaces that default."),
+  forkFrom: z.string().optional().describe("Start a new task from a settled session's history; budgets are fresh. Omitted cwd/model/tools inherit and are revalidated, except coordinator defaults its omitted tools to codemode."),
   attachments: attachments.describe(ATTACHMENTS_HELP),
   saveTo: z.string().optional().describe("Absolute file path: when the run finishes, its final text is written there and results show savedTo instead"),
   model: z.string().optional().describe('Omit for the configured default. Use "provider/modelId" from the models tool to choose another.'),
@@ -55,7 +55,7 @@ const spawnShape = {
     .optional()
     .describe(
       `Tool allowlist for this delegate. Omit for ${(DEFAULT_TOOLS.length ? DEFAULT_TOOLS : READ_ONLY_TOOLS).join(", ")}; [] disables all tools. ` +
-        `Permitted on this server: ${ALLOW_ALL ? "any" : [...PERMITTED].join(", ")}.`,
+        `With coordinator, omit for codemode instead. Permitted on this server: ${ALLOW_ALL ? "any" : [...PERMITTED].join(", ")}.`,
     ),
   nativeMcp: z.boolean().optional().describe("Enable Pi native MCP independently of third-party extensions. Requires explicit mcpServers and authorized exact tool names, including codemode/tool_search if used."),
   mcpServers: z.array(z.string()).optional().describe("Names from Pi mcp.json to connect. Required with nativeMcp; other servers are not loaded."),
@@ -88,7 +88,7 @@ const spawnShape = {
 
 const taskShape = z.object({
   coordinator: spawnShape.coordinator,
-  prompt: z.string().describe("The task for this delegate"),
+  prompt: spawnShape.prompt,
   forkFrom: z.string().optional().describe("Overrides the batch forkFrom for this task"),
   attachments: attachments.describe("Overrides the batch `attachments` for this task alone; [] attaches nothing"),
   id: z.string().optional().describe("Session id for this task. Defaults to `idPrefix`-NN, or a UUID."),

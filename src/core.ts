@@ -16,7 +16,7 @@ import { pickTools } from "./permissions.js";
 import { assertProviderReady, assertThinkingSupported, defaultModelRef, resolveModel } from "./pi/models.js";
 import { resolveDelegateCwd } from "./workspace.js";
 import { validateNativeMcp } from "./pi/native-mcp.js";
-import { coordinatorSchema, createCoordinatorTools, type CoordinatorOptions } from "./coordinator.js";
+import { COORDINATOR_PROMPT, coordinatorSchema, createCoordinatorTools, type CoordinatorOptions } from "./coordinator.js";
 
 const TERMINAL = new Set(["done", "aborted", "error"]);
 const hasFinished = (worker: PiWorker): boolean => TERMINAL.has(worker.state) && !worker.isActive;
@@ -96,11 +96,22 @@ export function bindCancellation(
 }
 
 /** A launch as a tool receives it: attachments are inlined into the prompt before anything starts. */
-export type AttachedRequest = LaunchRequest & { attachments?: string[] | undefined; forkFrom?: string | undefined; coordinator?: CoordinatorOptions | undefined };
+export type AttachedRequest = Omit<LaunchRequest, "prompt"> & {
+  prompt?: string | undefined;
+  attachments?: string[] | undefined; forkFrom?: string | undefined; coordinator?: CoordinatorOptions | undefined;
+};
+type PreparedRequest = AttachedRequest & { prompt: string };
+
+/** Resolve team defaults before fork inheritance, for every entry point into the core. */
+function launchDefaults(request: AttachedRequest): PreparedRequest {
+  const prompt = request.prompt ?? (request.coordinator ? COORDINATOR_PROMPT : undefined);
+  if (prompt === undefined) throw new Error("prompt is required unless coordinator supplies a task plan.");
+  return { ...request, prompt, tools: request.tools ?? (request.coordinator ? ["codemode"] : undefined) };
+}
 
 /** Capture once before launching a batch; later parent follow-ups cannot change any seed. */
-async function withFork(request: AttachedRequest, seeds = new Map<string, ReturnType<PiWorker["forkSeed"]>>()): Promise<AttachedRequest> {
-  const { forkFrom, ...task } = request;
+async function withFork(request: AttachedRequest, seeds = new Map<string, ReturnType<PiWorker["forkSeed"]>>()): Promise<PreparedRequest> {
+  const { forkFrom, ...task } = launchDefaults(request);
   if (forkFrom === undefined) return task;
   let seed = seeds.get(forkFrom);
   if (!seed) {
@@ -115,7 +126,7 @@ async function withFork(request: AttachedRequest, seeds = new Map<string, Return
     seedEntries: seed.entries, usageBaseline: seed.usageBaseline, forkedFrom: forkFrom };
 }
 
-function withCoordinator({ coordinator, ...request }: AttachedRequest): LaunchRequest {
+function withCoordinator({ coordinator, ...request }: PreparedRequest): LaunchRequest {
   if (!coordinator) return request;
   // These closures/membership have no recovery representation. A durable parent would appear
   // resumable after restart while its memory children and dispatch receipts were gone.
@@ -126,7 +137,7 @@ function withCoordinator({ coordinator, ...request }: AttachedRequest): LaunchRe
   return { ...request, createTools: (worker) => createCoordinatorTools(plan, worker.cwd, { startBatch, waitForMany, getState, followUp }) };
 }
 
-const inline = async ({ attachments, ...request }: AttachedRequest): Promise<LaunchRequest> =>
+const inline = async ({ attachments, ...request }: PreparedRequest): Promise<LaunchRequest> =>
   ({ ...withCoordinator(request), prompt: await withAttachments(request.prompt, attachments) });
 
 export async function startExecution(request: AttachedRequest) {
@@ -162,7 +173,7 @@ export async function startBatch({
 }: BatchRequest) {
   const width = Math.max(String(tasks.length).length, 2);
   const seeds = new Map<string, ReturnType<PiWorker["forkSeed"]>>();
-  const merged: AttachedRequest[] = [];
+  const merged: PreparedRequest[] = [];
   for (const [i, t] of tasks.entries()) merged.push(await withFork({
     prompt: t.prompt,
     attachments: t.attachments ?? attachments,

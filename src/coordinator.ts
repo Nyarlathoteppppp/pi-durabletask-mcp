@@ -11,6 +11,19 @@ import { createCoordinatorReport } from "./coordinator-report.js";
 
 const RESEARCH_TOOLS = ["mcp__exa__web_search_exa", "mcp__exa__web_fetch_exa"];
 
+/** Default only when the caller omits the coordinator prompt; custom strategies stay intact. */
+export const COORDINATOR_PROMPT =
+  "Coordinate the caller's approved task plan using codemode. Dispatch the planned tasks, wait for them to finish, " +
+  "and read their reports before synthesizing. Use batches that fit available concurrency. If children need answers, " +
+  "surface their questions and session IDs to the caller. Ask targeted follow-ups only when needed; no mandatory debate round. " +
+  "Return the decision or answer, not an inventory of everything checked. For simple agreement or all-pass checks, " +
+  "one short sentence plus references is enough; do not enumerate the passing checks or repeat their file/line evidence. " +
+  "Expand for actionable findings, substantive disagreements, or failed/incomplete coverage; do not shorten away material findings. " +
+  "Merge overlapping conclusions. Omit execution chronology and empty sections; keep detailed verification in the original reports. " +
+  "Refer to findings by child label. List each child's label/session ID and returned savedTo once in compact references, " +
+  "plus reportIndex once when returned. Keep detailed reasoning in the originals. Agreement is not proof; distinguish evidence from inference. " +
+  "Use the language of the task plan.";
+
 export const coordinatorSchema = z.object({
   tasks: z.array(z.object({
     prompt: z.string(),

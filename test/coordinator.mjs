@@ -28,7 +28,7 @@ const http = createServer(async (req, res) => {
   for await (const chunk of req) body += chunk;
   const request = JSON.parse(body);
   const users = request.messages.filter((m) => m.role === "user");
-  const prompt = JSON.stringify(users.at(-1).content);
+  const prompt = JSON.stringify(users.at(-1)?.content ?? ""); // Pi omits an explicitly empty user message.
   // Capture the actual codemode reply seen by the provider; diagnostic traces are clipped.
   if (prompt.includes("TARGET_COORDINATOR") && request.messages.at(-1).role === "tool") {
     const text = request.messages.at(-1).content;
@@ -52,7 +52,9 @@ const http = createServer(async (req, res) => {
   };
   const answer = (content) => { emit({ role: "assistant", content }); emit({}, "stop"); };
   const scripts = request.messages.filter((m) => m.role === "assistant").flatMap((m) => m.tool_calls ?? []).filter((c) => c.function.name === "codemode").length;
-  if (prompt.includes("PARALLEL_COORDINATOR")) {
+  if (prompt === '""') {
+    answer("EMPTY PROMPT PRESERVED");
+  } else if (prompt.includes("PARALLEL_COORDINATOR")) {
     if (!scripts) tool("codemode", {code:'const [b,w]=await Promise.all([tools.delegate_start_batch({}),tools.delegate_wait({timeoutMs:5000})]); return {started:b.sessionIds.length,waited:w.sessions.length};'});
     else answer(`PARALLEL ${JSON.stringify(request.messages.at(-1).content)}`);
   } else if (prompt.includes("TARGET_COORDINATOR")) {
@@ -64,7 +66,7 @@ const http = createServer(async (req, res) => {
     answer("VERIFIED FOLLOW-UP ALPHA");
   } else if (prompt.includes("CHILD_TARGET")) {
     answer("INITIAL ALPHA");
-  } else if (prompt.includes("COORDINATOR")) {
+  } else if (prompt.includes("COORDINATOR") || prompt.includes("Coordinate the caller's approved task plan")) {
     assert.ok(request.tools.every((t) => !t.function.name.startsWith("delegate_")), "child tools are script-only, not direct declarations");
     if (!scripts) tool("codemode", { code: 'try { await tools.delegate_get({ sessionId: "facts" }); return "BAD foreign read"; } catch(e) { const b = await tools.delegate_start_batch({}); store("batch", b); return {blocked: e.message, batch:b}; }' });
     else if (scripts === 1) tool("codemode", { code: 'const b=load("batch"); const w=await tools.delegate_wait({sessionIds:b.sessionIds,timeoutMs:1000}); const reports=await Promise.all(b.sessionIds.map(sessionId=>tools.delegate_get({sessionId}))); store("reports",reports); return {states:reports.map(r=>({id:r.sessionId,state:r.state,error:r.error})),wait:w};' });
@@ -159,6 +161,29 @@ try {
   assert.match(boss.lastText, /intentional child failure/, "a failed child stays visible");
   assert.equal(full.toolCalls.filter((t) => t.name === "delegate_start_batch").length, 2);
   assert.equal((await call("sessions", {})).sessions.filter((s) => ["a", "failure"].includes(s.label)).length, 2, "repeat default dispatch does not duplicate children");
+
+  // Short team requests share the same core through spawn, run and batch. Defaults
+  // must precede fork inheritance; an ordinary read-only parent cannot replace codemode.
+  const shortPlan = { tasks: [{ prompt: "CHILD_TARGET", tools: [], maxTurns: 1 }] };
+  const short = await call("spawn", { id: "short-boss", forkFrom: "facts", coordinator: shortPlan, maxTurns: 6 });
+  assert.deepEqual(short.activeTools, ["codemode"]);
+  assert.equal((await settle(short.sessionId)).state, "done");
+  const shortRun = await call("run", { cwd: dir, coordinator: shortPlan, maxTurns: 6 });
+  assert.equal(shortRun.state, "done", shortRun.error);
+  const shortBatch = await call("spawn_batch", { cwd: dir, coordinator: shortPlan, maxTurns: 6, tasks: [{ id: "short-batch-boss" }] });
+  assert.equal((await settle(shortBatch.sessionIds[0])).state, "done");
+  const explicitEmpty = await call("run", { cwd: dir, coordinator: shortPlan, prompt: "", maxTurns: 2 });
+  assert.equal(explicitEmpty.lastText, "EMPTY PROMPT PRESERVED", "an explicit empty prompt is not replaced");
+  const overrideBatch = await call("spawn_batch", { cwd: dir, coordinator: shortPlan, tools: ["read"], maxTurns: 6,
+    tasks: [{ id: "override-boss", tools: ["codemode"] }] });
+  assert.equal((await settle(overrideBatch.sessionIds[0])).state, "done", "task tools override batch tools");
+  for (const [name, args] of [
+    ["spawn", { cwd: dir }], ["run", { cwd: dir }],
+    ["spawn_batch", { cwd: dir, tasks: [{}, { prompt: "never launched", id: "missing-prompt-sibling" }] }],
+    ["spawn", { cwd: dir, coordinator: shortPlan, tools: [] }],
+    ["spawn_batch", { cwd: dir, coordinator: shortPlan, tools: ["read"], tasks: [{}] }],
+  ]) assert.equal((await raw(name, args)).isError, true, `${name} rejects missing task or disabled codemode`);
+  assert.equal((await raw("status", { sessionId: "missing-prompt-sibling" })).isError, true, "invalid batch launches no sibling");
 
   // A wait started alongside a dispatch in the same script covers the children being started.
   await call("spawn", {cwd:dir,id:"parallel-boss",prompt:"PARALLEL_COORDINATOR",tools:["codemode"],maxTurns:4,

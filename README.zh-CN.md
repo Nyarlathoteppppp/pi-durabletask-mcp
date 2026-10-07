@@ -36,6 +36,23 @@
 
 按角色选择不同 provider/model：一个查权限，一个用 Exa 联网查证，一个提出测试方案。主模型保留最终判断。[查看完整分工与配置示例 →](docs/workflows/codemode-coordinator.md)
 
+**给分工就能开团队。** 服务端已授权 `codemode` 时，`spawn` 可默认派发、收报告并汇总：
+
+```json
+{
+  "cwd": "/absolute/repo",
+  "coordinator": {
+    "tasks": [
+      { "label": "权限", "prompt": "审查认证中的权限校验，给出具体证据。" },
+      { "label": "测试", "prompt": "核对认证测试，指出确实缺失的覆盖。" }
+    ]
+  }
+}
+```
+
+按需加模型、`forkFrom` 和 `saveDir`；传 `prompt` 可自定编排策略。
+只要并行原报告、不需要汇总，用 `spawn_batch`。
+
 ## 能做什么
 
 | | 功能重点 |
@@ -44,7 +61,7 @@
 | **追问与报告** | **及时调整**：执行中 `steer`，结束后 `follow_up`，按需补充预算；**材料与成果**：`attachments` 传文件，`saveTo` 存报告；收取摘要、原文引用、可选[团队报告索引](docs/workflows/codemode-coordinator.md#saved-team-index)、token 用量与费用。 |
 | **授权与恢复** | **普通代理可实现**：显式开放编辑或命令工具，返回成功修改的文件路径；**过程可见**：`idleMs`、`phase` 和执行预算；**单任务可恢复**：可选 SQLite 检查点与跨窗口 `handoff`。 |
 
-团队支持 Codemode 循环、条件和并行调用；目前为一层编排、内存会话，子代理只读，可显式开启 Exa。需授权 `codemode` 并传入 `tools: ["codemode"]`。单个任务也可直接交给普通 delegate。
+团队支持 Codemode 循环、条件和并行调用；目前为一层编排、内存会话，子代理只读，可显式开启 Exa。服务端需授权 `codemode`，团队省略工具时会自动选择它。单个任务也可直接交给普通 delegate。
 
 ---
 

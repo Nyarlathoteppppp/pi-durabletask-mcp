@@ -9,6 +9,8 @@ assert.equal(plan.tasks[0].maxDurationMs, 60000);
 assert.equal(plan.tasks[0].maxToolCalls, 12);
 await assert.rejects(startExecution({ prompt: "x", cwd: process.cwd(), tools: ["read"], coordinator: { tasks: [{ prompt: "child" }] } }), /codemode/);
 await assert.rejects(startExecution({ prompt: "x", cwd: process.cwd(), durable: true, coordinator: { tasks: [{ prompt: "child" }] } }), /memory-only/);
+await assert.rejects(startExecution({ cwd: process.cwd(), coordinator: { tasks: [{ prompt: "child" }] } }), /codemode.*blocked/);
+await assert.rejects(startExecution({ cwd: process.cwd() }), /prompt is required/);
 for (const task of [{ prompt: "x", maxTurns: 6 }, { prompt: "x", maxDurationMs: 60001 }, { prompt: "x", tools: ["write"] }, { prompt: "x", coordinator: { tasks: [] } }]) {
   assert.equal(coordinatorSchema.safeParse({ tasks: [task] }).success, false);
 }

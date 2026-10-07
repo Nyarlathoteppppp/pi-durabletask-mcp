@@ -4,37 +4,41 @@ A main agent supplies a plan; one Pi coordinator dispatches, waits and synthesiz
 using JavaScript loops/conditions. It shares the existing execution core with ordinary
 MCP tools. Original child reports remain available by session ID and saved file.
 
-Enable `codemode` in `PI_DELEGATE_ALLOW_TOOLS`. For the research-enabled example below,
-configure [Exa](../research.md) and also grant `mcp__exa__web_search_exa` and
-`mcp__exa__web_fetch_exa`. Start the coordinator with `spawn`
+Enable `codemode` in `PI_DELEGATE_ALLOW_TOOLS`. Start the coordinator with `spawn`
 (or `run`; batch tasks can also carry `coordinator`):
 
 ```json
 {
   "cwd": "/absolute/repo",
-  "tools": ["codemode"],
   "maxTurns": 10,
   "maxToolCalls": 6,
   "maxDurationMs": 300000,
   "coordinator": {
     "saveDir": "/absolute/reports/review-01",
     "forkFrom": "settled-facts-session",
-    "research": true,
     "tasks": [
       { "label": "recovery", "prompt": "Check recovery for concrete races. Return file:line, trigger and evidence; preserve uncertainty." },
       { "label": "handoff", "prompt": "Check handoff code against its documentation. Return specific discrepancies and evidence." }
     ]
-  },
-  "prompt": "Dispatch the approved reviewers with codemode, retain full reports, then give at most five short findings with reviewer/session references, disagreements and failed coverage; keep explanations in original reports. Agreement is not proof. Ask the caller if children need answers."
+  }
 }
 ```
+
+With `coordinator`, omit `prompt` for dispatch, wait, report collection and a concise
+synthesis of findings, disagreements and incomplete coverage, citing original reports.
+Omit `tools` for `["codemode"]`; the server must still permit it. These team defaults
+apply before fork inheritance. Explicit `prompt` replaces the default strategy, while
+explicit tools (including batch defaults) are preserved and must contain `codemode`.
+Ordinary delegates still require `prompt`. For parallel reports without a synthesis,
+use `spawn_batch` and `wait` directly; no coordinator is needed.
 
 Omit `forkFrom` without a settled fact session. It can also be specified per child.
 Branches reuse that history, with fresh budgets; independent reviews may instead start
 without a shared opinionated transcript. Choose actual model IDs with `models`; each
 child can set `model`, `thinking`, `tools` and its own budgets. `research: true`
 adds the configured Exa search/fetch pair; `research: false` per task overrides the
-plan. It is off when omitted. `tools: []` with research enabled means Exa-only,
+plan. Configure [Exa](../research.md) and grant both exact names in the server allowlist.
+It is off when omitted. `tools: []` with research enabled means Exa-only,
 not no tools. Models choose when to browse; ask for source verification when needed.
 
 ## Four tools inside codemode

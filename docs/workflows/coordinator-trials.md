@@ -1,4 +1,4 @@
-# Three live coordinated reviews
+# Live coordination trials
 
 On 2026-10-07, we reviewed this repository using a fresh built MCP process and the
 current Codex host configuration. Each trial used a neutral fact session, two
@@ -80,3 +80,25 @@ runs in the same coordinator session. This verifies workflow behavior, not revie
 An initial pilot used an outdated Pi-host model policy instead of the current Codex
 host policy and blocked a Codex child. Correcting the experiment configuration fixed
 that setup error; no production model policy or automatic fallback was changed.
+
+## Short team requests
+
+Two later trials omitted the coordinator's `prompt` and `tools`, using the new
+defaults: a code review from a settled fact session (66 seconds, facts excluded),
+and web research (43 seconds). Both used a Codex Sol coordinator with DeepSeek/Flash
+children. Each returned a synthesis, both original report references and a team index;
+the caller did not supply an orchestration prompt or rewrite the reports.
+
+The code synthesis was 769 characters versus 1807 in the originals; the research
+synthesis was 1051 versus 1336. These individual observations do not establish token
+savings or review accuracy. The coordinator correctly flagged an internally
+contradictory hypothetical bug claim, and the host verified it against the source.
+Runtime permissions and explicit overrides remain covered by the existing test path.
+
+In a later default-Flash trial, a passing two-member check produced a 1728-character
+synthesis from 618 characters of originals. We clarified the default prompt: give
+one short conclusion for simple agreement, expand for actionable findings, conflicts
+or incomplete coverage, and list references once. A fresh run of the same assignments
+returned 519 characters from 615 characters of originals, keeping both report paths
+and the team index. This is a prompt pilot, not a guaranteed output limit or cost saving;
+custom prompts and full reports remain available.

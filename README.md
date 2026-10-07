@@ -34,6 +34,23 @@ Let your main Claude Code / Codex agent plan the work, with [Pi](https://pi.dev)
 
 Choose a provider/model per role: one checks permissions, one researches sources with Exa, and one proposes tests. Your main agent keeps the final judgment. [See the full task plan and configuration →](docs/workflows/codemode-coordinator.md)
 
+**A plan is enough.** With `codemode` permitted, `spawn` can dispatch, collect and synthesize:
+
+```json
+{
+  "cwd": "/absolute/repo",
+  "coordinator": {
+    "tasks": [
+      { "label": "permissions", "prompt": "Review authentication permission checks; cite evidence." },
+      { "label": "tests", "prompt": "Check authentication tests for concrete coverage gaps." }
+    ]
+  }
+}
+```
+
+Add models, `forkFrom` and `saveDir` as needed. Supply `prompt` for your own strategy;
+use `spawn_batch` for parallel reports without synthesis.
+
 ## What you can do
 
 | | Highlights |
@@ -42,7 +59,7 @@ Choose a provider/model per role: one checks permissions, one researches sources
 | **Refine & Report** | **Adjust the direction:** `steer` live work, `follow_up` finished work, and renew budgets as needed. **Pass materials, keep results:** `attachments` and `saveTo`, with summaries, original report references, an opt-in [team index](docs/workflows/codemode-coordinator.md#saved-team-index), token usage and cost. |
 | **Permissions & Recovery** | **Authorized implementation:** ordinary delegates can edit or run commands and report successful changed-file paths. **Visible progress:** `idleMs`, `phase` and execution budgets. **Optional single-session recovery:** SQLite checkpoints and cross-window `handoff`. |
 
-Teams support Codemode loops, conditions and parallel calls. They currently use one level of memory-only, read-only children, with opt-in Exa; permit `codemode` and pass `tools: ["codemode"]`. For a single task, use an ordinary delegate.
+Teams support Codemode loops, conditions and parallel calls. They currently use one level of memory-only, read-only children, with opt-in Exa; permit `codemode` on the server (selected automatically when team tools are omitted). For a single task, use an ordinary delegate.
 
 ---
 
