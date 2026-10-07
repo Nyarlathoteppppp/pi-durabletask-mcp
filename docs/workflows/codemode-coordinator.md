@@ -4,7 +4,9 @@ A main agent supplies a plan; one Pi coordinator dispatches, waits and synthesiz
 using JavaScript loops/conditions. It shares the existing execution core with ordinary
 MCP tools. Original child reports remain available by session ID and saved file.
 
-Enable `codemode` in `PI_DELEGATE_ALLOW_TOOLS`. Start the coordinator with `spawn`
+Enable `codemode` in `PI_DELEGATE_ALLOW_TOOLS`. For the research-enabled example below,
+configure [Exa](../research.md) and also grant `mcp__exa__web_search_exa` and
+`mcp__exa__web_fetch_exa`. Start the coordinator with `spawn`
 (or `run`; batch tasks can also carry `coordinator`):
 
 ```json
@@ -17,6 +19,7 @@ Enable `codemode` in `PI_DELEGATE_ALLOW_TOOLS`. Start the coordinator with `spaw
   "coordinator": {
     "saveDir": "/absolute/reports/review-01",
     "forkFrom": "settled-facts-session",
+    "research": true,
     "tasks": [
       { "label": "recovery", "prompt": "Check recovery for concrete races. Return file:line, trigger and evidence; preserve uncertainty." },
       { "label": "handoff", "prompt": "Check handoff code against its documentation. Return specific discrepancies and evidence." }
@@ -29,7 +32,10 @@ Enable `codemode` in `PI_DELEGATE_ALLOW_TOOLS`. Start the coordinator with `spaw
 Omit `forkFrom` without a settled fact session. It can also be specified per child.
 Branches reuse that history, with fresh budgets; independent reviews may instead start
 without a shared opinionated transcript. Choose actual model IDs with `models`; each
-child can set `model`, `thinking`, `tools` and its own budgets.
+child can set `model`, `thinking`, `tools` and its own budgets. `research: true`
+adds the configured Exa search/fetch pair; `research: false` per task overrides the
+plan. It is off when omitted. `tools: []` with research enabled means Exa-only,
+not no tools. Models choose when to browse; ask for source verification when needed.
 
 ## Three tools inside codemode
 
@@ -52,9 +58,10 @@ not mandatory strategies. Stronger models can choose their own sequencing and an
 
 ## Boundaries
 
-- First version: **memory-only, one level, built-in read-only child tools**
-  (`read`, `grep`, `find`, `ls`, or `[]`). Child extensions/native MCP/coordinator are
-  off. Web research remains available through [native MCP](../research.md) separately.
+- **Memory-only, one level, read-only child tools**: built-ins (`read`, `grep`,
+  `find`, `ls`, or `[]`) plus optional Exa search/fetch. Research selects only `exa`
+  and the exact authorized tool pair; other servers/tools are not inherited. Child
+  third-party extensions/coordinator are off; codemode is not implicitly granted.
   `durable: true` with `coordinator` is rejected: dispatch membership is not persisted,
   so this does not promise restartable group execution.
 - Child defaults: 10 turns, 12 own tool calls, 240 seconds, bounded by the server's
@@ -66,10 +73,14 @@ not mandatory strategies. Stronger models can choose their own sequencing and an
   budgets. Their IDs appear in ordinary `sessions`/`status`/`wait`; the main agent
   can `answer` questions or `abort` them. `delegate_wait` surfaces pending questions;
   answer them before waiting again.
-- Saved originals and in-memory reports follow existing retention. `store/load` has
-  the installed SDK's size limits and commits only after successful scripts; keep
-  file references for oversized reports. A failed script must not be assumed to
-  have committed its store writes. Errors/aborts may have no saved report.
+- Saved originals and in-memory reports follow existing retention. The current Pi
+  SDK limits `store/load` to 262144 JSON characters per value and 1048576 in total,
+  with writes kept only after successful scripts; keep file references for oversized
+  reports. A failed script must not be assumed to have committed its store writes.
+  Errors/aborts may have no saved report.
 - `maxToolCalls` counts the coordinator's own calls, not each nested child-tool call.
   The fixed caller plan bounds dispatches; child budgets and registry admission still
   apply. Tool access is not an OS sandbox. Report saving is an authorized host write.
+
+See [three live review trials](coordinator-trials.md) for measured wait/output behavior
+and review limitations; these are usage observations, not an accuracy benchmark.

@@ -79,8 +79,9 @@ For other questions, replace queries, objectives and URLs; follow evidence in th
 returned sources before making substantive claims.
 
 This composes the selected research tools. Optional [codemode coordination](workflows/codemode-coordinator.md)
-adds caller-planned, memory-only **code reviewers** with built-in read-only tools;
-web research children still use the caller's existing `spawn_batch`/`wait` workflow.
+adds caller-planned memory-only reviewers; `coordinator.research: true` enables
+these same exact Exa search/fetch tools for children, with per-task opt-out. Ordinary
+`spawn_batch`/`wait` research continues to work as before.
 The [review recipe](workflows/review-and-synthesize.md) also works without a coordinator.
 
 `maxToolCalls` counts the delegate's own calls, not every nested call inside codemode.

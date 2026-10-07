@@ -5,6 +5,8 @@ import { BATCH_MAX, MAX_DURATION_MS, MAX_TURNS } from "./config.js";
 import { READ_ONLY_TOOLS } from "./permissions.js";
 import type { startBatch, waitForMany, getState } from "./core.js";
 
+const RESEARCH_TOOLS = ["mcp__exa__web_search_exa", "mcp__exa__web_fetch_exa"];
+
 export const coordinatorSchema = z.object({
   tasks: z.array(z.object({
     prompt: z.string(),
@@ -12,6 +14,7 @@ export const coordinatorSchema = z.object({
     model: z.string().optional(),
     thinking: z.enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"]).optional(),
     tools: z.array(z.enum(["read", "grep", "find", "ls"])).optional(),
+    research: z.boolean().optional().describe("Override the plan's web research setting; enables only configured Exa search/fetch, subject to server tool permissions."),
     forkFrom: z.string().optional(),
     maxTurns: z.number().int().min(1).max(MAX_TURNS).default(Math.min(10, MAX_TURNS)),
     maxToolCalls: z.number().int().min(1).max(1000).default(12),
@@ -19,6 +22,7 @@ export const coordinatorSchema = z.object({
   }).strict()).min(1).max(BATCH_MAX),
   saveDir: z.string().optional(),
   forkFrom: z.string().optional(),
+  research: z.boolean().optional().describe("Enable configured Exa search/fetch for children; requires the two exact tools in PI_DELEGATE_ALLOW_TOOLS. Off when omitted."),
 }).strict();
 
 export type CoordinatorOptions = z.input<typeof coordinatorSchema>;
@@ -58,10 +62,11 @@ export function createCoordinatorTools(options: z.output<typeof coordinatorSchem
         // Reserve indexes before the first await so parallel script calls cannot double-dispatch.
         indexes.forEach((i) => dispatched.add(i));
         try {
-          const batch = await core.startBatch({ cwd, saveDir: options.saveDir, forkFrom: options.forkFrom, tasks: indexes.map((i) => ({
-            ...options.tasks[i]!, tools: options.tasks[i]!.tools ?? [...READ_ONLY_TOOLS],
-            durable: false, extensions: false, nativeMcp: false, mcpServers: [],
-          })) });
+          const batch = await core.startBatch({ cwd, saveDir: options.saveDir, forkFrom: options.forkFrom, tasks: indexes.map((i) => {
+            const { research = options.research ?? false, ...task } = options.tasks[i]!;
+            return { ...task, tools: [...(task.tools ?? READ_ONLY_TOOLS), ...(research ? RESEARCH_TOOLS : [])],
+              durable: false, extensions: false, nativeMcp: research, mcpServers: research ? ["exa"] : [] };
+          }) });
           batch.sessionIds.forEach((id) => owned.add(id));
           // Unlike an execution error on a returned session, a startup failure has no child
           // to inspect or resume. Allow that plan item to be retried without rerunning siblings.
@@ -79,7 +84,7 @@ export function createCoordinatorTools(options: z.output<typeof coordinatorSchem
     }),
     defineTool({
       name: "delegate_wait", label: "Wait for delegates", exposure: "codemode",
-      description: "Wait for all selected children, or all launched children when sessionIds is omitted. Returns compact state, questions, failures and savedTo; use delegate_get for full reports. Cancelling the wait/coordinator leaves children running within their budgets; the caller can answer or abort them with ordinary MCP tools.",
+      description: "Wait for all selected children, or all launched children when sessionIds is omitted. Returns compact per-child state, questions, errors and save diagnostics; use delegate_get for full reports. Cancelling the wait/coordinator leaves children running within their budgets; the caller can answer or abort them with ordinary MCP tools.",
       annotations: { readOnlyHint: true }, parameters: schema(wait), outputSchema,
       async execute(_id, params, signal) {
         const args = wait.parse(params);

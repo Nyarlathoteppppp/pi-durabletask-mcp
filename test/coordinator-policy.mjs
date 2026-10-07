@@ -42,3 +42,19 @@ const retrying = createCoordinatorTools(plan, process.cwd(), {
 await assert.rejects(retrying[0].execute("rejected", {}), /no capacity/);
 assert.equal((await retrying[0].execute("retry", {})).structuredContent.started, 1);
 console.log("  OK -> concurrent duplicate dispatch, partial startup receipts, own-ID isolation and admission retry");
+
+let researchRequest;
+const researching = createCoordinatorTools(coordinatorSchema.parse({ research: true, tasks: [{prompt:"web",tools:[]},{prompt:"off",research:false}] }), process.cwd(), {
+  startBatch: async (request) => { researchRequest = request; return {requested:2,started:0,sessionIds:[],sessions:[]}; },
+});
+await researching[0].execute("research",{});
+assert.deepEqual(researchRequest.tasks[0].tools,["mcp__exa__web_search_exa","mcp__exa__web_fetch_exa"]);
+assert.deepEqual(researchRequest.tasks[0].mcpServers,["exa"]);
+assert.equal(researchRequest.tasks[0].nativeMcp,true);
+assert.equal("research" in researchRequest.tasks[0],false);
+assert.deepEqual(researchRequest.tasks[1].tools,["read","grep","find","ls"]);
+assert.deepEqual(researchRequest.tasks[1].mcpServers,[]);
+assert.equal(researchRequest.tasks[1].nativeMcp,false);
+const {startBatch} = await import("../dist/core.js");
+await assert.rejects(startBatch(researchRequest), /are blocked/);
+console.log("  OK -> research inheritance/opt-out, exact grants and existing permission checks");

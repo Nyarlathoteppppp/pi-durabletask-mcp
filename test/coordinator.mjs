@@ -6,6 +6,19 @@ import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
+if (process.argv[2] === "exa-fixture") {
+  const { McpServer } = await import("@modelcontextprotocol/sdk/server/mcp.js");
+  const { StdioServerTransport } = await import("@modelcontextprotocol/sdk/server/stdio.js");
+  const { z } = await import("zod");
+  const fixture = new McpServer({ name: "exa", version: "1" });
+  fixture.registerTool("web_search_exa", { inputSchema: { query: z.string(), objective: z.string() }, annotations: { readOnlyHint: true } }, async () => ({ content: [{ type: "text", text: "SEARCH PRIMARY SOURCE" }] }));
+  fixture.registerTool("web_fetch_exa", { inputSchema: { urls: z.array(z.string()) }, annotations: { readOnlyHint: true } }, async () => ({ content: [{ type: "text", text: "FETCH OFFICIAL EVIDENCE" }] }));
+  fixture.registerTool("effect", { inputSchema: {} }, async () => { throw new Error("unauthorized effect must never execute"); });
+  await fixture.connect(new StdioServerTransport());
+  await new Promise((resolve) => process.stdin.on("end", resolve));
+  process.exit(0);
+}
+
 const dir = await mkdtemp(join(tmpdir(), "pi-coordinator-"));
 const sockets = new Set();
 const inherited = [];
@@ -41,6 +54,13 @@ const http = createServer(async (req, res) => {
   } else if (prompt.includes("CANCEL_PARENT")) {
     if (!scripts) tool("codemode", { code: 'const b=await tools.delegate_start_batch({}); store("batch",b); return b;' });
     else tool("codemode", { code: 'return await tools.delegate_wait({timeoutMs:55000});' });
+  } else if (prompt.includes("CHILD_WEB")) {
+    const names = (request.tools ?? []).map((t) => t.function.name);
+    assert.ok(!names.includes("mcp__exa__effect") && !names.includes("codemode"), "research grants only exact search/fetch");
+    const previous = request.messages.filter((m) => m.role === "assistant").flatMap((m) => m.tool_calls ?? []).map((c) => c.function.name);
+    if (!previous.includes("mcp__exa__web_search_exa")) tool("mcp__exa__web_search_exa", { query: "official docs", objective: "verify semantics" });
+    else if (!previous.includes("mcp__exa__web_fetch_exa")) tool("mcp__exa__web_fetch_exa", { urls: ["https://example.com/docs"] });
+    else answer("CHILD REPORT " + JSON.stringify(request.messages.at(-1).content));
   } else if (prompt.includes("CHILD")) {
     inherited.push(request.messages.some((m) => m.role === "tool" && JSON.stringify(m.content).includes("ALPHA")));
     answer("CHILD REPORT ALPHA " + "evidence ".repeat(230));
@@ -57,13 +77,16 @@ const client = new Client({ name: "coordinator", version: "1" });
 try {
   const agentDir = join(dir, "agent"); await mkdir(agentDir);
   await writeFile(join(dir, "a.txt"), "ALPHA\n");
+  await writeFile(join(agentDir, "mcp.json"), JSON.stringify({ mcpServers: { exa: {
+    command: process.execPath, args: [join(process.cwd(), "test/coordinator.mjs"), "exa-fixture"], exposure: "direct",
+  } } }));
   await writeFile(join(agentDir, "settings.json"), JSON.stringify({ defaultProvider: "test", defaultModel: "one", enabledModels: ["test/*"] }));
   await writeFile(join(agentDir, "models.json"), JSON.stringify({ providers: { test: {
     baseUrl: `http://127.0.0.1:${http.address().port}/v1`, api: "openai-completions", apiKey: "fake-key",
     models: [{ id: "one", name: "one", reasoning: false, input: ["text"], contextWindow: 32000, maxTokens: 4096, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] } } }));
   await client.connect(new StdioClientTransport({ command: process.execPath, args: ["dist/index.js"], stderr: "ignore", env: {
     ...process.env, PI_OFFLINE: "1", PI_CODING_AGENT_DIR: agentDir, PI_DELEGATE_STATE_DIR: join(dir, "state"),
-    PI_DELEGATE_MODEL: "test/one", PI_DELEGATE_IGNORE_SCOPE: "1", PI_DELEGATE_ALLOW_TOOLS: "codemode,write", PI_DELEGATE_MAX_CONCURRENT: "4",
+    PI_DELEGATE_MODEL: "test/one", PI_DELEGATE_IGNORE_SCOPE: "1", PI_DELEGATE_ALLOW_TOOLS: "codemode,write,mcp__exa__web_search_exa,mcp__exa__web_fetch_exa", PI_DELEGATE_MAX_CONCURRENT: "4",
   } }));
   const raw = (name, args) => client.callTool({ name, arguments: args });
   const call = async (name, args) => { const r = await raw(name, args); assert.ok(!r.isError, r.content[0].text); return JSON.parse(r.content[0].text); };
@@ -116,6 +139,21 @@ try {
     coordinator: { tasks: Array.from({ length: 4 }, () => ({ prompt: "CHILD", tools: [] })) } });
   assert.match((await settle("overflow")).lastText, /concurrent/i, "coordinator occupies the fourth slot");
   assert.equal((await call("sessions", {})).sessions.filter((s) => ["a", "failure"].includes(s.label)).length, 2);
+
+  await call("spawn", { cwd: dir, id: "web-boss", prompt: "COORDINATOR", tools: ["codemode"], maxTurns: 6,
+    coordinator: { research: true, forkFrom: "facts", tasks: [
+      { prompt: "CHILD_WEB", label: "web", tools: [], maxTurns: 5 },
+      { prompt: "CHILD_OFF", label: "offline", research: false, tools: [], maxTurns: 2 },
+    ] } });
+  assert.match((await settle("web-boss")).lastText, /FETCH OFFICIAL EVIDENCE/);
+  const webSessions = (await call("sessions", {})).sessions.filter((s) => ["web", "offline"].includes(s.label));
+  for (const s of webSessions) {
+    const state = await call("status", { sessionId: s.sessionId, verbose: true });
+    if (s.label === "web") {
+      assert.ok(state.toolCalls.some((t) => t.name === "mcp__exa__web_search_exa" && t.state === "ok"));
+      assert.ok(state.toolCalls.some((t) => t.name === "mcp__exa__web_fetch_exa" && t.state === "ok"));
+    } else assert.equal(state.toolCallCount, 0, "task research:false overrides plan research:true");
+  }
 
   await call("spawn", { cwd: dir, id: "cancel-boss", prompt: "CANCEL_PARENT", tools: ["codemode"], maxTurns: 5,
     coordinator: { tasks: [{ prompt: "SLOW_CHILD", label: "slow", tools: [], maxDurationMs: 60000 }] } });
