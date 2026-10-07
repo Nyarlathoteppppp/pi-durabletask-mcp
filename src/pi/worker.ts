@@ -66,6 +66,12 @@ export interface WorkerOptions extends NativeMcpOptions {
 const RECENT_CALLS = 5;
 const COMPACT_ARGS = 120;
 
+/**
+ * Provider notices that some routes deliver as an ordinary reply, without a stop reason: Gemini's safety
+ * filter through Antigravity, for one. Exact openings only, so a real answer is never matched.
+ */
+const PROVIDER_REFUSAL = /^This request was blocked by Gemini's filters\./;
+
 const LAST_TURN_PROMPT =
   "This is your last turn, and your tools have been removed. Answer now from the evidence already collected. " +
   "Follow the user's requested format and length. Preserve concrete findings and important limitations; " +
@@ -747,6 +753,7 @@ export class PiWorker {
         run.clearTimers();
         // Judge before the run counts as finished, so the caller's final wait carries the result.
         if (run.stopReason === "length") this.answerFlag = "partial";
+        else if (PROVIDER_REFUSAL.test(this.lastText.trimStart())) this.answerFlag = "narration";
         else if (JUDGE_ENABLED && this.lastText.trim()) {
           const verdict = await judgeAnswer(run.prompt, this.lastText);
           // An abort during the call sets termination; this run is then not done.
@@ -833,7 +840,9 @@ export class PiWorker {
     switch (ev.type) {
       case "turn_start":
         this.currentRun.awaitingModel = true;
-        this.turns++;
+        // Pi starts a new turn for each automatic retry of a failed request; that is not budget spent.
+        if (this.currentRun.retrying) this.currentRun.retrying = false;
+        else this.turns++;
         this.onChange?.();
         break;
 
@@ -910,6 +919,7 @@ export class PiWorker {
       case "auto_retry_start":
         // The retry requests again after its backoff; silence counts from then.
         this.currentRun.awaitingModel = true;
+        this.currentRun.retrying = true;
         this.currentRun.lastActivityAt = Date.now() + ev.delayMs;
         // Pi retries transient provider failures itself; record it so a caller can tell a flaky
         // provider from a broken prompt, and switch provider instead of retrying blindly.

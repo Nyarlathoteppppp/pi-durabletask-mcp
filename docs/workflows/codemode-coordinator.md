@@ -80,8 +80,8 @@ the first one's dispatch membership or codemode storage.
 - The coordinator occupies a concurrency slot. With the default limit of four, it
   can start at most three children at once when no other work is running. Larger
   plans can launch subsets in successive batches; there is no new admission queue.
-- Cancelling a wait **or the coordinator** leaves children running within their own
-  budgets. Their IDs appear in ordinary `sessions`/`status`/`wait`; the main agent
+- Cancelling a wait **or the coordinator**, or the coordinator finishing without waiting
+  for them, leaves children running within their own budgets. Their IDs appear in ordinary `sessions`/`status`/`wait`; the main agent
   can `answer` questions or `abort` them. `delegate_wait` surfaces pending questions;
   answer them before waiting again.
 - Saved originals and in-memory reports follow existing retention. The current Pi

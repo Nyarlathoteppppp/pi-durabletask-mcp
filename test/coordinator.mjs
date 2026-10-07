@@ -42,7 +42,10 @@ const http = createServer(async (req, res) => {
   };
   const answer = (content) => { emit({ role: "assistant", content }); emit({}, "stop"); };
   const scripts = request.messages.filter((m) => m.role === "assistant").flatMap((m) => m.tool_calls ?? []).filter((c) => c.function.name === "codemode").length;
-  if (prompt.includes("TARGET_COORDINATOR")) {
+  if (prompt.includes("PARALLEL_COORDINATOR")) {
+    if (!scripts) tool("codemode", {code:'const [b,w]=await Promise.all([tools.delegate_start_batch({}),tools.delegate_wait({timeoutMs:5000})]); return {started:b.sessionIds.length,waited:w.sessions.length};'});
+    else answer(`PARALLEL ${JSON.stringify(request.messages.at(-1).content)}`);
+  } else if (prompt.includes("TARGET_COORDINATOR")) {
     if (!scripts) tool("codemode", {code:'const b=await tools.delegate_start_batch({}); store("target.batch",b); return b;'});
     else if (scripts === 1) tool("codemode", {code:'const b=load("target.batch"); await tools.delegate_wait({timeoutMs:1000}); const r=await tools.delegate_get({sessionId:b.sessionIds[0]}); store("target.original",r); const renewed=await tools.delegate_follow_up({sessionId:r.sessionId,prompt:"TARGET_ANSWER: give the final verified conclusion",maxTurns:2,maxToolCalls:1}); return {original:r,renewed};'});
     else if (scripts === 2) tool("codemode", {code:'await tools.delegate_wait({timeoutMs:1000}); const old=load("target.original"); const updated=await tools.delegate_get({sessionId:old.sessionId}); return {original:old,updated};'});
@@ -141,6 +144,13 @@ try {
   assert.match(boss.lastText, /intentional child failure/, "a failed child stays visible");
   assert.equal(full.toolCalls.filter((t) => t.name === "delegate_start_batch").length, 2);
   assert.equal((await call("sessions", {})).sessions.filter((s) => ["a", "failure"].includes(s.label)).length, 2, "repeat default dispatch does not duplicate children");
+
+  // A wait started alongside a dispatch in the same script covers the children being started.
+  await call("spawn", {cwd:dir,id:"parallel-boss",prompt:"PARALLEL_COORDINATOR",tools:["codemode"],maxTurns:4,
+    coordinator:{tasks:[{prompt:"CHILD_TARGET",label:"p1",tools:[],maxTurns:1},{prompt:"CHILD_TARGET",label:"p2",tools:[],maxTurns:1}]} });
+  const parallelBoss=await settle("parallel-boss");
+  assert.equal(parallelBoss.state,"done",parallelBoss.error);
+  assert.match(parallelBoss.lastText,/\\"started\\":2,\\"waited\\":2/);
 
   await call("spawn", {cwd:dir,id:"target-boss",prompt:"TARGET_COORDINATOR",tools:["codemode"],maxTurns:6,
     coordinator:{saveDir:join(dir,"target-reports"),forkFrom:"facts",tasks:[{prompt:"CHILD_TARGET",label:"target",tools:[],maxTurns:1}]} });

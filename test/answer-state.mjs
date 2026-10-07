@@ -27,6 +27,7 @@ const provider = await listen((request, res) => {
     model: request.model, choices: [{ index: 0, delta, finish_reason }] })}\n\n`);
   if (last.includes("NARRATE")) emit({ role: "assistant", content: "Let me look at the remaining files next." });
   else if (last.includes("SILENT")) emit({ role: "assistant", content: "" });
+  else if (last.includes("FILTERED")) emit({ role: "assistant", content: "This request was blocked by Gemini's filters. They can occasionally trigger by mistake on safe coding, security, or biology-related queries. Please try rephrasing your prompt." });
   else emit({ role: "assistant", content: last.includes("CUT") ? "The three issues are: first, the" : "Found two bugs: a race and a leak." });
   emit({}, last.includes("CUT") ? "length" : "stop");
   res.end("data: [DONE]\n\n");
@@ -73,6 +74,10 @@ try {
   assert.equal((await finish("answer", "Review the code.")).answerState, undefined, "a conclusion is not flagged");
   assert.equal((await finish("cut", "Review the code. CUT")).answerState, "partial", "output limit, by rule");
   assert.equal((await finish("silent", "Review the code. SILENT")).answerState, "missing", "no text, by rule");
+  // A provider's safety-filter notice delivered as an ordinary reply is not a conclusion; known by its exact text.
+  const before = jevCalls.length;
+  assert.equal((await finish("filtered", "Review the code. FILTERED")).answerState, "narration");
+  assert.equal(jevCalls.length, before, "decided by rule, without the judge");
   // The run's deadline does not cover the judge: the model already finished in time.
   const late = await finish("late", "Review the code. NARRATE SLOWJEV", { maxDurationMs: 1000 });
   assert.deepEqual([late.state, late.answerState], ["done", "narration"], JSON.stringify(late.termination));

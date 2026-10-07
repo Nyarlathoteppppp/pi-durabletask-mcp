@@ -35,6 +35,8 @@ type Operations = { startBatch: typeof startBatch; waitForMany: typeof waitForMa
 export function createCoordinatorTools(options: z.output<typeof coordinatorSchema>, cwd: string, core: Operations): ToolDefinition[] {
   const dispatched = new Set<number>();
   const owned = new Set<string>();
+  /** Dispatches still starting: a wait for "all launched children" includes them. */
+  const starting = new Set<Promise<unknown>>();
   const own = (ids: string[]): string[] => {
     for (const id of ids) if (!owned.has(id)) throw new Error(`Session ${id} was not launched by this coordinator.`);
     return ids;
@@ -71,12 +73,15 @@ export function createCoordinatorTools(options: z.output<typeof coordinatorSchem
         // Reserve indexes before the first await so parallel script calls cannot double-dispatch.
         indexes.forEach((i) => dispatched.add(i));
         try {
-          const batch = await core.startBatch({ cwd, saveDir: options.saveDir, forkFrom: options.forkFrom, tasks: indexes.map((i) => {
+          const launched = core.startBatch({ cwd, saveDir: options.saveDir, forkFrom: options.forkFrom, tasks: indexes.map((i) => {
             const { research = options.research ?? false, ...task } = options.tasks[i]!;
             return { ...task, tools: [...(task.tools ?? READ_ONLY_TOOLS), ...(research ? RESEARCH_TOOLS : [])],
               durable: false, extensions: false, nativeMcp: research, mcpServers: research ? ["exa"] : [] };
-          }) });
-          batch.sessionIds.forEach((id) => owned.add(id));
+          }) })
+            // Owned as soon as started, so a wait tracking this dispatch sees its children.
+            .then((started) => { started.sessionIds.forEach((id) => owned.add(id)); return started; });
+          starting.add(launched);
+          const batch = await launched.finally(() => starting.delete(launched));
           // Unlike an execution error on a returned session, a startup failure has no child
           // to inspect or resume. Allow that plan item to be retried without rerunning siblings.
           batch.failures?.forEach((f) => dispatched.delete(indexes[f.index]!));
@@ -97,6 +102,8 @@ export function createCoordinatorTools(options: z.output<typeof coordinatorSchem
       annotations: { readOnlyHint: true }, parameters: schema(wait), outputSchema,
       async execute(_id, params, signal) {
         const args = wait.parse(params);
+        // A script may dispatch and wait at once; children of a dispatch still starting count as launched.
+        if (!args.sessionIds) await Promise.allSettled([...starting]);
         const batch = await core.waitForMany(own(args.sessionIds ?? [...owned]), { timeoutMs: args.timeoutMs, until: "all_settled", signal });
         const sessions = batch.sessions.map(({ lastText: _report, ...s }) => withNextAction(s));
         return result({ ...batch, sessions, nextAction: batchNextAction(sessions) });

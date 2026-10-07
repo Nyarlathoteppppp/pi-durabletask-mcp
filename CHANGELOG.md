@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Pi's automatic retries of a failed provider request no longer spend turns: a request that failed twice before succeeding used one turn, not three, so a provider outage no longer shrinks the budget left for `follow_up`.
+- A Gemini safety-filter notice delivered as an ordinary reply (as through Antigravity) is reported as `answerState: "narration"` by its exact opening, without the optional judge, instead of passing as a conclusion.
+- In a coordinator script that dispatches and waits at once, a parameterless `delegate_wait` now includes children of a dispatch still starting; before, it could return at once with none.
+- The coordinator docs state that children also keep running when the coordinator finishes without waiting for them.
 - `follow_up` accepts explicit `maxTurns`/`maxToolCalls` to renew that budget for the new run; omitting them keeps the remaining quotas, counters and `usage` stay cumulative over the session, and durable recovery resumes from the run's budget baseline.
 - The codemode coordinator's `delegate_follow_up` follows up an owned child with the same history, model and tool grants; with a plan `saveDir` each follow-up writes a new report while keeping the original, and `delegate_wait`/`delegate_get` return `nextAction` and follow-up readiness.
 - README and the bundled skill describe the multi-provider Pi team entry points: a single delegate, `spawn_batch`, and the caller-planned coordinator.
