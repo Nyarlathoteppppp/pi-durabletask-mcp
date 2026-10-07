@@ -58,6 +58,7 @@ export function createCoordinatorTools(options: z.output<typeof coordinatorSchem
     defineTool({
       name: "delegate_start_batch", label: "Start planned delegates", exposure: "codemode",
       description: "Launch caller-approved tasks by zero-based taskIndexes (omit for all unlaunched). Started tasks run once; startup failures can be retried. " +
+        "Failed scripts leave children running but discard that script's store writes. Recover their IDs/state with delegate_wait({timeoutMs:0}), without launching more work. " +
         "The coordinator also occupies a concurrency slot; start smaller batches if capacity is full. Plans: " +
         JSON.stringify(options.tasks.map((t, index) => ({ index, label: t.label, prompt: t.prompt, model: t.model }))),
       parameters: schema(start), outputSchema,
@@ -92,7 +93,7 @@ export function createCoordinatorTools(options: z.output<typeof coordinatorSchem
     }),
     defineTool({
       name: "delegate_wait", label: "Wait for delegates", exposure: "codemode",
-      description: "Wait for all selected children, or all launched children when sessionIds is omitted. Returns compact per-child state, questions, errors and save diagnostics; use delegate_get for full reports. Cancelling the wait/coordinator leaves children running within their budgets; the caller can answer or abort them with ordinary MCP tools.",
+      description: "Wait for all selected children, or all launched children when sessionIds is omitted. timeoutMs: max 55000, default 30000 when omitted. Returns compact per-child state, questions, errors and save diagnostics; use delegate_get for full reports. Cancelling the wait/coordinator leaves children running within their budgets; the caller can answer or abort them with ordinary MCP tools.",
       annotations: { readOnlyHint: true }, parameters: schema(wait), outputSchema,
       async execute(_id, params, signal) {
         const args = wait.parse(params);

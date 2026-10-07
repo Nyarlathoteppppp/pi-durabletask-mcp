@@ -31,7 +31,7 @@ const ATTACHMENTS_HELP =
 const attachments = z.array(z.string()).optional();
 
 const spawnShape = {
-  coordinator: coordinatorSchema.optional().describe("Opt-in memory-only codemode orchestration of caller-planned read-only children. Children have independent budgets and count toward server concurrency. Cancelling the coordinator leaves children running; use ordinary abort to stop them."),
+  coordinator: coordinatorSchema.optional().describe("Opt-in memory-only codemode orchestration of caller-planned read-only children; needs codemode, e.g. tools:[\"codemode\"]. Children have independent budgets and count toward server concurrency. Cancelling the coordinator leaves children running; use ordinary abort to stop them."),
   prompt: z.string().describe("The task for the pi agent"),
   forkFrom: z.string().optional().describe("Start a new task from a settled session's history; budgets are fresh. Omitted cwd/model/tools inherit from the parent and are revalidated."),
   attachments: attachments.describe(ATTACHMENTS_HELP),
