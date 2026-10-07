@@ -15,6 +15,7 @@ import { pickTools } from "./permissions.js";
 import { assertProviderReady, assertThinkingSupported, defaultModelRef, resolveModel } from "./pi/models.js";
 import { resolveDelegateCwd } from "./workspace.js";
 import { validateNativeMcp } from "./pi/native-mcp.js";
+import { coordinatorSchema, createCoordinatorTools, type CoordinatorOptions } from "./coordinator.js";
 
 const TERMINAL = new Set(["done", "aborted", "error"]);
 const hasFinished = (worker: PiWorker): boolean => TERMINAL.has(worker.state) && !worker.isActive;
@@ -94,7 +95,7 @@ export function bindCancellation(
 }
 
 /** A launch as a tool receives it: attachments are inlined into the prompt before anything starts. */
-export type AttachedRequest = LaunchRequest & { attachments?: string[] | undefined; forkFrom?: string | undefined };
+export type AttachedRequest = LaunchRequest & { attachments?: string[] | undefined; forkFrom?: string | undefined; coordinator?: CoordinatorOptions | undefined };
 
 /** Capture once before launching a batch; later parent follow-ups cannot change any seed. */
 async function withFork(request: AttachedRequest, seeds = new Map<string, ReturnType<PiWorker["forkSeed"]>>()): Promise<AttachedRequest> {
@@ -113,8 +114,19 @@ async function withFork(request: AttachedRequest, seeds = new Map<string, Return
     seedEntries: seed.entries, usageBaseline: seed.usageBaseline, forkedFrom: forkFrom };
 }
 
+function withCoordinator({ coordinator, ...request }: AttachedRequest): LaunchRequest {
+  if (!coordinator) return request;
+  // These closures/membership have no recovery representation. A durable parent would appear
+  // resumable after restart while its memory children and dispatch receipts were gone.
+  if (request.durable) throw new Error("coordinator is memory-only; omit durable or pass false.");
+  if (!pickTools(request.tools).includes("codemode")) throw new Error("coordinator requires explicitly permitted codemode in tools.");
+  const plan = coordinatorSchema.parse(coordinator);
+  if (plan.saveDir !== undefined) checkSavePath(plan.saveDir, "coordinator.saveDir");
+  return { ...request, createTools: (worker) => createCoordinatorTools(plan, worker.cwd, { startBatch, waitForMany, getState }) };
+}
+
 const inline = async ({ attachments, ...request }: AttachedRequest): Promise<LaunchRequest> =>
-  ({ ...request, prompt: await withAttachments(request.prompt, attachments) });
+  ({ ...withCoordinator(request), prompt: await withAttachments(request.prompt, attachments) });
 
 export async function startExecution(request: AttachedRequest) {
   const w = await launch(await inline(await withFork(request)));
@@ -140,11 +152,12 @@ export interface BatchRequest extends Omit<LaunchRequest, "prompt" | "id" | "lab
   saveDir?: string | undefined;
   idPrefix?: string;
   forkFrom?: string;
+  coordinator?: CoordinatorOptions | undefined;
 }
 
 export async function startBatch({
   tasks, model, thinking, cwd, tools, extensions, durable, nativeMcp, mcpServers, forkFrom,
-  maxTurns, maxDurationMs, maxToolCalls, retentionDays, idPrefix, attachments, saveDir,
+  maxTurns, maxDurationMs, maxToolCalls, retentionDays, idPrefix, attachments, saveDir, coordinator,
 }: BatchRequest) {
   const width = Math.max(String(tasks.length).length, 2);
   const seeds = new Map<string, ReturnType<PiWorker["forkSeed"]>>();
@@ -169,6 +182,7 @@ export async function startBatch({
     retentionDays: t.retentionDays ?? ((t.durable ?? durable) === true ? retentionDays : undefined),
     id: t.id ?? (idPrefix ? `${idPrefix}-${String(i + 1).padStart(width, "0")}` : undefined),
     forkFrom: t.forkFrom ?? forkFrom,
+    coordinator: t.coordinator ?? coordinator,
   }, seeds));
 
   // Validate the batch up front. Every check here is cheap and deterministic, and a
@@ -186,6 +200,7 @@ export async function startBatch({
     }
     try {
       pickTools(t.tools);
+      withCoordinator(t);
       const taskCwd = await resolveDelegateCwd(t.cwd ?? cwd);
       validateNativeMcp(t, taskCwd);
       // The model the task will really run on, including Pi's own default, and its credentials:
@@ -216,7 +231,7 @@ export async function startBatch({
     limits: { maxTurns: number; maxDurationMs: number };
   }> = [];
   const failures: Array<{ index: number; id?: string; error: string }> = [];
-  const results = await launchBatch(merged.map(({ attachments: _inlined, ...task }) => task));
+  const results = await launchBatch(merged.map(({ attachments: _inlined, ...task }) => withCoordinator(task)));
   results.forEach((result, index) => {
     if (result.status === "fulfilled") {
       const w = result.value;

@@ -282,6 +282,8 @@ export function evictHistory(keep?: PiWorker): void {
 }
 
 export interface LaunchRequest extends NativeMcpOptions {
+  /** Runtime-only tool adapter injected by the core; never persisted with WorkerOptions. */
+  createTools?: (worker: PiWorker) => import("@earendil-works/pi-coding-agent").ToolDefinition[];
   prompt: string;
   /** Internal fork data prepared by the execution core, never accepted directly by MCP tools. */
   seedEntries?: FileEntry[];
@@ -335,6 +337,7 @@ function makeWorker(req: LaunchRequest & { cwd: string; tools: string[] }): PiWo
     // Fixed at creation, so every process applies the same retention whatever its own default.
     retentionDays: req.durable ? req.retentionDays ?? RETENTION_DAYS : undefined,
   });
+  worker.customTools = req.createTools?.(worker) ?? [];
   worker.saveTo = req.saveTo ?? (req.saveDir ? saveDirPath(req.saveDir, worker.id) : undefined);
   return worker;
 }

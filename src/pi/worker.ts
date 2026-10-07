@@ -10,6 +10,7 @@ import {
   type FileEntry,
   type InlineExtension,
   createCodemodeExtension,
+  type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { DurableJob, forgetOwnedJob, MemoryJob, releaseJob, type Checkpoint, type JobStore } from "../durable.js";
 import { AGENT_DIR, RETENTION_DAYS, STALL_MS } from "../config.js";
@@ -82,6 +83,8 @@ const FINALIZE_PROMPT =
  * Event ordering and completion rules: docs/worker-lifecycle.md.
  */
 export class PiWorker {
+  /** Runtime protocol adapters. Deliberately separate from persisted task options. */
+  customTools: ToolDefinition[] = [];
   readonly forkedFrom: string | undefined;
   readonly id: string;
   readonly label: string | undefined;
@@ -292,13 +295,14 @@ export class PiWorker {
       // compaction or transcript edits in one branch cannot mutate a sibling's history.
       sessionManager: SessionManager.inMemory(this.cwd, undefined, saved ? repairEntries(saved)
         : seedEntries ? structuredClone(seedEntries.filter((entry) => entry.type !== "session")) : undefined),
-      tools: this.toolNames,
+      tools: [...this.toolNames, ...this.customTools.map((tool) => tool.name)],
       // Pi 1.0.4 keeps MCP tools implicitly when no mcp__ name is selected. Delegates
       // require explicit tool grants, including MCP resource tools without that prefix.
       excludeTools: this.toolNames.some((name) => name.startsWith("mcp__")) ? undefined
         : ["mcp__*", "list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource"]
           .filter((name) => !this.toolNames.includes(name)),
-      customTools: this.toolNames.includes("grep") ? [defineTool(createProtectedGrepTool(this.cwd))] : [],
+      customTools: [...this.customTools,
+        ...(this.toolNames.includes("grep") ? [defineTool(createProtectedGrepTool(this.cwd))] : [])],
       resourceLoader,
     });
     this.session = session;
@@ -322,6 +326,12 @@ export class PiWorker {
 
     this.unsubscribe = session.subscribe((ev) => this.onEvent(ev));
     await session.bindExtensions({ uiContext: this.uiContext(), mode: "rpc" });
+    // SDK tools is both the registration allowlist and initial active set. Permit the injected
+    // codemode tools, then remove their direct declarations; scripts can still call them.
+    if (this.customTools.length) {
+      session.setActiveToolsByName(this.toolNames);
+      this.activeTools = session.getActiveToolNames();
+    }
     if (this.isStopped()) {
       this.dispose();
       await this.nativeClose;

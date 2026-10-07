@@ -11,6 +11,7 @@ import {
 import { DEFAULT_TOOLS, PERMITTED, READ_ONLY_TOOLS } from "../permissions.js";
 import { runExecution, startBatch, startExecution } from "../core.js";
 import { json, waitResult } from "./shared.js";
+import { coordinatorSchema } from "../coordinator.js";
 
 // Preserve the existing helper import path for consumers.
 export { bindCancellation } from "../core.js";
@@ -30,6 +31,7 @@ const ATTACHMENTS_HELP =
 const attachments = z.array(z.string()).optional();
 
 const spawnShape = {
+  coordinator: coordinatorSchema.optional().describe("Opt-in memory-only codemode orchestration of caller-planned read-only children. Children have independent budgets and count toward server concurrency. Cancelling the coordinator leaves children running; use ordinary abort to stop them."),
   prompt: z.string().describe("The task for the pi agent"),
   forkFrom: z.string().optional().describe("Start a new task from a settled session's history; budgets are fresh. Omitted cwd/model/tools inherit from the parent and are revalidated."),
   attachments: attachments.describe(ATTACHMENTS_HELP),
@@ -85,6 +87,7 @@ const spawnShape = {
 };
 
 const taskShape = z.object({
+  coordinator: spawnShape.coordinator,
   prompt: z.string().describe("The task for this delegate"),
   forkFrom: z.string().optional().describe("Overrides the batch forkFrom for this task"),
   attachments: attachments.describe("Overrides the batch `attachments` for this task alone; [] attaches nothing"),
@@ -133,6 +136,7 @@ export function registerSpawn(server: McpServer): void {
         "polling `sessions` or one `status` per delegate.",
       inputSchema: {
         tasks: z.array(taskShape).min(1).max(BATCH_MAX).describe(`1 to ${BATCH_MAX} delegates to start`),
+        coordinator: spawnShape.coordinator,
         forkFrom: z.string().optional().describe("Default settled parent session for this batch"),
         attachments: attachments.describe(`Default for every task in this batch. ${ATTACHMENTS_HELP}`),
         saveDir: z.string().optional().describe("Absolute directory: each finished task's final text is written to <sessionId>.md there"),

@@ -696,6 +696,8 @@ next bridge process resumes it.
 Batch tasks inherit `nativeMcp` and `mcpServers` unless overridden. To disable native
 MCP for one task in an enabled batch, pass `nativeMcp: false, mcpServers: []`.
 
+Recipes: [web research](research.md) · [parallel review and synthesis](workflows/review-and-synthesize.md) · [codemode coordination](workflows/codemode-coordinator.md).
+
 ## Configuration
 
 | Env var                       | Default          | Meaning                                                                  |
