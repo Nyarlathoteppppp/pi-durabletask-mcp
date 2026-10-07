@@ -123,7 +123,7 @@ function withCoordinator({ coordinator, ...request }: AttachedRequest): LaunchRe
   if (!pickTools(request.tools).includes("codemode")) throw new Error("coordinator requires explicitly permitted codemode in tools.");
   const plan = coordinatorSchema.parse(coordinator);
   if (plan.saveDir !== undefined) checkSavePath(plan.saveDir, "coordinator.saveDir");
-  return { ...request, createTools: (worker) => createCoordinatorTools(plan, worker.cwd, { startBatch, waitForMany, getState }) };
+  return { ...request, createTools: (worker) => createCoordinatorTools(plan, worker.cwd, { startBatch, waitForMany, getState, followUp }) };
 }
 
 const inline = async ({ attachments, ...request }: AttachedRequest): Promise<LaunchRequest> =>

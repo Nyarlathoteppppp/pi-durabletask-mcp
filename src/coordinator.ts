@@ -1,9 +1,12 @@
 /** Caller-planned, one-level codemode delegation. Lifecycle and admission stay in the core. */
 import { defineTool, type ToolDefinition, type AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
+import { join } from "node:path";
 import { BATCH_MAX, MAX_DURATION_MS, MAX_TURNS } from "./config.js";
 import { READ_ONLY_TOOLS } from "./permissions.js";
-import type { startBatch, waitForMany, getState } from "./core.js";
+import type { startBatch, waitForMany, getState, followUp } from "./core.js";
+import { withNextAction, batchNextAction } from "./tools/shared.js";
 
 const RESEARCH_TOOLS = ["mcp__exa__web_search_exa", "mcp__exa__web_fetch_exa"];
 
@@ -26,7 +29,7 @@ export const coordinatorSchema = z.object({
 }).strict();
 
 export type CoordinatorOptions = z.input<typeof coordinatorSchema>;
-type Operations = { startBatch: typeof startBatch; waitForMany: typeof waitForMany; getState: typeof getState };
+type Operations = { startBatch: typeof startBatch; waitForMany: typeof waitForMany; getState: typeof getState; followUp: typeof followUp };
 
 /** Runtime closures only: neither these definitions nor dispatch membership go into SQLite. */
 export function createCoordinatorTools(options: z.output<typeof coordinatorSchema>, cwd: string, core: Operations): ToolDefinition[] {
@@ -46,6 +49,11 @@ export function createCoordinatorTools(options: z.output<typeof coordinatorSchem
   const start = z.object({ taskIndexes: z.array(z.number().int().min(0).max(options.tasks.length - 1)).min(1).optional() });
   const wait = z.object({ sessionIds: z.array(z.string()).min(1).optional(), timeoutMs: z.number().int().min(0).max(55_000).default(30_000) });
   const get = z.object({ sessionId: z.string() });
+  const follow = z.object({
+    sessionId: z.string(), prompt: z.string(),
+    maxTurns: z.number().int().min(1).max(MAX_TURNS).optional(),
+    maxToolCalls: z.number().int().min(1).max(1000).optional(),
+  }).strict();
   return [
     defineTool({
       name: "delegate_start_batch", label: "Start planned delegates", exposure: "codemode",
@@ -89,18 +97,36 @@ export function createCoordinatorTools(options: z.output<typeof coordinatorSchem
       async execute(_id, params, signal) {
         const args = wait.parse(params);
         const batch = await core.waitForMany(own(args.sessionIds ?? [...owned]), { timeoutMs: args.timeoutMs, until: "all_settled", signal });
-        return result({ ...batch, sessions: batch.sessions.map(({ lastText: _report, ...s }) => s) });
+        const sessions = batch.sessions.map(({ lastText: _report, ...s }) => withNextAction(s));
+        return result({ ...batch, sessions, nextAction: batchNextAction(sessions) });
       },
     }),
     defineTool({
       name: "delegate_get", label: "Read delegate report", exposure: "codemode",
-      description: "Get one launched child's full report and state, including questions, failures and save diagnostics. store() reports within the SDK's storage limits; print only the conclusions/references the caller needs. Original savedTo files remain independent of summaries.",
+      description: "Get one launched child's full report, state and follow-up readiness (without renewing quotas), including questions, failures and save diagnostics. store() reports within the SDK's storage limits; print only the conclusions/references the caller needs. Original savedTo files remain independent of summaries.",
       annotations: { readOnlyHint: true }, parameters: schema(get), outputSchema,
       async execute(_id, params) {
         const { sessionId } = get.parse(params);
         own([sessionId]);
-        const { label, state, lastText, questions, error, termination, answerState, usage, savedTo, savedChars, saveError } = await core.getState(sessionId, true);
-        return result({ sessionId, label, state, lastText, questions, error, termination, answerState, usage, savedTo, savedChars, saveError });
+        const { label, state, lastText, questions, error, termination, answerState, usage, savedTo, savedChars, saveError,
+          remainingTurns, canFollowUp, followUpBlockedReason } = await core.getState(sessionId, true);
+        return result(withNextAction({ sessionId, label, state, lastText, questions, error, termination, answerState, usage,
+          savedTo, savedChars, saveError, remainingTurns, canFollowUp, followUpBlockedReason }));
+      },
+    }),
+    defineTool({
+      name: "delegate_follow_up", label: "Follow up a delegate", exposure: "codemode",
+      description: "Ask a finished child launched by this coordinator a targeted question, preserving its history/model/tools. " +
+        "Use only when a report or specific evidence is missing; no mandatory debate round. Omit budget fields to use remaining quotas; " +
+        "maxTurns/maxToolCalls renew only the supplied quota. Returns a start receipt: wait, then get the updated report. " +
+        "With plan saveDir, each follow-up saves to a new file, preserving previous reports. Cancelling the coordinator leaves children running.",
+      parameters: schema(follow), outputSchema,
+      async execute(_id, params, signal) {
+        signal?.throwIfAborted();
+        const { sessionId, prompt, maxTurns, maxToolCalls } = follow.parse(params);
+        own([sessionId]);
+        const saveTo = options.saveDir ? join(options.saveDir, `${sessionId}.follow-up-${randomUUID()}.md`) : undefined;
+        return result({ ...await core.followUp(sessionId, prompt, undefined, saveTo, { maxTurns, maxToolCalls }), nextAction: "wait" });
       },
     }),
   ];

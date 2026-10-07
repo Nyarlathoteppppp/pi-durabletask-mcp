@@ -67,6 +67,16 @@ The caller must still read a saved summary before accepting its conclusions.
 - A settled fact session reduces repeated setup, but reviewers may still re-read
   files. They should decide which checks need fresh evidence.
 
+## Targeted follow-up acceptance
+
+A later code-only trial used a fact session, DeepSeek/Flash branches and a Codex Sol
+coordinator. Review plus one directed follow-up and synthesis took 59 seconds (facts
+excluded), with seven coordinator script calls. Two originals and a separate follow-up
+report remained on disk. The caller did not rewrite any reports or issue the child follow-up.
+Flash claimed each script loses coordinator membership; source inspection and the
+multi-script integration test disproved that claim. We clarified that the example
+runs in the same coordinator session. This verifies workflow behavior, not review accuracy.
+
 An initial pilot used an outdated Pi-host model policy instead of the current Codex
 host policy and blocked a Codex child. Correcting the experiment configuration fixed
 that setup error; no production model policy or automatic fallback was changed.

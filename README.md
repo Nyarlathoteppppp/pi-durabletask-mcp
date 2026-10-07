@@ -40,7 +40,7 @@ To collect results, the main agent loops `wait` with `until: "settled"`. If Pi a
 - **Separate context:** Pi reads and searches; your main agent collects findings.
 - **Attachments and saved results:** pass a diff or notes by file path with `attachments`, and have long results written to a file with `saveTo`, instead of copying text through the main agent.
 - **Edit receipts:** `touchedFiles` and `editWriteCount` report paths and counts for successful edit/write calls in the current run; they are neither a git diff nor test verification.
-- **[Codemode coordination](docs/workflows/codemode-coordinator.md):** give Pi a task plan; it dispatches read-only children, retains full reports and synthesizes. Shared `forkFrom`, fresh budgets, optional Exa research; currently memory-only.
+- **[Codemode coordination](docs/workflows/codemode-coordinator.md):** give Pi a task plan; it dispatches read-only children, retains reports, asks targeted follow-ups and synthesizes. Shared `forkFrom`, fresh budgets, optional Exa research; currently memory-only.
 - **Multiple models:** `spawn_batch` starts tasks with individually selected models.
 - **Read once, ask many:** `forkFrom` creates independent tasks from a settled session, with fresh budgets and child-only `usage`. Batch `wait` includes `forkedFrom` to identify their parent.
 - **Live steering:** `steer` redirects work after the current tool call.

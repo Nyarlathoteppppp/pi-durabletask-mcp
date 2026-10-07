@@ -42,7 +42,16 @@ const http = createServer(async (req, res) => {
   };
   const answer = (content) => { emit({ role: "assistant", content }); emit({}, "stop"); };
   const scripts = request.messages.filter((m) => m.role === "assistant").flatMap((m) => m.tool_calls ?? []).filter((c) => c.function.name === "codemode").length;
-  if (prompt.includes("COORDINATOR")) {
+  if (prompt.includes("TARGET_COORDINATOR")) {
+    if (!scripts) tool("codemode", {code:'const b=await tools.delegate_start_batch({}); store("target.batch",b); return b;'});
+    else if (scripts === 1) tool("codemode", {code:'const b=load("target.batch"); await tools.delegate_wait({timeoutMs:1000}); const r=await tools.delegate_get({sessionId:b.sessionIds[0]}); store("target.original",r); const renewed=await tools.delegate_follow_up({sessionId:r.sessionId,prompt:"TARGET_ANSWER: give the final verified conclusion",maxTurns:2,maxToolCalls:1}); return {original:r,renewed};'});
+    else if (scripts === 2) tool("codemode", {code:'await tools.delegate_wait({timeoutMs:1000}); const old=load("target.original"); const updated=await tools.delegate_get({sessionId:old.sessionId}); return {original:old,updated};'});
+    else answer(JSON.stringify(request.messages.at(-1).content));
+  } else if (prompt.includes("TARGET_ANSWER")) {
+    answer("VERIFIED FOLLOW-UP ALPHA");
+  } else if (prompt.includes("CHILD_TARGET")) {
+    answer("INITIAL ALPHA");
+  } else if (prompt.includes("COORDINATOR")) {
     assert.ok(request.tools.every((t) => !t.function.name.startsWith("delegate_")), "child tools are script-only, not direct declarations");
     if (!scripts) tool("codemode", { code: 'try { await tools.delegate_get({ sessionId: "facts" }); return "BAD foreign read"; } catch(e) { const b = await tools.delegate_start_batch({}); store("batch", b); return {blocked: e.message, batch:b}; }' });
     else if (scripts === 1) tool("codemode", { code: 'const b=load("batch"); const w=await tools.delegate_wait({sessionIds:b.sessionIds,timeoutMs:1000}); const reports=await Promise.all(b.sessionIds.map(sessionId=>tools.delegate_get({sessionId}))); store("reports",reports); return {states:reports.map(r=>({id:r.sessionId,state:r.state,error:r.error})),wait:w};' });
@@ -126,6 +135,29 @@ try {
   assert.match(boss.lastText, /intentional child failure/, "a failed child stays visible");
   assert.equal(full.toolCalls.filter((t) => t.name === "delegate_start_batch").length, 2);
   assert.equal((await call("sessions", {})).sessions.filter((s) => ["a", "failure"].includes(s.label)).length, 2, "repeat default dispatch does not duplicate children");
+
+  await call("spawn", {cwd:dir,id:"target-boss",prompt:"TARGET_COORDINATOR",tools:["codemode"],maxTurns:6,
+    coordinator:{saveDir:join(dir,"target-reports"),forkFrom:"facts",tasks:[{prompt:"CHILD_TARGET",label:"target",tools:[],maxTurns:1}]} });
+  const targetBoss=await settle("target-boss");
+  assert.equal(targetBoss.state,"done",targetBoss.error);
+  const targetFull=await call("status",{sessionId:"target-boss",verbose:true});
+  const getReports=targetFull.toolCalls.filter(t=>t.name==="delegate_get").map(t=>JSON.parse(t.result));
+  assert.equal(getReports.length,2);
+  const [original,updated]=getReports;
+  assert.equal(original.remainingTurns,0);
+  assert.equal(original.canFollowUp,false);
+  assert.equal(original.nextAction,"finish");
+  assert.equal(updated.canFollowUp,true);
+  assert.equal(updated.remainingTurns,1);
+  assert.equal(updated.sessionId,original.sessionId,"follow-up continues the same child");
+  assert.notEqual(updated.savedTo,original.savedTo,"second report does not overwrite the first");
+  assert.match(await readFile(original.savedTo,"utf8"),/INITIAL ALPHA/);
+  assert.match(await readFile(updated.savedTo,"utf8"),/VERIFIED FOLLOW-UP ALPHA/);
+  const ordinary=await call("status",{sessionId:updated.sessionId,verbose:true});
+  assert.equal(ordinary.turns,2,"MCP and coordinator share cumulative state");
+  assert.equal(ordinary.toolCallCount,0);
+  assert.deepEqual(ordinary.activeTools,[],"follow-up does not escalate child grants");
+  assert.ok(targetFull.toolCalls.some(t=>t.name==="delegate_follow_up"&&t.state==="ok"));
 
   for (const args of [
     { durable: true, tools: ["codemode"], coordinator },

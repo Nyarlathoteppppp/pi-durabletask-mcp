@@ -18,10 +18,12 @@ console.log("  OK -> coordinator direct-core policy and defaults respect configu
 const { createCoordinatorTools } = await import("../dist/coordinator.js");
 const starting = Promise.withResolvers();
 let launches = 0;
+const followRequests = [];
 const tools = createCoordinatorTools(coordinatorSchema.parse({ tasks: [{ prompt: "a" }, { prompt: "b" }] }), process.cwd(), {
   startBatch: async () => { if (++launches === 1) return starting.promise; return { requested: 1, started: 1, sessionIds: ["child-a"], sessions: [{ index: 0, sessionId: "child-a" }] }; },
   waitForMany: async () => ({ settled: [], pending: [], continueIds: [], sessions: [] }),
-  getState: async () => { throw new Error("unexpected foreign lookup"); },
+  getState: async (sessionId) => ({ sessionId, state: "done", lastText: "report", questions: [], remainingTurns: 0, canFollowUp: false, followUpBlockedReason: "turn_budget_exhausted" }),
+  followUp: async (...args) => { followRequests.push(args); return {sessionId:args[0],state:"running"}; },
 });
 const started = tools[0].execute("first", { taskIndexes: [1, 0] });
 await assert.rejects(tools[0].execute("duplicate", { taskIndexes: [1] }), /already dispatched/);
@@ -35,6 +37,22 @@ await assert.rejects(tools[0].execute("rerun-started", { taskIndexes: [1] }), /a
 assert.equal(launches, 2);
 await assert.rejects(tools[1].execute("foreign-wait", { sessionIds: ["unrelated"] }), /not launched/);
 await assert.rejects(tools[2].execute("foreign-get", { sessionId: "unrelated" }), /not launched/);
+const follow = tools.find((t) => t.name === "delegate_follow_up");
+await assert.rejects(follow.execute("foreign-follow", { sessionId: "unrelated", prompt: "continue" }), /not launched/);
+for (const extra of [{maxTurns:6}, {maxToolCalls:1001}, {tools:["write"]}, {model:"other"}, {saveTo:"/tmp/overwrite.md"}]) {
+  await assert.rejects(follow.execute("invalid", {sessionId:"child-a",prompt:"continue",...extra}));
+}
+assert.equal(followRequests.length,0, "foreign IDs and invalid budgets/grants never reach the core");
+const aborted = AbortSignal.abort();
+await assert.rejects(follow.execute("cancelled", {sessionId:"child-a",prompt:"continue"},aborted), /abort/i);
+assert.equal(followRequests.length,0);
+const childState = (await tools[2].execute("own-get", {sessionId:"child-a"})).structuredContent;
+assert.equal(childState.nextAction,"finish");
+assert.equal(childState.remainingTurns,0);
+assert.equal(childState.followUpBlockedReason,"turn_budget_exhausted");
+assert.equal((await tools[1].execute("own-wait",{sessionIds:["child-a"]})).structuredContent.nextAction,"finish");
+assert.equal((await follow.execute("own-follow", {sessionId:"child-a",prompt:"verify one claim",maxTurns:3})).structuredContent.nextAction,"wait");
+assert.deepEqual(followRequests[0],["child-a","verify one claim",undefined,undefined,{maxTurns:3,maxToolCalls:undefined}]);
 let retries = 0;
 const retrying = createCoordinatorTools(plan, process.cwd(), {
   startBatch: async () => { if (++retries === 1) throw new Error("no capacity"); return { requested: 1, started: 1, sessionIds: ["retry"], sessions: [{ index: 0, sessionId: "retry" }] }; },

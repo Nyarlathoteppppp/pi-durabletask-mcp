@@ -40,7 +40,7 @@
 - **独立上下文：** Pi 读文件、搜代码，主代理收取结论。
 - **附件与结果文件：** 用 `attachments` 按路径传入 diff 或说明，用 `saveTo` 把较长的结论直接写进文件，不必经主模型来回搬运文本。
 - **写入回执：** `touchedFiles` 与 `editWriteCount` 提供本次运行成功 edit/write 的路径与次数，不代表 git diff，也不构成测试验证。
-- **[Codemode 编排](docs/workflows/codemode-coordinator.md)：** 给定分工，由 Pi 派发只读子任务、收取完整报告并汇总；可共享 `forkFrom`，各分支预算独立，可开启 Exa 联网研究，目前仅内存会话。
+- **[Codemode 编排](docs/workflows/codemode-coordinator.md)：** 给定分工，由 Pi 派发只读子任务、收取报告、定向追问并汇总；可共享 `forkFrom`，各分支预算独立，可开启 Exa 联网研究，目前仅内存会话。
 - **多模型批量任务：** `spawn_batch` 一次启动多个任务，每个任务可单独选模型。
 - **一次读取，多次提问：** `forkFrom` 从已结束会话派生独立任务，各分支有新预算，只报告自己的 `usage`；批量 `wait` 用 `forkedFrom` 标识父会话。
 - **实时调整：** `steer` 在当前工具调用结束后调整执行方向。

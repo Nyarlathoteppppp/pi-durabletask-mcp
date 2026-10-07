@@ -37,7 +37,7 @@ adds the configured Exa search/fetch pair; `research: false` per task overrides 
 plan. It is off when omitted. `tools: []` with research enabled means Exa-only,
 not no tools. Models choose when to browse; ask for source verification when needed.
 
-## Three tools inside codemode
+## Four tools inside codemode
 
 - `delegate_start_batch({taskIndexes?})`: zero-based indexes into the caller's plan;
   omission starts all remaining tasks. Each successfully started index is dispatched once; concurrent duplicate
@@ -47,14 +47,25 @@ not no tools. Models choose when to browse; ask for source verification when nee
   remains dispatched; inspect its result rather than starting duplicate work.
 - `delegate_wait({sessionIds?, timeoutMs?})`: all-settled wait, maximum 55 seconds;
   omission selects all launched children. Returns compact state, questions, errors,
-  termination and save diagnostics; it does not repeat report bodies.
+  termination, save diagnostics and `nextAction`; it does not repeat report bodies.
 - `delegate_get({sessionId})`: full report and result metadata for a child launched
-  by this coordinator, including text omitted from normal saved-result responses.
+  by this coordinator, including text omitted from normal saved-result responses,
+  `nextAction`, remaining turns and follow-up readiness.
+- `delegate_follow_up({sessionId, prompt, maxTurns?, maxToolCalls?})`: ask a finished
+  child for a missing conclusion or verify a specific claim. Same history, model and
+  tool grants; omitted budgets keep remaining quotas, explicit fields renew only
+  those quotas. Wait again, then refresh the report with `delegate_get`. When the
+  plan has `saveDir`, each follow-up saves a separate report there, preserving the
+  first report. There is no automatic follow-up or required debate round.
 
 For example, execute [coordinator.js](../examples/coordinator.js) through codemode.
 It stores full reports and prints only a receipt; a subsequent script can use
 `load("team.reports")` to synthesize without fetching reports again. Scripts are examples,
 not mandatory strategies. Stronger models can choose their own sequencing and analysis.
+For a specific unresolved claim, [coordinator-follow-up.js](../examples/coordinator-follow-up.js)
+shows a bounded follow-up that keeps both reports; run it in the same coordinator
+session and replace its placeholder with the claim. A new coordinator does not inherit
+the first one's dispatch membership or codemode storage.
 
 ## Boundaries
 

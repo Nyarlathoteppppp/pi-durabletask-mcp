@@ -66,9 +66,11 @@ Collect with `wait(until: "settled")`. Keep the final summary **and** every revi
 session ID, scope, state and `savedTo`; the main agent verifies important findings.
 If there are no usable reports, report incomplete coverage instead of inventing a synthesis.
 
-A specific unresolved claim can receive one targeted `follow_up`, if that reviewer has
-budget left; then refresh its report and summary. Otherwise fork into a new bounded
-verification task. This step is optional, not a required debate round.
+A specific unresolved claim can receive a targeted `follow_up`; use remaining quotas
+or pass `maxTurns`/`maxToolCalls` for fresh quotas, then refresh the report and summary.
+Fork when changing model/tools or needing an independent branch. This step is optional,
+not a required debate round. A [codemode coordinator](codemode-coordinator.md) can do
+this itself with `delegate_follow_up` on its own children.
 
 `durable: true` can retain individual delegates across restarts. This recipe itself is
 caller-driven; it does not make the entire workflow automatically recoverable.
