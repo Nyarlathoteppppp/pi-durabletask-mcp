@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- `follow_up` accepts explicit `maxTurns`/`maxToolCalls` to renew that budget for the new run; omitting them keeps the remaining quotas, counters and `usage` stay cumulative over the session, and durable recovery resumes from the run's budget baseline.
+- The codemode coordinator's `delegate_follow_up` follows up an owned child with the same history, model and tool grants; with a plan `saveDir` each follow-up writes a new report while keeping the original, and `delegate_wait`/`delegate_get` return `nextAction` and follow-up readiness.
+- README and the bundled skill describe the multi-provider Pi team entry points: a single delegate, `spawn_batch`, and the caller-planned coordinator.
+
 ## 0.7.9 (2026-10-07)
 
 - Caller-planned codemode coordination: dispatch bounded read-only children, share a settled facts session with `forkFrom`, retain original reports and synthesize without copying each report through the caller. Coordination is memory-only; cancelling its parent leaves children running within their budgets.

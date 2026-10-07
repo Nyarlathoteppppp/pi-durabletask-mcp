@@ -2,7 +2,7 @@
   "name": "pi-durabletask-mcp",
   "version": "0.7.9",
   "mcpName": "io.github.Nyarlathoteppppp/pi-durabletask-mcp",
-  "description": "Durable Pi Coding Agent tasks over MCP with background execution, steering, and crash recovery",
+  "description": "Multi-provider Pi agent teams over MCP with parallel delegates, coordination, steering, and optional crash recovery",
   "type": "module",
   "bin": {
     "pi-durabletask-mcp": "dist/index.js",

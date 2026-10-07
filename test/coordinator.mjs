@@ -63,6 +63,12 @@ const http = createServer(async (req, res) => {
   } else if (prompt.includes("CANCEL_PARENT")) {
     if (!scripts) tool("codemode", { code: 'const b=await tools.delegate_start_batch({}); store("batch",b); return b;' });
     else tool("codemode", { code: 'return await tools.delegate_wait({timeoutMs:55000});' });
+  } else if (prompt.includes("RECEIPT_RECOVERY")) {
+    if (!scripts) tool("codemode", { code: 'const b=await tools.delegate_start_batch({}); store("receipt",b); await tools.delegate_wait({timeoutMs:120000}); return "UNREACHABLE";' });
+    else if (scripts === 1) tool("codemode", { code: 'const rec=load("receipt"); const probe=await tools.delegate_wait({timeoutMs:0}); const s0=probe.sessions[0]; await tools.delegate_wait({sessionIds:[s0.sessionId],timeoutMs:1000}); const rep=await tools.delegate_get({sessionId:s0.sessionId}); const repeated=await tools.delegate_start_batch({}); return {storeDiscarded:rec===undefined,wait0Ok:probe.sessions?.length===1,reportOk:Boolean(rep.savedTo),started:repeated.started,sameId:repeated.sessionIds[0]===s0.sessionId};' });
+    else answer("RECEIPT RECOVERY OK");
+  } else if (prompt.includes("CHILD_RECEIPT")) {
+    answer("RECEIPT REPORT ALPHA");
   } else if (prompt.includes("CHILD_WEB")) {
     const names = (request.tools ?? []).map((t) => t.function.name);
     assert.ok(!names.includes("mcp__exa__effect") && !names.includes("codemode"), "research grants only exact search/fetch");
@@ -159,6 +165,26 @@ try {
   assert.deepEqual(ordinary.activeTools,[],"follow-up does not escalate child grants");
   assert.ok(targetFull.toolCalls.some(t=>t.name==="delegate_follow_up"&&t.state==="ok"));
 
+  await call("spawn", { cwd: dir, id: "recovery-boss", prompt: "RECEIPT_RECOVERY", tools: ["codemode"], maxTurns: 6,
+    coordinator: { saveDir: join(dir, "receipt-reports"), forkFrom: "facts", tasks: [{ prompt: "CHILD_RECEIPT", label: "receipt", tools: [], maxTurns: 1 }] } });
+  const recoveryBoss = await settle("recovery-boss");
+  assert.equal(recoveryBoss.state, "done", recoveryBoss.error);
+  assert.match(recoveryBoss.lastText, /RECEIPT RECOVERY OK/);
+  const recoveryFull = await call("status", { sessionId: "recovery-boss", verbose: true });
+  assert.ok(recoveryFull.toolCalls.some((t) => t.name === "codemode" && t.state === "error"), "failed codemode exists");
+  assert.ok(recoveryFull.toolCalls.some((t) => t.name === "delegate_wait" && t.state === "error" && JSON.parse(t.args).timeoutMs === 120000), "failed delegate_wait exists");
+  assert.ok(recoveryFull.toolCalls.some((t) => t.name === "delegate_wait" && t.state === "ok" && JSON.parse(t.args).timeoutMs === 0), "wait(0) succeeded");
+  const okCodemode = recoveryFull.toolCalls.find((t) => t.name === "codemode" && t.state === "ok");
+  assert.ok(okCodemode, "second codemode succeeded");
+  assert.match(okCodemode.result, /"storeDiscarded":\s*true/);
+  assert.match(okCodemode.result, /"started":\s*0/);
+  assert.match(okCodemode.result, /"sameId":\s*true/);
+  const receiptSessions = (await call("sessions", {})).sessions.filter((s) => s.label === "receipt");
+  assert.equal(receiptSessions.length, 1, "only 1 child session for receipt task");
+  const receiptChild = await call("status", { sessionId: receiptSessions[0].sessionId, verbose: true });
+  assert.equal(receiptChild.state, "done");
+  assert.match(await readFile(receiptChild.savedTo, "utf8"), /RECEIPT REPORT ALPHA/);
+
   for (const args of [
     { durable: true, tools: ["codemode"], coordinator },
     { tools: ["read"], coordinator },
@@ -199,7 +225,7 @@ try {
   await call("abort", { sessionId: "cancel-boss" });
   assert.equal((await call("status", { sessionId: slow.sessionId })).state, "running", "cancellation is observational, not cascading");
   await call("abort", { sessionId: slow.sessionId });
-  console.log("  OK -> codemode coordinator: shared core state, fork evidence, compact waits/full stored reports, failures, capacity and cancellation");
+  console.log("  OK -> codemode coordinator: shared core state, fork evidence, compact waits/full stored reports, failed-script receipt recovery, capacity and cancellation");
 } finally {
   await client.close().catch(() => {});
   for (const socket of sockets) socket.destroy();
