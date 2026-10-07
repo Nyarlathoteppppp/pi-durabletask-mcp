@@ -340,8 +340,9 @@ export function sweep(now = Date.now()): string[] {
 export function forgetOwnedJob(key: string): void {
   if (!owns(key)) return;
   db().prepare("DELETE FROM jobs WHERE key = ?").run(key);
-  rmSync(jobDir(key), { recursive: true, force: true });
-  releaseOwnership(key);
+  // The row is gone even if removal fails. Release so the orphan sweep can retry.
+  try { rmSync(jobDir(key), { recursive: true, force: true }); }
+  finally { releaseOwnership(key); }
 }
 
 export class DurableJob implements JobStore {

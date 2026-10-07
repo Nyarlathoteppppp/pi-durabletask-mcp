@@ -8,8 +8,9 @@ import { DatabaseSync } from "node:sqlite";
  * or hung owner keeps its lock and is never taken over; kill it to release its jobs.
  *
  * Lock files are touched only here, only through node:sqlite. Closing any other descriptor of
- * a lock file in this process would drop the process's POSIX locks on it. Lock files are never
- * deleted: unlinking an open lock lets the next opener lock a new inode at the same path.
+ * a lock file in this process would drop the process's POSIX locks on it. Live job lock files
+ * are never deleted: unlinking an open lock lets the next opener lock a new inode at the same
+ * path. Only catalog-free tombstones are retired by removeTombstones below.
  * STATE_DIR must be on a local filesystem; network filesystems may not honour these locks.
  */
 const held = new Map<string, DatabaseSync>();
