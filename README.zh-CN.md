@@ -8,7 +8,7 @@
 
 # pi-durabletask-mcp
 
-让 Claude Code、Codex 或其他 MCP 客户端把任务交给 [Pi Coding Agent](https://pi.dev)，在独立上下文中完成。
+让 Claude Code、Codex 或其他 MCP 客户端通过 [Pi Coding Agent](https://pi.dev) 协同调用不同 provider 的 AI：分工执行、讨论方案、集中汇总。单个任务交给一个代理，一组任务交给一个团队。
 
 [![npm](https://img.shields.io/npm/v/pi-durabletask-mcp)](https://www.npmjs.com/package/pi-durabletask-mcp)
 [![CI](https://github.com/Nyarlathoteppppp/pi-durabletask-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Nyarlathoteppppp/pi-durabletask-mcp/actions/workflows/ci.yml)
@@ -22,56 +22,39 @@
 ## 用法示意
 
 ```text
-你：让 Pi 审查认证代码，找出遗漏的权限检查，不要改文件。
-    显式设置 durable: true，之后要换窗口继续。
-  → spawn，传入仓库绝对路径 cwd 和 durable: true
-执行中：重点看租户隔离，先别管代码风格。
-  → steer
-审查结束后：针对最严重的问题，建议一个回归测试。
-  → follow_up，沿用同一会话
-换窗口前：保存发现的问题和下一步 → handoff save
-新窗口：读取这个仓库的交接笔记 → handoff read，按 resumeHint 操作
+你 → Claude / Codex / 其他 MCP 主模型：
+  “让 Pi 团队审查这次认证改动。分配一个代理检查权限，一个用 Exa 联网查证，
+   一个脑暴测试方案。按任务选择可用的 provider/model ID，不要改文件。
+   对冲突的说法定向追问，汇总证据、分歧与遗漏，保留完整报告供按引用查阅。”
+主模型 → Pi 指挥/汇总模型（调用方给出任务分工）
+           ├─ 为代码审查选择的 provider/model
+           ├─ 为联网研究选择的 provider/model（显式开启 Exa）
+           └─ 为测试脑暴选择的 provider/model
+         → 定向追问 → 汇总结论 + 原始报告引用
 ```
 
-收取结果时，主代理循环调用 `wait`，设置 `until: "settled"`。如果 Pi 提问，先用问题 ID 调用 `answer`，再继续等待。
+单个任务也可直接交给普通 delegate；显式授权工具后，还能编辑文件、执行命令。
 
 ## 能做什么
 
-- **独立上下文：** Pi 读文件、搜代码，主代理收取结论。
-- **附件与结果文件：** 用 `attachments` 按路径传入 diff 或说明，用 `saveTo` 把较长的结论直接写进文件，不必经主模型来回搬运文本。
-- **写入回执：** `touchedFiles` 与 `editWriteCount` 提供本次运行成功 edit/write 的路径与次数，不代表 git diff，也不构成测试验证。
-- **[Codemode 编排](docs/workflows/codemode-coordinator.md)：** 给定分工，由 Pi 派发只读子任务、收取报告、定向追问并汇总；可共享 `forkFrom`，各分支预算独立，可开启 Exa 联网研究，目前仅内存会话。
-- **多模型批量任务：** `spawn_batch` 一次启动多个任务，每个任务可单独选模型。
-- **一次读取，多次提问：** `forkFrom` 从已结束会话派生独立任务，各分支有新预算，只报告自己的 `usage`；批量 `wait` 用 `forkedFrom` 标识父会话。
-- **实时调整：** `steer` 在当前工具调用结束后调整执行方向。
-- **存活信号：** 运行中的委托返回 `idleMs` 和 `phase`，分得清是在慢慢思考还是请求挂住了；可选用 `PI_DELEGATE_STALL_MS` 自动结束沉默的请求。
-- **继续追问：** `follow_up` 保留上下文，可按需申请额外的轮数或工具调用额度。
-- **末轮收尾：** 最后一轮禁用工具，要求模型遵循指定回答格式和长度，保留重要发现与限制；结果附带 token 用量和费用。
-- **按需恢复：** 显式传入 `durable: true`，将检查点存入 SQLite。
-- **跨窗口交接：** 用 `handoff` 给下个 Claude/Codex 窗口留笔记。
-- **原生 MCP：** `nativeMcp` 显式选择服务和工具权限；第三方扩展单独开启。
+- **跨 provider 的代理团队：** 用 `models` 为不同角色选模型；单任务交给一个代理，多任务用 `spawn_batch` 并行派发。
+- **[指挥者负责派发和汇总](docs/workflows/codemode-coordinator.md)：** 给出任务分工，由 Pi 收取报告、定向追问、汇总结论，保留来源与分歧。Codemode 支持循环、条件和并行调用。
+- **读一次，探索多个方向：** `forkFrom` 让独立分支沿用已结束会话的上下文，每个分支获得新预算。
+- **讨论与迭代：** 执行中用 `steer` 调整方向，结束后用 `follow_up` 继续讨论，并按需补充预算。
+- **报告不用手动搬运：** `attachments` 按路径传材料，`saveTo` 保存结果；主模型收取摘要和原始报告引用。
+- **授权实现：** 给普通代理开放编辑或命令工具，结果包含成功修改的文件路径、token 用量和费用。
+- **[联网研究](docs/research.md)与原生 MCP：** 选择服务和工具权限，可开启 Exa 搜索与抓取；Pi 第三方扩展单独配置。
+- **进度与恢复：** 用 `idleMs` 和 `phase` 看执行状态，以轮数、工具次数和时间限制任务；可选 `durable: true` 为单会话保存 SQLite 检查点，`handoff` 帮助跨窗口接手。
 
-<details>
-<summary>示例：从一次审查分出两个独立问题</summary>
-
-等 `explore-01` 结束后，调用 `spawn_batch`：
-
-```json
-{
-  "forkFrom": "explore-01",
-  "tasks": [{ "prompt": "检查权限" }, { "prompt": "检查校验" }]
-}
-```
-
-省略 `cwd`、`model`、`tools` 时继承父会话并重新校验，用批量 `wait` 收取结果。历史仍会发送给供应商，缓存命中或 token 节省不作保证。
-
-</details>
+目前指挥者团队为一层编排、内存会话，子代理只读，可开启 Exa 联网研究。团队模式需授权 `codemode` 并传入 `tools: ["codemode"]`；[示例](docs/workflows/codemode-coordinator.md)包含分工与配置方法。
 
 ## 快速开始
 
 **需要 macOS 或 Linux、Node.js 22.19+ 和全局安装的 Pi。** CI 覆盖 Pi **1.0.0 和 1.0.4**；不支持 Windows。模型调用使用你自己的供应商认证和额度。
 
 ### 1 · 安装
+
+上面的团队编排流程已在 **GitHub main**，请用下方的源码安装方式；当前 npm 版本为 **0.7.8**。
 
 已经配置好 Pi？直接安装桥接服务：
 

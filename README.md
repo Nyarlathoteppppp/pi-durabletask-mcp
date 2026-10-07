@@ -8,7 +8,7 @@
 
 # pi-durabletask-mcp
 
-Delegate work from Claude Code, Codex, or another MCP client to [Pi Coding Agent](https://pi.dev), in its own context.
+Multi-model agent teams for Claude Code, Codex, and other MCP clients, powered by [Pi Coding Agent](https://pi.dev). Delegate work, compare ideas and collect results across providers—in one agent or a coordinated team.
 
 [![npm](https://img.shields.io/npm/v/pi-durabletask-mcp)](https://www.npmjs.com/package/pi-durabletask-mcp)
 [![CI](https://github.com/Nyarlathoteppppp/pi-durabletask-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Nyarlathoteppppp/pi-durabletask-mcp/actions/workflows/ci.yml)
@@ -22,56 +22,41 @@ Delegate work from Claude Code, Codex, or another MCP client to [Pi Coding Agent
 ## Example workflow
 
 ```text
-You: Use Pi to review authentication for missing permission checks. Don't edit files.
-     Explicitly set durable: true so we can continue in another window.
-  → spawn with the absolute repo cwd and durable: true
-While running: Focus on tenant isolation; skip style issues.
-  → steer
-After the review: Suggest a regression test for the most serious finding.
-  → follow_up in the same session
-Switching windows: Save findings and next steps → handoff save
-New window: Read this repo's handoff → handoff read; follow resumeHint
+You → Claude / Codex / another MCP main model:
+  “Use a Pi team to review this authentication change. Assign one agent to
+   permission checks, one to Exa source research, and one to brainstorm tests.
+   Choose available provider/model IDs per task. Don't edit files.
+   Ask targeted follow-ups about conflicting claims; summarize evidence,
+   disagreements and gaps, keeping full reports available by reference.”
+Main model → Pi coordinator/synthesizer (caller supplies the task assignments)
+               ├─ provider/model selected for code review
+               ├─ provider/model selected for web research (opt-in Exa)
+               └─ provider/model selected for test brainstorming
+             → targeted follow-ups → synthesis + original report references
 ```
 
-To collect results, the main agent loops `wait` with `until: "settled"`. If Pi asks a question, use `answer` with the question ID, then wait again.
+For a single task, use an ordinary delegate instead; explicitly authorized tools can also edit files and execute commands.
 
 ## What you can do
 
-- **Separate context:** Pi reads and searches; your main agent collects findings.
-- **Attachments and saved results:** pass a diff or notes by file path with `attachments`, and have long results written to a file with `saveTo`, instead of copying text through the main agent.
-- **Edit receipts:** `touchedFiles` and `editWriteCount` report paths and counts for successful edit/write calls in the current run; they are neither a git diff nor test verification.
-- **[Codemode coordination](docs/workflows/codemode-coordinator.md):** give Pi a task plan; it dispatches read-only children, retains reports, asks targeted follow-ups and synthesizes. Shared `forkFrom`, fresh budgets, optional Exa research; currently memory-only.
-- **Multiple models:** `spawn_batch` starts tasks with individually selected models.
-- **Read once, ask many:** `forkFrom` creates independent tasks from a settled session, with fresh budgets and child-only `usage`. Batch `wait` includes `forkedFrom` to identify their parent.
-- **Live steering:** `steer` redirects work after the current tool call.
-- **Liveness:** running delegates report `idleMs` and `phase`, so slow reasoning can be told from a hung request; `PI_DELEGATE_STALL_MS` optionally ends a silent request.
-- **Follow-ups:** `follow_up` keeps context and can request additional turn or tool-call budget.
-- **Final-turn wrap-up:** tools are disabled on the last turn; the model is asked to follow your answer format and length while preserving important findings and limitations. Results include token usage and cost.
-- **Recovery:** explicit `durable: true` saves checkpoints to SQLite.
-- **Handoff:** leave a note for the next Claude/Codex window.
-- **Native MCP:** `nativeMcp` explicitly selects servers and tool permissions; third-party extensions are enabled separately.
+- **Teams across providers:** select a model for each role with `models`; use a single delegate or run several with `spawn_batch`.
+- **[A coordinator that does the legwork](docs/workflows/codemode-coordinator.md):** supply a task plan; Pi dispatches agents, collects reports, asks targeted questions and synthesizes findings with their sources and disagreements. Codemode supports loops, conditions and parallel calls.
+- **Read once, explore many directions:** `forkFrom` gives independent branches the same settled context, with fresh budgets for each branch.
+- **Discuss and refine:** redirect live work with `steer`, or keep the conversation going with `follow_up` and optional fresh budgets.
+- **Reports without manual copying:** pass files through `attachments`, save results with `saveTo`, and receive a summary alongside references to the originals.
+- **Authorized implementation:** grant ordinary delegates editing or command tools; results report successful changed-file paths, token usage and cost.
+- **[Web research](docs/research.md) and native MCP:** connect selected servers and tool permissions, including opt-in Exa search/fetch. Third-party Pi extensions are configured separately.
+- **Progress and recovery:** inspect `idleMs` and `phase`; bound runs with turn, tool and time budgets. Optional `durable: true` checkpoints individual sessions to SQLite, and `handoff` helps another window continue.
 
-<details>
-<summary>Example: fork one review into two independent questions</summary>
-
-Once `explore-01` has finished, call `spawn_batch`:
-
-```json
-{
-  "forkFrom": "explore-01",
-  "tasks": [{ "prompt": "Check authz." }, { "prompt": "Check validation." }]
-}
-```
-
-Omitted `cwd`, `model`, and `tools` inherit from the parent and are revalidated. Collect results with batch `wait`. The inherited history is still sent to the provider, so cache or token savings are not guaranteed.
-
-</details>
+Coordinator teams currently use one level of memory-only, read-only children, with optional Exa research. Team mode requires permitted `codemode` and `tools: ["codemode"]`; [the example](docs/workflows/codemode-coordinator.md) shows the task plan and configuration.
 
 ## Quick start
 
 **Requires macOS or Linux, Node.js 22.19+ and global Pi.** CI-tested with Pi **1.0.0 and 1.0.4**; Windows is not supported. Model calls use your own provider credentials and quota.
 
 ### 1 · Install
+
+The team workflow above is on **GitHub main**; use the source-install option below. The current npm release is **0.7.8**.
 
 Already configured Pi? Install the bridge:
 
