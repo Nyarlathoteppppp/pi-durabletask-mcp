@@ -59,7 +59,7 @@ use `spawn_batch` for parallel reports without synthesis.
 | **Refine & Report** | **Adjust the direction:** `steer` live work, `follow_up` finished work, and renew budgets as needed. **Pass materials, keep results:** `attachments` and `saveTo`, with summaries, original report references, an opt-in [team index](docs/workflows/codemode-coordinator.md#saved-team-index), token usage and cost. |
 | **Permissions & Recovery** | **Authorized implementation:** ordinary delegates can edit or run commands and report successful changed-file paths. **Visible progress:** `idleMs`, `phase` and execution budgets. **Optional single-session recovery:** SQLite checkpoints and cross-window `handoff`. |
 
-Teams support Codemode loops, conditions and parallel calls. They currently use one level of memory-only, read-only children, with opt-in Exa; permit `codemode` on the server (selected automatically when team tools are omitted). For a single task, use an ordinary delegate.
+Teams support Codemode loops, conditions and parallel calls, with [per-member GitHub, Serena, browser and Exa tools](docs/workflows/codemode-coordinator.md#member-mcp-tools). They use one level of memory-only children for read-only tasks; permit `codemode` on the server (selected automatically when team tools are omitted). For a single task, use an ordinary delegate.
 
 ---
 
@@ -69,7 +69,7 @@ Teams support Codemode loops, conditions and parallel calls. They currently use 
 
 ### 1 · Install
 
-The team workflow above is on **GitHub main**; use the source-install option below. The current npm release is **0.7.8**.
+The team workflow above is in **GitHub v0.7.11**; use the source-install option below. The current npm release is **0.7.8**.
 
 Already configured Pi? Install the bridge:
 

@@ -41,6 +41,47 @@ plan. Configure [Exa](../research.md) and grant both exact names in the server a
 It is off when omitted. `tools: []` with research enabled means Exa-only,
 not no tools. Models choose when to browse; ask for source verification when needed.
 
+## Member MCP tools
+
+Each member can select configured `github`, `serena`, `browser` or `exa` servers and
+their reviewed operations. Grant the exact tool names in the host's
+`PI_DELEGATE_ALLOW_TOOLS`, using the [optional setup](../optional-tools.md). For example,
+add these members to `coordinator.tasks`:
+
+```json
+[
+  {
+    "label": "ci",
+    "prompt": "Check OWNER/REPO's CI failures and cite the relevant logs.",
+    "mcpServers": ["github"],
+    "tools": ["mcp__github__actions_list", "mcp__github__get_job_logs"]
+  },
+  {
+    "label": "symbols",
+    "prompt": "Find recovery callers in this project with Serena.",
+    "mcpServers": ["serena"],
+    "tools": ["mcp__serena__initial_instructions", "mcp__serena__find_symbol", "mcp__serena__find_referencing_symbols"]
+  }
+]
+```
+
+`mcpServers` selects connections, never all tools on a server. Omitted `tools` still
+means `read/grep/find/ls`; explicit lists replace those defaults. Each MCP tool must
+have its server selected. Set `exposure: "direct"` on these servers in Pi's `mcp.json`
+(or a direct per-tool override): children do not receive `codemode`/`tool_search`
+to discover deferred tools. `research: true` unions in Exa's server and exact search/fetch
+pair without duplicates; a member can use `research: false` to disable that shorthand.
+Parent/fact-session server selections are not inherited, and follow-ups retain the
+member's exact grants.
+
+Allowed operations match the GitHub/Serena lists in the optional setup. Browser
+members can use `agent_browser_open`, `agent_browser_snapshot`, `agent_browser_scroll`,
+`agent_browser_get_text`, `agent_browser_get_url` and `agent_browser_close` under
+`mcp__browser__`; form entry, clicks and JavaScript execution are excluded. Browser
+navigation and Serena project activation can change session state or create caches;
+this is a read-only task workflow, not an OS sandbox. Use configured servers you trust;
+external MCP tools are not wrapped by Pi's built-in secret-file guard.
+
 ## Four tools inside codemode
 
 - `delegate_start_batch({taskIndexes?})`: zero-based indexes into the caller's plan;
@@ -89,8 +130,8 @@ for no index IO. This is a report snapshot, not a runtime checkpoint.
 ## Boundaries
 
 - **Memory-only, one level, read-only child tools**: built-ins (`read`, `grep`,
-  `find`, `ls`, or `[]`) plus optional Exa search/fetch. Research selects only `exa`
-  and the exact authorized tool pair; other servers/tools are not inherited. Child
+  `find`, `ls`, or `[]`) plus explicitly selected, reviewed GitHub/Serena/browser/Exa
+  tools. Research selects `exa` and its exact authorized pair; servers/tools are not inherited. Child
   third-party extensions/coordinator are off; codemode is not implicitly granted.
   `durable: true` with `coordinator` is rejected: dispatch membership is not persisted,
   so this does not promise restartable group execution.

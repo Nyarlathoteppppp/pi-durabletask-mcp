@@ -61,7 +61,7 @@
 | **追问与报告** | **及时调整**：执行中 `steer`，结束后 `follow_up`，按需补充预算；**材料与成果**：`attachments` 传文件，`saveTo` 存报告；收取摘要、原文引用、可选[团队报告索引](docs/workflows/codemode-coordinator.md#saved-team-index)、token 用量与费用。 |
 | **授权与恢复** | **普通代理可实现**：显式开放编辑或命令工具，返回成功修改的文件路径；**过程可见**：`idleMs`、`phase` 和执行预算；**单任务可恢复**：可选 SQLite 检查点与跨窗口 `handoff`。 |
 
-团队支持 Codemode 循环、条件和并行调用；目前为一层编排、内存会话，子代理只读，可显式开启 Exa。服务端需授权 `codemode`，团队省略工具时会自动选择它。单个任务也可直接交给普通 delegate。
+团队支持 Codemode 循环、条件和并行调用；[每个成员可分别选择 GitHub、Serena、浏览器和 Exa 工具](docs/workflows/codemode-coordinator.md#member-mcp-tools)。目前为一层编排、内存会话，用于只读任务。服务端需授权 `codemode`，团队省略工具时会自动选择它。单个任务也可直接交给普通 delegate。
 
 ---
 
@@ -71,7 +71,7 @@
 
 ### 1 · 安装
 
-上面的团队编排流程已在 **GitHub main**，请用下方的源码安装方式；当前 npm 版本为 **0.7.8**。
+上面的团队编排流程已在 **GitHub v0.7.11**，请用下方的源码安装方式；当前 npm 版本为 **0.7.8**。
 
 已经配置好 Pi？直接安装桥接服务：
 

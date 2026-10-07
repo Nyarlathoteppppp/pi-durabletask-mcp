@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.11 (2026-10-07)
+
+- Team members can select reviewed GitHub, Serena, browser and Exa tools through per-task `mcpServers` and exact `tools`. Host permissions still apply; server selection grants no tools by itself. Browser members can navigate/read/scroll/close, but cannot click, fill forms or execute JavaScript.
+- `research: true` remains the Exa shortcut and merges without duplicate servers/tools. Forks and follow-ups preserve each member's grants without inheriting the parent's permissions.
+- Coordinator requests can omit parent `prompt` and `tools` for the approved-plan strategy and `codemode`. The default synthesis stays concise while retaining material findings, disagreements, failed coverage and original report references.
+- Optional `coordinator.saveDir` adds a unique, best-effort team report index with original/follow-up report references; it does not restore team execution. Optional integration setup, bilingual READMEs and the delegation skill document these workflows.
+
 ## 0.7.10 (2026-10-07)
 
 - Pi's automatic retries of a failed provider request no longer spend turns: a request that failed twice before succeeding used one turn, not three, so a provider outage no longer shrinks the budget left for `follow_up`.

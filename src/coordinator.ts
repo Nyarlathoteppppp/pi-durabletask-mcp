@@ -10,6 +10,19 @@ import { withNextAction, batchNextAction } from "./tools/shared.js";
 import { createCoordinatorReport } from "./coordinator-report.js";
 
 const RESEARCH_TOOLS = ["mcp__exa__web_search_exa", "mcp__exa__web_fetch_exa"];
+// Exact reviewed operations, not a name-pattern or a server's self-reported hint.
+// The host's pickTools policy still applies. Browser navigation is allowed;
+// clicks, form entry and JS execution are not part of the team read-only workflow.
+const TEAM_MCP_TOOLS = {
+  github: ["get_file_contents", "search_code", "search_repositories", "issue_read", "pull_request_read", "actions_list", "actions_get", "get_job_logs"],
+  serena: ["get_symbols_overview", "find_symbol", "find_referencing_symbols", "activate_project", "initial_instructions"],
+  browser: ["agent_browser_open", "agent_browser_snapshot", "agent_browser_scroll", "agent_browser_get_text", "agent_browser_get_url", "agent_browser_close"],
+  exa: ["web_search_exa", "web_fetch_exa"],
+};
+const teamMcpServers = ["github", "serena", "browser", "exa"] as const;
+const toolServers = new Map<string, string>(Object.entries(TEAM_MCP_TOOLS).flatMap(([server, tools]) =>
+  tools.map((tool) => [`mcp__${server}__${tool}`, server] as const)));
+const teamTools = [...READ_ONLY_TOOLS, ...toolServers.keys()];
 
 /** Default only when the caller omits the coordinator prompt; custom strategies stay intact. */
 export const COORDINATOR_PROMPT =
@@ -30,7 +43,8 @@ export const coordinatorSchema = z.object({
     label: z.string().optional(),
     model: z.string().optional(),
     thinking: z.enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"]).optional(),
-    tools: z.array(z.enum(["read", "grep", "find", "ls"])).optional(),
+    tools: z.array(z.enum(teamTools)).optional().describe("Exact read-only built-in or reviewed MCP tools; defaults to read/grep/find/ls. MCP tools also require their server in mcpServers and host permission."),
+    mcpServers: z.array(z.enum(teamMcpServers)).optional().describe("Configured servers for this member only; selects connections, not tool grants. Not inherited from a fork or the coordinator."),
     research: z.boolean().optional().describe("Override the plan's web research setting; enables only configured Exa search/fetch, subject to server tool permissions."),
     forkFrom: z.string().optional(),
     maxTurns: z.number().int().min(1).max(MAX_TURNS).default(Math.min(10, MAX_TURNS)),
@@ -40,7 +54,16 @@ export const coordinatorSchema = z.object({
   saveDir: z.string().optional(),
   forkFrom: z.string().optional(),
   research: z.boolean().optional().describe("Enable configured Exa search/fetch for children; requires the two exact tools in PI_DELEGATE_ALLOW_TOOLS. Off when omitted."),
-}).strict();
+}).strict().superRefine((plan, ctx) => {
+  plan.tasks.forEach((task, i) => {
+    const servers = new Set([...(task.mcpServers ?? []), ...((task.research ?? plan.research) ? ["exa"] : [])]);
+    task.tools?.forEach((tool, j) => {
+      const server = toolServers.get(tool);
+      if (server && !servers.has(server)) ctx.addIssue({ code: "custom", path: ["tasks", i, "tools", j],
+        message: `${tool} requires mcpServers to include ${server}.` });
+    });
+  });
+});
 
 export type CoordinatorOptions = z.input<typeof coordinatorSchema>;
 type Operations = { startBatch: typeof startBatch; waitForMany: typeof waitForMany; getState: typeof getState; followUp: typeof followUp };
@@ -92,9 +115,10 @@ export function createCoordinatorTools(options: z.output<typeof coordinatorSchem
         let batch: Awaited<ReturnType<Operations["startBatch"]>>;
         try {
           const launched = core.startBatch({ cwd, saveDir: options.saveDir, forkFrom: options.forkFrom, tasks: indexes.map((i) => {
-            const { research = options.research ?? false, ...task } = options.tasks[i]!;
-            return { ...task, tools: [...(task.tools ?? READ_ONLY_TOOLS), ...(research ? RESEARCH_TOOLS : [])],
-              durable: false, extensions: false, nativeMcp: research, mcpServers: research ? ["exa"] : [] };
+            const { research = options.research ?? false, mcpServers = [], ...task } = options.tasks[i]!;
+            const servers = [...new Set([...mcpServers, ...(research ? ["exa"] : [])])];
+            return { ...task, tools: [...new Set([...(task.tools ?? READ_ONLY_TOOLS), ...(research ? RESEARCH_TOOLS : [])])],
+              durable: false, extensions: false, nativeMcp: servers.length > 0, mcpServers: servers };
           }) })
             // Owned as soon as started, so a wait tracking this dispatch sees its children.
             .then((started) => {

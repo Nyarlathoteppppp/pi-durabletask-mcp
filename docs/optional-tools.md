@@ -1,4 +1,4 @@
-# Optional tools for ordinary Pi delegates
+# Optional tools for Pi delegates and teams
 
 These integrations are local choices, not bridge dependencies or default delegate tools.
 Install the upstream server you need, add it to Pi's `mcp.json`, and grant its **exact**
@@ -79,7 +79,12 @@ A killed launcher may require manual browser cleanup.
 ## Team boundary
 
 These optional servers work with ordinary `spawn` / `run` / `spawn_batch` delegates.
-Coordinator children currently allow only read-only built-ins plus optional Exa;
-these integrations are **not** implicitly inherited by a team. Keep original reports
+Coordinator children can explicitly select these servers with per-task `mcpServers`
+and exact `tools`; see the [member example](workflows/codemode-coordinator.md#member-mcp-tools).
+Set their server/tool exposure to `direct` for team members.
+Supported GitHub/Serena operations are the selected tools listed above. Team browser
+tools are limited to open, snapshot, scroll, text, URL and close; click, fill and eval
+remain unavailable to team children even when the host grants them to ordinary delegates.
+Servers and permissions are **not** implicitly inherited by a team. Keep original reports
 and the optional [team report index](workflows/codemode-coordinator.md#saved-team-index)
 for reviewing outcomes across windows.

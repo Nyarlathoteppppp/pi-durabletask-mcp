@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
-if (process.argv[2] === "exa-fixture") {
+if (process.argv[2] === "exa-fixture" || process.argv[2] === "member-fixture") {
   const { McpServer } = await import("@modelcontextprotocol/sdk/server/mcp.js");
   const { StdioServerTransport } = await import("@modelcontextprotocol/sdk/server/stdio.js");
   const { z } = await import("zod");
@@ -14,6 +14,11 @@ if (process.argv[2] === "exa-fixture") {
   fixture.registerTool("web_search_exa", { inputSchema: { query: z.string(), objective: z.string() }, annotations: { readOnlyHint: true } }, async () => ({ content: [{ type: "text", text: "SEARCH PRIMARY SOURCE" }] }));
   fixture.registerTool("web_fetch_exa", { inputSchema: { urls: z.array(z.string()) }, annotations: { readOnlyHint: true } }, async () => ({ content: [{ type: "text", text: "FETCH OFFICIAL EVIDENCE" }] }));
   fixture.registerTool("effect", { inputSchema: {} }, async () => { throw new Error("unauthorized effect must never execute"); });
+  if (process.argv[2] === "member-fixture") {
+    for (const name of ["get_file_contents", "find_symbol", "agent_browser_snapshot"])
+      fixture.registerTool(name, { inputSchema: {} }, async () => ({content:[{type:"text",text:`MEMBER EVIDENCE ${name}`}]}));
+    fixture.registerTool("agent_browser_fill", {inputSchema:{}}, async()=>{throw new Error("team form entry must never execute");});
+  }
   await fixture.connect(new StdioServerTransport());
   await new Promise((resolve) => process.stdin.on("end", resolve));
   process.exit(0);
@@ -84,6 +89,11 @@ const http = createServer(async (req, res) => {
     else answer("RECEIPT RECOVERY OK");
   } else if (prompt.includes("CHILD_RECEIPT")) {
     answer("RECEIPT REPORT ALPHA");
+  } else if (prompt.includes("CHILD_MCP")) {
+    const expected = prompt.includes("GITHUB") ? "mcp__github__get_file_contents" : prompt.includes("SERENA") ? "mcp__serena__find_symbol" : "mcp__browser__agent_browser_snapshot";
+    assert.deepEqual((request.tools ?? []).map(t=>t.function.name),[expected],"member sees only its explicitly selected tool, including on follow-up");
+    if(request.messages.at(-1).role !== "tool") tool(expected,{});
+    else answer("CHILD REPORT "+request.messages.at(-1).content);
   } else if (prompt.includes("CHILD_WEB")) {
     const names = (request.tools ?? []).map((t) => t.function.name);
     assert.ok(!names.includes("mcp__exa__effect") && !names.includes("codemode"), "research grants only exact search/fetch");
@@ -109,14 +119,16 @@ try {
   await writeFile(join(dir, "a.txt"), "ALPHA\n");
   await writeFile(join(agentDir, "mcp.json"), JSON.stringify({ mcpServers: { exa: {
     command: process.execPath, args: [join(process.cwd(), "test/coordinator.mjs"), "exa-fixture"], exposure: "direct",
-  } } }));
+  }, ...Object.fromEntries(["github","serena","browser"].map(name=>[name,{
+    command:process.execPath,args:[join(process.cwd(),"test/coordinator.mjs"),"member-fixture"],exposure:"direct",
+  }])) } }));
   await writeFile(join(agentDir, "settings.json"), JSON.stringify({ defaultProvider: "test", defaultModel: "one", enabledModels: ["test/*"] }));
   await writeFile(join(agentDir, "models.json"), JSON.stringify({ providers: { test: {
     baseUrl: `http://127.0.0.1:${http.address().port}/v1`, api: "openai-completions", apiKey: "fake-key",
     models: [{ id: "one", name: "one", reasoning: false, input: ["text"], contextWindow: 32000, maxTokens: 4096, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] } } }));
   await client.connect(new StdioClientTransport({ command: process.execPath, args: ["dist/index.js"], stderr: "ignore", env: {
     ...process.env, PI_OFFLINE: "1", PI_CODING_AGENT_DIR: agentDir, PI_DELEGATE_STATE_DIR: join(dir, "state"),
-    PI_DELEGATE_MODEL: "test/one", PI_DELEGATE_IGNORE_SCOPE: "1", PI_DELEGATE_ALLOW_TOOLS: "codemode,write,mcp__exa__web_search_exa,mcp__exa__web_fetch_exa", PI_DELEGATE_MAX_CONCURRENT: "4",
+    PI_DELEGATE_MODEL: "test/one", PI_DELEGATE_IGNORE_SCOPE: "1", PI_DELEGATE_ALLOW_TOOLS: "codemode,write,mcp__exa__web_search_exa,mcp__exa__web_fetch_exa,mcp__github__get_file_contents,mcp__serena__find_symbol,mcp__browser__agent_browser_snapshot,mcp__browser__agent_browser_fill", PI_DELEGATE_MAX_CONCURRENT: "4",
   } }));
   const raw = (name, args) => client.callTool({ name, arguments: args });
   const call = async (name, args) => { const r = await raw(name, args); assert.ok(!r.isError, r.content[0].text); return JSON.parse(r.content[0].text); };
@@ -262,6 +274,33 @@ try {
       assert.ok(state.toolCalls.some((t) => t.name === "mcp__exa__web_fetch_exa" && t.state === "ok"));
     } else assert.equal(state.toolCallCount, 0, "task research:false overrides plan research:true");
   }
+
+  await call("spawn",{cwd:dir,id:"privileged-facts",prompt:"FACT",tools:["read","write","mcp__browser__agent_browser_fill"],nativeMcp:true,mcpServers:["browser"],maxTurns:3});
+  assert.equal((await settle("privileged-facts")).state,"done");
+  await call("spawn", {cwd:dir,id:"member-boss",maxTurns:6,coordinator:{forkFrom:"privileged-facts",saveDir:join(dir,"member-reports"),tasks:[
+    {prompt:"CHILD_MCP_GITHUB",label:"member-github",mcpServers:["github"],tools:["mcp__github__get_file_contents"],maxTurns:3},
+    {prompt:"CHILD_MCP_SERENA",label:"member-serena",mcpServers:["serena"],tools:["mcp__serena__find_symbol"],maxTurns:3},
+    {prompt:"CHILD_MCP_BROWSER",label:"member-browser",mcpServers:["browser"],tools:["mcp__browser__agent_browser_snapshot"],maxTurns:3},
+  ]}});
+  const memberBoss=await settle("member-boss");
+  assert.equal(memberBoss.state,"done",memberBoss.error);
+  assert.match(memberBoss.lastText,/MEMBER EVIDENCE get_file_contents/);
+  assert.match(memberBoss.lastText,/MEMBER EVIDENCE find_symbol/);
+  assert.match(memberBoss.lastText,/MEMBER EVIDENCE agent_browser_snapshot/);
+  const memberSessions=(await call("sessions",{})).sessions.filter(s=>s.label?.startsWith("member-"));
+  assert.equal(memberSessions.length,3);
+  for(const member of memberSessions){
+    const state=await call("status",{sessionId:member.sessionId,verbose:true});
+    assert.equal(state.forkedFrom,"privileged-facts");
+    assert.equal(state.activeTools.length,1,"fork does not widen permissions");
+    assert.ok(state.toolCalls.some(t=>t.name===state.activeTools[0]&&t.state==="ok"));
+    await call("follow_up",{sessionId:member.sessionId,prompt:`CHILD_MCP_${member.label.split("-")[1].toUpperCase()}`,maxTurns:3});
+    const followed=await settle(member.sessionId);
+    assert.equal(followed.state,"done",`follow-up keeps exact MCP grants: ${JSON.stringify(followed)}`);
+  }
+  // Even a host-approved form tool is outside this read-only team feature.
+  assert.equal((await raw("spawn",{cwd:dir,coordinator:{tasks:[{prompt:"no",mcpServers:["browser"],tools:["mcp__browser__agent_browser_fill"]}]}})).isError,true);
+  console.log("  OK -> team members use selected GitHub/Serena/browser MCP tools; forks/follow-ups keep exact grants");
 
   await call("spawn", { cwd: dir, id: "cancel-boss", prompt: "CANCEL_PARENT", tools: ["codemode"], maxTurns: 5,
     coordinator: { tasks: [{ prompt: "SLOW_CHILD", label: "slow", tools: [], maxDurationMs: 60000 }] } });

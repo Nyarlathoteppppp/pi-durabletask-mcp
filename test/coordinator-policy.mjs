@@ -78,3 +78,29 @@ assert.equal(researchRequest.tasks[1].nativeMcp,false);
 const {startBatch} = await import("../dist/core.js");
 await assert.rejects(startBatch(researchRequest), /are blocked/);
 console.log("  OK -> research inheritance/opt-out, exact grants and existing permission checks");
+
+// Selecting a server never grants all its tools, and research adds only its pair.
+let memberRequest;
+const members = createCoordinatorTools(coordinatorSchema.parse({ research:true, forkFrom:"facts", tasks:[
+  {prompt:"github",mcpServers:["github","exa"],tools:["mcp__github__get_file_contents","mcp__exa__web_fetch_exa"]},
+  {prompt:"symbols",mcpServers:["serena"],tools:["mcp__serena__find_symbol"],research:false},
+  {prompt:"browser",mcpServers:["browser"],tools:["mcp__browser__agent_browser_snapshot"],research:false},
+  {prompt:"defaults",mcpServers:["github"],research:false},
+] }),process.cwd(),{
+  startBatch:async request=>{memberRequest=request;return {requested:4,started:0,sessionIds:[],sessions:[]};},
+});
+await members[0].execute("members",{});
+assert.deepEqual(memberRequest.tasks[0].mcpServers,["github","exa"]);
+assert.deepEqual(memberRequest.tasks[0].tools,["mcp__github__get_file_contents","mcp__exa__web_fetch_exa","mcp__exa__web_search_exa"]);
+assert.deepEqual(memberRequest.tasks[1].tools,["mcp__serena__find_symbol"]);
+assert.deepEqual(memberRequest.tasks[1].mcpServers,["serena"]);
+assert.deepEqual(memberRequest.tasks[2].tools,["mcp__browser__agent_browser_snapshot"]);
+assert.deepEqual(memberRequest.tasks[3].tools,["read","grep","find","ls"]);
+for(const task of memberRequest.tasks){assert.equal(task.nativeMcp,true);assert.equal(task.extensions,false);assert.equal(task.durable,false);}
+await assert.rejects(startBatch({...memberRequest,forkFrom:undefined}), /are blocked/, "host permissions still gate reviewed team MCP tools");
+assert.equal(coordinatorSchema.safeParse({tasks:[{prompt:"mismatch",tools:["mcp__github__search_code"],mcpServers:["serena"]}]}).success,false);
+for(const tool of ["write","codemode","mcp__github__create_issue","mcp__serena__execute_shell_command","mcp__browser__agent_browser_click","mcp__browser__agent_browser_fill","mcp__browser__agent_browser_eval"]){
+  assert.equal(coordinatorSchema.safeParse({tasks:[{prompt:"no",mcpServers:["github","serena","browser"],tools:[tool]}]}).success,false,tool);
+}
+assert.equal(coordinatorSchema.safeParse({tasks:[{prompt:"unknown server",mcpServers:["bridge"]}]}).success,false);
+console.log("  OK -> exact per-member MCP grants, server pairing, research union and host-policy enforcement");
