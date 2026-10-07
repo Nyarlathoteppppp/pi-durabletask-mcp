@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.9 (2026-10-07)
+
+- Caller-planned codemode coordination: dispatch bounded read-only children, share a settled facts session with `forkFrom`, retain original reports and synthesize without copying each report through the caller. Coordination is memory-only; cancelling its parent leaves children running within their budgets.
+- Optional `coordinator.research: true` grants the configured Exa search/fetch pair, with per-task opt-out and existing exact tool permissions. Three live review trials are documented; they do not establish accuracy or token savings.
+- Protect `.env.*` variants, including `.env.example`, through direct access, attachments, saved-result paths, symlinks and recursive grep. File listings can still show names without reading contents.
+- Retain queryable diagnostics when unload/forget executor cleanup fails; block follow-up with `cleanup_failed`. Native shutdown errors no longer prevent job cleanup, and failed directory removal releases ownership so the orphan sweep can retry.
+- Correlate tool results only by SDK call ID instead of guessing between same-name parallel calls. Current SDK ordinary and nested events provide IDs.
+- Use UUID temporary filenames for concurrent same-target result saves; reject non-directory `cwd` before launching.
+
 ## 0.7.8 (2026-10-07)
 
 - `status`, `run` and single/batch `wait` include `touchedFiles` and `editWriteCount` for successful edit/write calls in the current run, including nested calls. This is an operation receipt, not a Git diff or test verification; read-only runs omit it.
