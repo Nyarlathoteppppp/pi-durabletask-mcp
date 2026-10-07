@@ -1,6 +1,6 @@
 {
   "name": "pi-durabletask-mcp",
-  "version": "0.7.9",
+  "version": "0.7.10",
   "mcpName": "io.github.Nyarlathoteppppp/pi-durabletask-mcp",
   "description": "Multi-provider Pi agent teams over MCP with parallel delegates, coordination, steering, and optional crash recovery",
   "type": "module",

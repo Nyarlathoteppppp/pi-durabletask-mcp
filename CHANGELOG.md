@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.10 (2026-10-07)
 
 - Pi's automatic retries of a failed provider request no longer spend turns: a request that failed twice before succeeding used one turn, not three, so a provider outage no longer shrinks the budget left for `follow_up`.
 - A Gemini safety-filter notice delivered as an ordinary reply (as through Antigravity) is reported as `answerState: "narration"` by its exact opening, without the optional judge, instead of passing as a conclusion.

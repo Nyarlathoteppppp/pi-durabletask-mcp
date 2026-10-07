@@ -3,7 +3,7 @@
   "name": "io.github.Nyarlathoteppppp/pi-durabletask-mcp",
   "title": "Pi Durabletask MCP",
   "description": "Multi-provider Pi agent teams: parallel delegates, coordination, steering, optional recovery.",
-  "version": "0.7.9",
+  "version": "0.7.10",
   "repository": {
     "url": "https://github.com/Nyarlathoteppppp/pi-durabletask-mcp",
     "source": "github"
@@ -13,7 +13,7 @@
     {
       "registryType": "npm",
       "identifier": "pi-durabletask-mcp",
-      "version": "0.7.9",
+      "version": "0.7.10",
       "transport": { "type": "stdio" }
     }
   ]
