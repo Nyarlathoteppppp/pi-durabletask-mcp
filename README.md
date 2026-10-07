@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Nyarlathoteppppp/pi-durabletask-mcp/main/docs/assets/hero.png" alt="pi-durabletask-mcp — Delegate. Steer. Recover." width="900" />
+  <img src="https://raw.githubusercontent.com/Nyarlathoteppppp/pi-durabletask-mcp/main/docs/assets/hero-teams.svg" alt="pi-durabletask-mcp — Split work across models. Bring findings together." width="100%" />
 </p>
 
 <div align="center">
@@ -8,47 +8,43 @@
 
 # pi-durabletask-mcp
 
-Multi-model agent teams for Claude Code, Codex, and other MCP clients, powered by [Pi Coding Agent](https://pi.dev). Delegate work, compare ideas and collect results across providers—in one agent or a coordinated team.
+Let your main Claude Code / Codex agent plan the work, with [Pi](https://pi.dev) coordinating agents across providers and collecting results.
 
 [![npm](https://img.shields.io/npm/v/pi-durabletask-mcp)](https://www.npmjs.com/package/pi-durabletask-mcp)
 [![CI](https://github.com/Nyarlathoteppppp/pi-durabletask-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Nyarlathoteppppp/pi-durabletask-mcp/actions/workflows/ci.yml)
 [![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A5%2022.19-30343b?logo=nodedotjs&logoColor=white)](package.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-e78260.svg)](LICENSE)
 
-[Quick start](#quick-start) · [Reference](docs/reference.md)
+[Quick start](#quick-start) · [Team example](docs/workflows/codemode-coordinator.md) · [Reference](docs/reference.md)
 
 </div>
 
+---
+
+| **01 · Orchestrate by Task** | **02 · Fork Shared Context** | **03 · Question Then Synthesize** |
+| :--- | :--- | :--- |
+| Your main agent plans; Pi dispatches work to models selected for each role. | Fork a settled session’s facts and context into independent branches to explore different directions. | Ask targeted follow-ups on disagreements; collect evidence and gaps with references to original reports. |
+| [Codemode teams →](docs/workflows/codemode-coordinator.md) | `forkFrom` · independent branches, fresh budgets | `follow_up` · summaries and full reports |
+
 ## Example workflow
 
-```text
-You → Claude / Codex / another MCP main model:
-  “Use a Pi team to review this authentication change. Assign one agent to
-   permission checks, one to Exa source research, and one to brainstorm tests.
-   Choose available provider/model IDs per task. Don't edit files.
-   Ask targeted follow-ups about conflicting claims; summarize evidence,
-   disagreements and gaps, keeping full reports available by reference.”
-Main model → Pi coordinator/synthesizer (caller supplies the task assignments)
-               ├─ provider/model selected for code review
-               ├─ provider/model selected for web research (opt-in Exa)
-               └─ provider/model selected for test brainstorming
-             → targeted follow-ups → synthesis + original report references
-```
+> Have a team review authentication changes without edits, question disagreements, and summarize missing tests.
 
-For a single task, use an ordinary delegate instead; explicitly authorized tools can also edit files and execute commands.
+**Supply a goal and assignments → Pi dispatches in parallel → question disagreements → collect the synthesis and original reports.**
+
+Choose a provider/model per role: one checks permissions, one researches sources with Exa, and one proposes tests. Your main agent keeps the final judgment. [See the full task plan and configuration →](docs/workflows/codemode-coordinator.md)
 
 ## What you can do
 
-- **Teams across providers:** select a model for each role with `models`; use a single delegate or run several with `spawn_batch`.
-- **[A coordinator that does the legwork](docs/workflows/codemode-coordinator.md):** supply a task plan; Pi dispatches agents, collects reports, asks targeted questions and synthesizes findings with their sources and disagreements. Codemode supports loops, conditions and parallel calls.
-- **Read once, explore many directions:** `forkFrom` gives independent branches the same settled context, with fresh budgets for each branch.
-- **Discuss and refine:** redirect live work with `steer`, or keep the conversation going with `follow_up` and optional fresh budgets.
-- **Reports without manual copying:** pass files through `attachments`, save results with `saveTo`, and receive a summary alongside references to the originals.
-- **Authorized implementation:** grant ordinary delegates editing or command tools; results report successful changed-file paths, token usage and cost.
-- **[Web research](docs/research.md) and native MCP:** connect selected servers and tool permissions, including opt-in Exa search/fetch. Third-party Pi extensions are configured separately.
-- **Progress and recovery:** inspect `idleMs` and `phase`; bound runs with turn, tool and time budgets. Optional `durable: true` checkpoints individual sessions to SQLite, and `handoff` helps another window continue.
+| | Highlights |
+| :--- | :--- |
+| **Delegate & Explore** | **Parallel models:** select with `models`, dispatch with `spawn_batch`. **Shared context:** `forkFrom` a settled session. **Web research:** opt-in [Exa search and fetch](docs/research.md). **Native MCP:** selected servers/tools; Pi extensions configured separately. |
+| **Refine & Report** | **Adjust the direction:** `steer` live work, `follow_up` finished work, and renew budgets as needed. **Pass materials, keep results:** `attachments` and `saveTo`, with summaries, original report references, token usage and cost. |
+| **Permissions & Recovery** | **Authorized implementation:** ordinary delegates can edit or run commands and report successful changed-file paths. **Visible progress:** `idleMs`, `phase` and execution budgets. **Optional single-session recovery:** SQLite checkpoints and cross-window `handoff`. |
 
-Coordinator teams currently use one level of memory-only, read-only children, with optional Exa research. Team mode requires permitted `codemode` and `tools: ["codemode"]`; [the example](docs/workflows/codemode-coordinator.md) shows the task plan and configuration.
+Teams support Codemode loops, conditions and parallel calls. They currently use one level of memory-only, read-only children, with opt-in Exa; permit `codemode` and pass `tools: ["codemode"]`. For a single task, use an ordinary delegate.
+
+---
 
 ## Quick start
 
@@ -123,7 +119,7 @@ Already connected? Update the existing entry and reconnect. [Other clients →](
 
 > Use Pi to review authentication for missing permission checks. Don't edit files. Report file locations and suggested regression tests.
 
-The agent uses `spawn` → `wait(until: "settled")`, answering questions with `answer`. Try the steering and follow-up prompts above. `init` is optional diagnostics; `models` lists available models.
+The agent uses `spawn` → `wait(until: "settled")`, answering questions with `answer`. `init` is optional diagnostics; `models` lists available models.
 
 <details>
 <summary>Optional: install the Agent Skill</summary>
