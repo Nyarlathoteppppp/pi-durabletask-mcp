@@ -7,7 +7,7 @@ import type { LaunchRequest } from "./registry.js";
 import { storedJobs, storedSnapshot } from "./durable.js";
 import { prepareResources } from "./pi/resources.js";
 import { compactSnapshot, message } from "./pi/worker.js";
-import { withAttachments } from "./attachments.js";
+import { readTextFiles, withAttachments } from "./attachments.js";
 import { checkSavePath, omitsSavedText } from "./save.js";
 import type { FollowUpBudget } from "./pi/run.js";
 import type { PiWorker } from "./pi/worker.js";
@@ -144,8 +144,13 @@ function withCoordinator({ coordinator, ...request }: PreparedRequest): LaunchRe
     }) };
 }
 
-const inline = async ({ attachments, ...request }: PreparedRequest): Promise<LaunchRequest> =>
-  ({ ...withCoordinator(request), prompt: await withAttachments(request.prompt, attachments) });
+const inline = async ({ attachments, ...request }: PreparedRequest): Promise<LaunchRequest> => {
+  // A coordinator plan's files are checked now, so a bad path fails this call, not a later dispatch.
+  const planned = request.coordinator && [...new Set([...(request.coordinator.attachments ?? []),
+    ...request.coordinator.tasks.flatMap((t) => t.attachments ?? [])])];
+  if (planned?.length) await readTextFiles(planned, "coordinator.attachments");
+  return { ...withCoordinator(request), prompt: await withAttachments(request.prompt, attachments) };
+};
 
 export async function startExecution(request: AttachedRequest) {
   const w = await launch(await inline(await withFork(request)));

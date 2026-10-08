@@ -121,6 +121,13 @@ not a correctness judgement: keep errors, incomplete coverage and original repor
 Use `store` for small IDs/cursors/excerpts; inspect originals whenever the excerpts lack context.
 
 Members can select `resources.contextFiles` and `resources.skills` using absolute file paths.
+
+`attachments` (absolute text files, for example a diff) can be set on the plan, as a default for
+every member, or per member, which replaces the plan's list (`[]` for none). The plan-level list is
+copied into each member's prompt, so a large file is sent once per member; give it only to the
+members that need it. Paths are checked when the coordinator starts. `delegate_follow_up` takes no
+attachments: a script cannot add files beyond the caller's plan. Attachments are reference material
+in the prompt; `resources.contextFiles` are project instructions in the system context.
 They do not inherit the coordinator's selection; [resource semantics](../reference.md#explicit-instructions-and-skills)
 also apply to member forks and follow-ups.
 

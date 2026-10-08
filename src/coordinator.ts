@@ -43,6 +43,7 @@ export const coordinatorSchema = z.object({
   tasks: z.array(z.object({
     resources: resourcesSchema.optional(),
     prompt: z.string(),
+    attachments: z.array(z.string()).optional().describe("Absolute text files appended to this member's prompt; replaces the plan's attachments, [] for none."),
     label: z.string().optional(),
     model: z.string().optional(),
     thinking: z.enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"]).optional(),
@@ -55,6 +56,7 @@ export const coordinatorSchema = z.object({
     maxDurationMs: z.number().int().min(1000).max(MAX_DURATION_MS).default(Math.min(240_000, MAX_DURATION_MS)),
   }).strict()).min(1).max(BATCH_MAX),
   saveDir: z.string().optional(),
+  attachments: z.array(z.string()).optional().describe("Absolute text files appended to every member's prompt unless a member sets its own; each member receives a copy."),
   forkFrom: z.string().optional(),
   research: z.boolean().optional().describe("Enable configured Exa search/fetch for children; requires the two exact tools in PI_DELEGATE_ALLOW_TOOLS. Off when omitted."),
 }).strict().superRefine((plan, ctx) => {
@@ -122,7 +124,7 @@ export function createCoordinatorTools(options: z.output<typeof coordinatorSchem
         indexes.forEach((i) => dispatched.add(i));
         let batch: Awaited<ReturnType<Operations["startBatch"]>>;
         try {
-          const launched = core.startBatch({ cwd, saveDir: options.saveDir, forkFrom: options.forkFrom, tasks: indexes.map((i) => {
+          const launched = core.startBatch({ cwd, saveDir: options.saveDir, forkFrom: options.forkFrom, attachments: options.attachments, tasks: indexes.map((i) => {
             const { research = options.research ?? false, mcpServers = [], ...task } = options.tasks[i]!;
             const servers = [...new Set([...mcpServers, ...(research ? ["exa"] : [])])];
             return { ...task, resources: task.resources ?? {}, tools: [...new Set([...(task.tools ?? READ_ONLY_TOOLS), ...(research ? RESEARCH_TOOLS : [])])],

@@ -65,6 +65,11 @@ const http = createServer(async (req, res) => {
     else answer("INDEX REFRESH DONE");
   } else if (prompt === '""') {
     answer("EMPTY PROMPT PRESERVED");
+  } else if (prompt.includes("ATTACH_COORDINATOR")) {
+    if (!scripts) tool("codemode", {code:'const b=await tools.delegate_start_batch({}); await tools.delegate_wait({timeoutMs:5000}); const r=await Promise.all(b.sessionIds.map(sessionId=>tools.delegate_get({sessionId}))); return r.map(x=>x.label+":"+x.lastText);'});
+    else answer(`ATTACHED ${JSON.stringify(request.messages.at(-1).content)}`);
+  } else if (prompt.includes("ATTACH_CHILD")) {
+    answer(prompt.includes("ATTACHED_MARK") ? "HAS_FILE" : "NO_FILE");
   } else if (prompt.includes("PARALLEL_COORDINATOR")) {
     if (!scripts) tool("codemode", {code:'const [b,w]=await Promise.all([tools.delegate_start_batch({}),tools.delegate_wait({timeoutMs:5000})]); return {started:b.sessionIds.length,waited:w.sessions.length};'});
     else answer(`PARALLEL ${JSON.stringify(request.messages.at(-1).content)}`);
@@ -230,6 +235,18 @@ try {
     ["spawn_batch", { cwd: dir, coordinator: shortPlan, tools: ["read"], tasks: [{}] }],
   ]) assert.equal((await raw(name, args)).isError, true, `${name} rejects missing task or disabled codemode`);
   assert.equal((await raw("status", { sessionId: "missing-prompt-sibling" })).isError, true, "invalid batch launches no sibling");
+
+  // Attachments: a plan-level default goes to every member; a member's own list replaces it, [] for none.
+  await writeFile(join(dir, "shared.diff"), "ATTACHED_MARK diff\n");
+  await call("spawn", {cwd:dir,id:"attach-boss",prompt:"ATTACH_COORDINATOR",tools:["codemode"],maxTurns:4,
+    coordinator:{attachments:[join(dir,"shared.diff")],tasks:[{prompt:"ATTACH_CHILD",label:"with",tools:[],maxTurns:1},
+      {prompt:"ATTACH_CHILD",label:"without",tools:[],maxTurns:1,attachments:[]}]} });
+  const attachBoss=await settle("attach-boss");
+  assert.equal(attachBoss.state,"done",attachBoss.error);
+  assert.match(attachBoss.lastText,/with:HAS_FILE/);
+  assert.match(attachBoss.lastText,/without:NO_FILE/);
+  const secretAttach=await raw("spawn",{cwd:dir,prompt:"x",tools:["codemode"],coordinator:{attachments:[join(dir,".env")],tasks:[{prompt:"ATTACH_CHILD",tools:[]}]}});
+  assert.equal(secretAttach.isError,true,"a secret attachment is refused like on spawn_batch");
 
   // A wait started alongside a dispatch in the same script covers the children being started.
   await call("spawn", {cwd:dir,id:"parallel-boss",prompt:"PARALLEL_COORDINATOR",tools:["codemode"],maxTurns:4,
