@@ -247,6 +247,13 @@ try {
   assert.match(attachBoss.lastText,/without:NO_FILE/);
   const secretAttach=await raw("spawn",{cwd:dir,prompt:"x",tools:["codemode"],coordinator:{attachments:[join(dir,".env")],tasks:[{prompt:"ATTACH_CHILD",tools:[]}]}});
   assert.equal(secretAttach.isError,true,"a secret attachment is refused like on spawn_batch");
+  // Limits apply per member, as at dispatch: 600 KB each is valid even though the plan holds 1.2 MB.
+  const part=async(name)=>{ const f=join(dir,name); await writeFile(f,"x".repeat(200*1024)); return f; };
+  const listA=[await part("a1.txt"),await part("a2.txt"),await part("a3.txt")], listB=[await part("b1.txt"),await part("b2.txt"),await part("b3.txt")];
+  const perMember=await raw("spawn",{cwd:dir,id:"per-member",prompt:"x",tools:["codemode"],maxTurns:1,coordinator:{tasks:[
+    {prompt:"ATTACH_CHILD",tools:[],attachments:listA},{prompt:"ATTACH_CHILD",tools:[],attachments:listB}]}});
+  assert.ok(!perMember.isError, perMember.content?.[0]?.text);
+  await call("abort",{sessionId:"per-member"}).catch(()=>{});
 
   // A wait started alongside a dispatch in the same script covers the children being started.
   await call("spawn", {cwd:dir,id:"parallel-boss",prompt:"PARALLEL_COORDINATOR",tools:["codemode"],maxTurns:4,

@@ -146,9 +146,12 @@ function withCoordinator({ coordinator, ...request }: PreparedRequest): LaunchRe
 
 const inline = async ({ attachments, ...request }: PreparedRequest): Promise<LaunchRequest> => {
   // A coordinator plan's files are checked now, so a bad path fails this call, not a later dispatch.
-  const planned = request.coordinator && [...new Set([...(request.coordinator.attachments ?? []),
-    ...request.coordinator.tasks.flatMap((t) => t.attachments ?? [])])];
-  if (planned?.length) await readTextFiles(planned, "coordinator.attachments");
+  // Each member's own list, as dispatch will read it: limits apply per member, and a default every
+  // member replaces is never read.
+  const plan = request.coordinator;
+  const lists = new Map((plan?.tasks ?? []).map((t) => t.attachments ?? plan?.attachments ?? [])
+    .filter((paths) => paths.length).map((paths) => [JSON.stringify(paths), paths]));
+  for (const paths of lists.values()) await readTextFiles(paths, "coordinator.attachments");
   return { ...withCoordinator(request), prompt: await withAttachments(request.prompt, attachments) };
 };
 
