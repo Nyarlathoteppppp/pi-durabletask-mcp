@@ -2,8 +2,8 @@
 const pages = load('research.pages') || [];
 const terms = ['tools', 'models', 'chat', 'callable'];
 for (const page of pages) {
-  if (!page.ok) {
-    text({ url: page.url, ok: false, error: page.error });
+  if (!page.ok || page.result?.isError) {
+    text({ url: page.url, ok: false, error: page.error ?? "MCP page returned an error" });
     continue;
   }
   const body = (page.result.content || []).filter(block => block.type === 'text').map(block => block.text).join('\n');

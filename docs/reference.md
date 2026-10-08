@@ -159,6 +159,34 @@ Finished sessions stay readable via `status` and `sessions` instead of vanishing
 back and check what a delegate actually did. The newest `PI_DELEGATE_HISTORY` (default 50) stay
 loaded; durable ones beyond that stay on disk until retention removes them; `forget` drops one early.
 
+### Explicit instructions and skills
+
+`spawn`, `run` and `spawn_batch` accept `resources`; batch tasks and team members can select
+their own resources. Both lists contain **absolute UTF-8 file paths**, not skill names or directories:
+
+```json
+{
+  "cwd": "/repo",
+  "prompt": "Review the changes using the selected project conventions.",
+  "resources": {
+    "contextFiles": ["/repo/AGENTS.md"],
+    "skills": ["/repo/.pi/skills/review/SKILL.md"]
+  }
+}
+```
+
+Context files enter the system context. Skills use Pi's metadata and on-demand body loading;
+grant `read` or `bash` to use them (`codemode` alone is insufficient). Selection never grants tools
+or project trust. Other AGENTS files and skills are not automatically selected. Existing Pi
+`SYSTEM.md`/`APPEND_SYSTEM.md` handling is unchanged.
+
+Omitted resources are empty for ordinary spawns. Batch tasks replace the batch selection as a
+whole; `{}` clears it. Forks inherit unless overridden; old transcript contents remain in history.
+Team members do not inherit coordinator resources, including when forking: select them explicitly.
+Files use the existing attachment limits and secret-path rules, with invalid selections rejected
+before batch launch. Durable tasks retain the selection and re-read the current files on recovery;
+resource contents are not frozen snapshots.
+
 `run` and single-session `wait` keep result collection compact: by default they return `sessionId`,
 `label`, `state`, `turns`, `toolCallCount`, `lastText`, pending `questions`, the newest 5
 `notices` from the current run, and any `error` or `termination`, plus `nextAction`. It omits tool traces and
@@ -170,6 +198,13 @@ By default its `toolCalls` holds the last 5 calls with arguments cut to 120 char
 `toolCallCount` is the total and `notices` holds the current run's newest 5. Batch waits include these notices when nonempty. On `run`, `status` or single-session
 `wait`, `verbose: true` returns the full snapshot, including the full ordered trace,
 every notice across all runs, and call ids and results:
+
+With a loaded SDK session, verbose results also include `contextUsage: {tokens, contextWindow,
+percent}`. Null tokens/percent mean the SDK cannot currently estimate usage, such as immediately
+after compaction. This reuses the existing session statistics; ordinary outputs and persistent
+checkpoints do not include the field, and reading stored results does not load a session for it.
+Running delegates report `phase: "compaction"` during SDK summarization. The optional model-stall
+watchdog does not treat that phase as a stalled delegate response; wall-clock deadlines still apply.
 
 The compact notice boundary is the saved run-start timestamp, inclusive; notices from
 two runs starting/ending in the same millisecond can overlap at that boundary.
@@ -790,8 +825,8 @@ the cost by pi's model prices, summed over the whole session including follow-up
 
 While a delegate runs, `status`, `wait` and batch summaries report `idleMs`, the time since it
 last produced any event (stream deltas, including reasoning, count), and `phase`: `model` while a
-model request is outstanding, `tool` while a tool runs, `agent` while Pi or an extension works in
-between. Neither is reported while a question waits for an answer. A large `idleMs` in phase `model` means either
+model request is outstanding, `tool` while a tool runs, `compaction` during SDK summarization,
+and `agent` while Pi or an extension works in between. Neither is reported while a question waits for an answer. A large `idleMs` in phase `model` means either
 slow reasoning from a provider that streams nothing meanwhile, or a hung request; Pi itself never
 times out a silent request. `PI_DELEGATE_STALL_MS` (off by default) ends such a run as
 `termination.reason: "stalled"`, which can then be continued with `follow_up`. Set it with care:

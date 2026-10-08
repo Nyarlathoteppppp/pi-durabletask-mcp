@@ -11,6 +11,7 @@ import {
 import { DEFAULT_TOOLS, PERMITTED, READ_ONLY_TOOLS } from "../permissions.js";
 import { runExecution, startBatch, startExecution } from "../core.js";
 import { json, waitResult } from "./shared.js";
+import { resourcesSchema } from "../pi/resources.js";
 import { coordinatorSchema } from "../coordinator.js";
 
 // Preserve the existing helper import path for consumers.
@@ -31,6 +32,7 @@ const ATTACHMENTS_HELP =
 const attachments = z.array(z.string()).optional();
 
 const spawnShape = {
+  resources: resourcesSchema.optional().describe("Explicit instruction/skill files; omitted loads none. Forks inherit the selection; {} clears it. Does not grant tools."),
   coordinator: coordinatorSchema.optional().describe("Opt-in memory-only orchestration of caller-planned read-only children. Omitted prompt gives a concise synthesis with disagreements, failed coverage and original report references; omitted tools selects codemode, subject to server permissions. Children have independent budgets and count toward concurrency. Cancelling the coordinator leaves children running."),
   prompt: z.string().optional().describe("The task for the pi agent. Required for ordinary delegates; omit with coordinator for the default dispatch/wait/synthesis workflow. A supplied prompt replaces that default."),
   forkFrom: z.string().optional().describe("Start a new task from a settled session's history; budgets are fresh. Omitted cwd/model/tools inherit and are revalidated, except coordinator defaults its omitted tools to codemode."),
@@ -87,6 +89,7 @@ const spawnShape = {
 };
 
 const taskShape = z.object({
+  resources: spawnShape.resources,
   coordinator: spawnShape.coordinator,
   prompt: spawnShape.prompt,
   forkFrom: z.string().optional().describe("Overrides the batch forkFrom for this task"),
@@ -136,6 +139,7 @@ export function registerSpawn(server: McpServer): void {
         "polling `sessions` or one `status` per delegate.",
       inputSchema: {
         tasks: z.array(taskShape).min(1).max(BATCH_MAX).describe(`1 to ${BATCH_MAX} delegates to start`),
+        resources: spawnShape.resources.describe("Default resource selection for batch tasks; each task can replace it, including {} to clear."),
         coordinator: spawnShape.coordinator,
         forkFrom: z.string().optional().describe("Default settled parent session for this batch"),
         attachments: attachments.describe(`Default for every task in this batch. ${ATTACHMENTS_HELP}`),

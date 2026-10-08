@@ -1,3 +1,4 @@
+import { prepareResources, type ResourceSelection, type PreparedResources } from "./pi/resources.js";
 import {
   DAY_MS,
   RECOVERY_INTERVAL_MS,
@@ -328,6 +329,9 @@ export interface LaunchRequest extends NativeMcpOptions {
   saveTo?: string | undefined;
   /** As saveTo, as <saveDir>/<sessionId>.md, for batches. */
   saveDir?: string | undefined;
+  resources?: ResourceSelection | undefined;
+  /** Preflight-only resource contents; never stored in WorkerOptions. */
+  preparedResources?: PreparedResources | undefined;
 }
 
 async function prepare(req: LaunchRequest): Promise<LaunchRequest & { cwd: string; tools: string[] }> {
@@ -337,7 +341,8 @@ async function prepare(req: LaunchRequest): Promise<LaunchRequest & { cwd: strin
   if (req.saveDir !== undefined) checkSavePath(req.saveDir, "saveDir");
   const cwd = await resolveDelegateCwd(req.cwd);
   validateNativeMcp(req, cwd);
-  return { ...req, cwd, tools: pickTools(req.tools) };
+  const tools = pickTools(req.tools);
+  return { ...req, cwd, tools, preparedResources: req.preparedResources ?? await prepareResources(req.resources, cwd, tools) };
 }
 
 function makeWorker(req: LaunchRequest & { cwd: string; tools: string[] }): PiWorker {
@@ -349,6 +354,7 @@ function makeWorker(req: LaunchRequest & { cwd: string; tools: string[] }): PiWo
     thinking: req.thinking,
     tools: req.tools,
     extensions: req.extensions ?? false,
+    resources: req.resources,
     durable: req.durable ?? false,
     nativeMcp: req.nativeMcp ?? false,
     mcpServers: req.mcpServers,
@@ -360,6 +366,7 @@ function makeWorker(req: LaunchRequest & { cwd: string; tools: string[] }): PiWo
     // Fixed at creation, so every process applies the same retention whatever its own default.
     retentionDays: req.durable ? req.retentionDays ?? RETENTION_DAYS : undefined,
   });
+  worker.preparedResources = req.preparedResources;
   worker.customTools = req.createTools?.(worker) ?? [];
   worker.saveTo = req.saveTo ?? (req.saveDir ? saveDirPath(req.saveDir, worker.id) : undefined);
   return worker;

@@ -19,6 +19,30 @@ const worker = (id, durable = false) => new PiWorker({ id, cwd: directory, tools
 const session = (w, prompt) => ({ sessionManager: SessionManager.inMemory(directory), messages: [],
   prompt: async () => prompt.promise, waitForIdle: async () => {}, abort: async () => { prompt.resolve(); }, dispose: () => {} });
 
+scenario("context-diagnostics", async () => {
+  const w = worker("context-diagnostics");
+  let calls = 0;
+  const contextUsage = { tokens: null, contextWindow: 32000, percent: null };
+  w.session = { ...session(w, Promise.withResolvers()), getSessionStats: () => {
+    calls++;
+    return { tokens: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, total: 12 }, cost: 0, contextUsage };
+  } };
+  w.state = "running";
+  assert.equal(w.snapshot().contextUsage, undefined);
+  assert.equal(w.snapshot({ verbose: true }).contextUsage, undefined, "checkpoints never acquire caller diagnostics");
+  assert.deepEqual(w.snapshot({ verbose: true, diagnostics: true }).contextUsage, contextUsage);
+  assert.equal(calls, 3, "diagnostics reuse the existing billing scan; no second SDK context scan");
+  w.currentRun.awaitingModel = true;
+  w.onEvent({ type: "compaction_start", reason: "threshold" });
+  assert.equal(w.snapshot().phase, "compaction");
+  w.onEvent({ type: "compaction_end", reason: "threshold", aborted: false, willRetry: false });
+  assert.equal(w.snapshot().phase, "model", "compaction completion restores the underlying pending request state");
+  w.onEvent({ type: "compaction_start", reason: "threshold" });
+  w.newRun();
+  assert.equal(w.currentRun.compacting, false);
+  w.dispose();
+});
+
 scenario("creation-failure", async () => {
   for (const durable of [false, true]) {
     const w = worker(`creation-${durable}`, durable);

@@ -5,6 +5,7 @@ import {
 } from "./registry.js";
 import type { LaunchRequest } from "./registry.js";
 import { storedJobs, storedSnapshot } from "./durable.js";
+import { prepareResources } from "./pi/resources.js";
 import { compactSnapshot, message } from "./pi/worker.js";
 import { withAttachments } from "./attachments.js";
 import { checkSavePath, omitsSavedText } from "./save.js";
@@ -26,7 +27,7 @@ const observedState = (worker: PiWorker): Snapshot["state"] =>
 
 /** A timed-out wait must keep the caller waiting while the final result is still committing. */
 function waitingSnapshot(worker: PiWorker, verbose?: boolean): Snapshot {
-  const snapshot = worker.snapshot({ verbose });
+  const snapshot = worker.snapshot({ verbose, diagnostics: verbose });
   snapshot.state = observedState(worker);
   return snapshot;
 }
@@ -123,6 +124,7 @@ async function withFork(request: AttachedRequest, seeds = new Map<string, Return
     model: task.model ?? seed.inherited.model, thinking: task.thinking ?? seed.inherited.thinking,
     extensions: task.extensions ?? seed.inherited.extensions, nativeMcp: task.nativeMcp ?? seed.inherited.nativeMcp,
     mcpServers: task.mcpServers ?? seed.inherited.mcpServers,
+    resources: task.resources ?? seed.inherited.resources,
     seedEntries: seed.entries, usageBaseline: seed.usageBaseline, forkedFrom: forkFrom };
 }
 
@@ -173,7 +175,7 @@ export interface BatchRequest extends Omit<LaunchRequest, "prompt" | "id" | "lab
 }
 
 export async function startBatch({
-  tasks, model, thinking, cwd, tools, extensions, durable, nativeMcp, mcpServers, forkFrom,
+  tasks, model, thinking, cwd, tools, extensions, durable, nativeMcp, mcpServers, forkFrom, resources,
   maxTurns, maxDurationMs, maxToolCalls, retentionDays, idPrefix, attachments, saveDir, coordinator,
 }: BatchRequest) {
   const width = Math.max(String(tasks.length).length, 2);
@@ -189,6 +191,7 @@ export async function startBatch({
     cwd: t.cwd ?? cwd,
     tools: t.tools ?? tools,
     extensions: t.extensions ?? extensions,
+    resources: t.resources ?? resources,
     durable: t.durable ?? durable,
     nativeMcp: t.nativeMcp ?? nativeMcp,
     mcpServers: t.mcpServers ?? mcpServers,
@@ -220,6 +223,7 @@ export async function startBatch({
       withCoordinator(t);
       const taskCwd = await resolveDelegateCwd(t.cwd ?? cwd);
       validateNativeMcp(t, taskCwd);
+      t.preparedResources = await prepareResources(t.resources, taskCwd, pickTools(t.tools));
       // The model the task will really run on, including Pi's own default, and its credentials:
       // a task that would fail after its siblings started must stop the whole batch here.
       const modelRef = t.model || defaultModelRef(taskCwd);
@@ -312,7 +316,7 @@ export async function runExecution(
     if (ticker) clearInterval(ticker);
     unbindCancellation();
   }
-  const snap = w.snapshot({ verbose });
+  const snap = w.snapshot({ verbose, diagnostics: verbose });
   evictHistory();
   return snap;
 }

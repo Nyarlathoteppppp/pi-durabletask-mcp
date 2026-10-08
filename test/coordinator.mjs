@@ -57,7 +57,10 @@ const http = createServer(async (req, res) => {
   };
   const answer = (content) => { emit({ role: "assistant", content }); emit({}, "stop"); };
   const scripts = request.messages.filter((m) => m.role === "assistant").flatMap((m) => m.tool_calls ?? []).filter((c) => c.function.name === "codemode").length;
-  if (prompt.includes("INDEX_REFRESH")) {
+  if (prompt.includes("SCHEMA_PROBE")) {
+    if (!scripts) tool("codemode", { code: 'return await Promise.all(["delegate_start_batch","delegate_wait","delegate_get","delegate_follow_up"].map(name=>describeTool(name)));' });
+    else answer("DECLARATIONS " + request.messages.at(-1).content);
+  } else if (prompt.includes("INDEX_REFRESH")) {
     if (request.messages.at(-1).role === "user") tool("codemode", { code: 'return await tools.delegate_wait({timeoutMs:0});' });
     else answer("INDEX REFRESH DONE");
   } else if (prompt === '""') {
@@ -136,6 +139,11 @@ try {
   const raw = (name, args) => client.callTool({ name, arguments: args });
   const call = async (name, args) => { const r = await raw(name, args); assert.ok(!r.isError, r.content[0].text); return JSON.parse(r.content[0].text); };
   const settle = async (id) => { let r; do r = await call("wait", { sessionId: id, until: "settled", timeoutMs: 15000 }); while (r.nextAction === "wait"); return r; };
+  const declarations = await call("run", { cwd: dir, prompt: "SCHEMA_PROBE", coordinator: { tasks: [{ prompt: "not launched" }] }, maxTurns: 3 });
+  assert.match(declarations.lastText, /sessionIds.*string/);
+  assert.match(declarations.lastText, /continueIds.*string/);
+  assert.match(declarations.lastText, /lastText.*string/);
+  assert.match(declarations.lastText, /turnsSoFar.*number/);
   await call("spawn", { cwd: dir, id: "facts", prompt: "FACT", tools: ["read"], maxTurns: 3 });
   await settle("facts");
   const coordinator = { forkFrom: "facts", saveDir: join(dir, "reports"), tasks: [

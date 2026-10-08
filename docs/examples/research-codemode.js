@@ -7,7 +7,7 @@ store('research.pages', []);
 for (const query of queries) {
   try {
     const result = await tools.mcp__exa__web_search_exa({ query, objective: 'Find official pi.dev documentation for the stated feature; exclude unrelated Pi projects.', numResults: 2 });
-    searches.push({ query, ok: true, result });
+    searches.push({ query, ok: !result.isError, result, ...(result.isError ? { error: "MCP search returned an error" } : {}) });
   } catch (error) {
     searches.push({ query, ok: false, error: String(error) });
   }
@@ -19,12 +19,14 @@ if (searches.some(result => result.ok)) {
   const pages = await Promise.allSettled(urls.map(url => tools.mcp__exa__web_fetch_exa({ urls: [url], maxCharacters: 7000 })));
   const saved = [];
   for (const [i, page] of pages.entries()) {
-    if (page.status === 'fulfilled') {
+    if (page.status === 'fulfilled' && !page.value.isError) {
       saved.push({ url: urls[i], ok: true, result: page.value });
       const body = (page.value.content || []).filter(block => block.type === 'text').map(block => block.text).join('\n');
       text({ url: urls[i], ok: true, preview: body.slice(0, 1200) });
     } else {
-      const failed = { url: urls[i], ok: false, error: String(page.reason) };
+      const failed = page.status === "fulfilled"
+        ? { url: urls[i], ok: false, error: "MCP fetch returned an error", result: page.value }
+        : { url: urls[i], ok: false, error: String(page.reason) };
       saved.push(failed);
       text(failed);
     }

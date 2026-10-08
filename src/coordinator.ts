@@ -8,6 +8,8 @@ import { READ_ONLY_TOOLS } from "./permissions.js";
 import type { startBatch, waitForMany, getState, followUp } from "./core.js";
 import { withNextAction, batchNextAction } from "./tools/shared.js";
 import { createCoordinatorReport } from "./coordinator-report.js";
+import { resourcesSchema } from "./pi/resources.js";
+import { coordinatorOutputs } from "./coordinator-shapes.js";
 
 const RESEARCH_TOOLS = ["mcp__exa__web_search_exa", "mcp__exa__web_fetch_exa"];
 // Exact reviewed operations, not a name-pattern or a server's self-reported hint.
@@ -39,6 +41,7 @@ export const COORDINATOR_PROMPT =
 
 export const coordinatorSchema = z.object({
   tasks: z.array(z.object({
+    resources: resourcesSchema.optional(),
     prompt: z.string(),
     label: z.string().optional(),
     model: z.string().optional(),
@@ -88,7 +91,6 @@ export function createCoordinatorTools(options: z.output<typeof coordinatorSchem
   };
   // The SDK accepts JSON Schema, including schemas supplied by MCP. Keep Zod as our schema source.
   const schema = (shape: z.ZodType): ToolDefinition["parameters"] => z.toJSONSchema(shape) as ToolDefinition["parameters"];
-  const outputSchema = schema(z.object({}).catchall(z.unknown()));
   const result = (value: object): AgentToolResult<undefined> => {
     const text = JSON.stringify(value);
     return { content: [{ type: "text", text }], structuredContent: JSON.parse(text), details: undefined };
@@ -109,7 +111,7 @@ export function createCoordinatorTools(options: z.output<typeof coordinatorSchem
         "Failed scripts leave children running but discard that script's store writes. Recover their IDs/state with delegate_wait({timeoutMs:0}), without launching more work. " +
         "The coordinator also occupies a concurrency slot; start smaller batches if capacity is full. Plans: " +
         JSON.stringify(options.tasks.map((t, index) => ({ index, label: t.label, prompt: t.prompt, model: t.model }))),
-      parameters: schema(start), outputSchema,
+      parameters: schema(start), outputSchema: schema(coordinatorOutputs.delegate_start_batch),
       async execute(_id, params, signal) {
         signal?.throwIfAborted();
         const { taskIndexes } = start.parse(params);
@@ -123,7 +125,7 @@ export function createCoordinatorTools(options: z.output<typeof coordinatorSchem
           const launched = core.startBatch({ cwd, saveDir: options.saveDir, forkFrom: options.forkFrom, tasks: indexes.map((i) => {
             const { research = options.research ?? false, mcpServers = [], ...task } = options.tasks[i]!;
             const servers = [...new Set([...mcpServers, ...(research ? ["exa"] : [])])];
-            return { ...task, tools: [...new Set([...(task.tools ?? READ_ONLY_TOOLS), ...(research ? RESEARCH_TOOLS : [])])],
+            return { ...task, resources: task.resources ?? {}, tools: [...new Set([...(task.tools ?? READ_ONLY_TOOLS), ...(research ? RESEARCH_TOOLS : [])])],
               durable: false, extensions: false, nativeMcp: servers.length > 0, mcpServers: servers };
           }) })
             // Owned as soon as started, so a wait tracking this dispatch sees its children.
@@ -154,7 +156,7 @@ export function createCoordinatorTools(options: z.output<typeof coordinatorSchem
     defineTool({
       name: "delegate_wait", label: "Wait for delegates", exposure: "codemode",
       description: "Wait for all selected children, or all launched children when sessionIds is omitted. timeoutMs: max 55000, default 30000 when omitted. Returns compact per-child state, questions, errors and save diagnostics; use delegate_get for full reports. Cancelling the wait/coordinator leaves children running within their budgets; the caller can answer or abort them with ordinary MCP tools.",
-      annotations: { readOnlyHint: true }, parameters: schema(wait), outputSchema,
+      annotations: { readOnlyHint: true }, parameters: schema(wait), outputSchema: schema(coordinatorOutputs.delegate_wait),
       async execute(_id, params, signal) {
         const args = wait.parse(params);
         // A script may dispatch and wait at once; children of a dispatch still starting count as launched.
@@ -180,7 +182,7 @@ export function createCoordinatorTools(options: z.output<typeof coordinatorSchem
     defineTool({
       name: "delegate_get", label: "Read delegate report", exposure: "codemode",
       description: "Get one launched child's full report, state and follow-up readiness (without renewing quotas), including questions, failures and save diagnostics. store() reports within the SDK's storage limits; print only the conclusions/references the caller needs. Original savedTo files remain independent of summaries.",
-      annotations: { readOnlyHint: true }, parameters: schema(get), outputSchema,
+      annotations: { readOnlyHint: true }, parameters: schema(get), outputSchema: schema(coordinatorOutputs.delegate_get),
       async execute(_id, params) {
         const { sessionId } = get.parse(params);
         own([sessionId]);
@@ -199,7 +201,7 @@ export function createCoordinatorTools(options: z.output<typeof coordinatorSchem
         "Use only when a report or specific evidence is missing; no mandatory debate round. Omit budget fields to use remaining quotas; " +
         "maxTurns/maxToolCalls renew only the supplied quota. Returns a start receipt: wait, then get the updated report. " +
         "With plan saveDir, each follow-up saves to a new file, preserving previous reports. Cancelling the coordinator leaves children running.",
-      parameters: schema(follow), outputSchema,
+      parameters: schema(follow), outputSchema: schema(coordinatorOutputs.delegate_follow_up),
       async execute(_id, params, signal) {
         signal?.throwIfAborted();
         const { sessionId, prompt, maxTurns, maxToolCalls } = follow.parse(params);

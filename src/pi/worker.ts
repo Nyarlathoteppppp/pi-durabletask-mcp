@@ -35,6 +35,7 @@ import { assertProviderReady, assertThinkingSupported, resolveModel } from "./mo
 import { getRuntime } from "./runtime.js";
 import { clipArgs, flatten } from "./trace.js";
 import { createUiContext, Question } from "./ui.js";
+import { prepareResources, type ResourceSelection, type PreparedResources } from "./resources.js";
 import { WorkerRun, type FollowUpBudget, type RunBudget } from "./run.js";
 
 type AgentSession = CreateAgentSessionResult["session"];
@@ -49,6 +50,7 @@ export interface WorkerOptions extends NativeMcpOptions {
   thinking?: PiThinkingLevel | undefined;
   tools: string[];
   extensions?: boolean;
+  resources?: ResourceSelection | undefined;
   /** True saves and recovers the delegate. Default false: memory only, as for MCP callers. */
   durable?: boolean;
   /** Days to keep a finished durable delegate; RETENTION_DAYS when absent. */
@@ -91,6 +93,8 @@ const FINALIZE_PROMPT =
 export class PiWorker {
   /** Runtime protocol adapters. Deliberately separate from persisted task options. */
   customTools: ToolDefinition[] = [];
+  /** Prepared by admission so batch resource failures occur before any launch. */
+  preparedResources: PreparedResources | undefined;
   /** Session-level publication receipts; coordinator follow-ups keep the same team index. */
   reportIndex: string | undefined;
   reportIndexError: string | undefined;
@@ -233,6 +237,7 @@ export class PiWorker {
     startedAt,
     forkedFrom,
     usageBaseline,
+    resources,
   }: WorkerOptions) {
     this.id = id ?? randomUUID();
     this.forkedFrom = forkedFrom;
@@ -247,7 +252,7 @@ export class PiWorker {
     this.maxDurationMs = maxDurationMs;
     this.startedAt = startedAt ?? new Date().toISOString();
     this.currentRun = new WorkerRun(this.startedAt, { maxTurns, maxToolCalls, turnStart: 0, toolCallStart: 0 });
-    this.options = { id: this.id, label, cwd, model, thinking, tools, extensions, durable, retentionDays, nativeMcp, mcpServers: this.mcpServers, maxTurns, maxDurationMs,
+    this.options = { id: this.id, label, cwd, model, thinking, tools, extensions, resources, durable, retentionDays, nativeMcp, mcpServers: this.mcpServers, maxTurns, maxDurationMs,
       ...(maxToolCalls !== undefined ? { maxToolCalls } : {}), startedAt: this.startedAt,
       ...(forkedFrom ? { forkedFrom, usageBaseline } : {}) };
   }
@@ -276,12 +281,18 @@ export class PiWorker {
 
     // Third-party pi extensions start timers and sockets that outlive dispose() and then
     // throw against a stale ctx. A delegate does not need them.
+    const selectedResources = this.preparedResources ?? await prepareResources(this.options.resources, this.cwd, this.toolNames);
+    this.preparedResources = undefined;
     const resourceLoader = new DefaultResourceLoader({
       cwd: this.cwd,
       agentDir: AGENT_DIR,
       noExtensions: !this.extensionsEnabled,
       noSkills: true,
       noContextFiles: true,
+      ...(this.options.resources ? {
+        skillsOverride: () => ({ skills: selectedResources.skills, diagnostics: [] }),
+        agentsFilesOverride: () => ({ agentsFiles: selectedResources.agentsFiles }),
+      } : {}),
       extensionFactories: [secretPathGuard(this.cwd),
         ...(this.nativeMcp && this.toolNames.length ? nativeMcpFactories(this.cwd, this.mcpServers) : []),
         // codemode over the built-in tools, opted into by naming it; its model API stays off.
@@ -401,7 +412,7 @@ export class PiWorker {
       usageBaseline: { input, output, cacheRead, cacheWrite, totalTokens: total, cost: stats.cost },
       inherited: { cwd: this.cwd, tools: [...this.toolNames], model: this.model,
         thinking: this.thinking, extensions: this.extensionsEnabled, nativeMcp: this.nativeMcp,
-        mcpServers: [...this.mcpServers] },
+        mcpServers: [...this.mcpServers], resources: structuredClone(this.options.resources) },
     };
   }
 
@@ -841,6 +852,16 @@ export class PiWorker {
   private onEvent(ev: AgentSessionEvent): void {
     this.currentRun.lastActivityAt = Date.now();
     switch (ev.type) {
+      case "compaction_start":
+        this.currentRun.compacting = true;
+        this.onChange?.();
+        break;
+
+      case "compaction_end":
+        this.currentRun.compacting = false;
+        this.onChange?.();
+        break;
+
       case "turn_start":
         this.currentRun.awaitingModel = true;
         // Pi starts a new turn for each automatic retry of a failed request; that is not budget spent.
@@ -1086,7 +1107,8 @@ export class PiWorker {
     return end - Date.parse(this.currentRun.startedAt);
   }
 
-  snapshot({ verbose = false }: { verbose?: boolean } = {}): Snapshot {
+  snapshot({ verbose = false, diagnostics = false }: { verbose?: boolean; diagnostics?: boolean } = {}): Snapshot {
+    const stats = this.session?.getSessionStats?.();
     const full: Snapshot = {
       sessionId: this.id,
       ...(this.options.forkedFrom ? { forkedFrom: this.options.forkedFrom } : {}),
@@ -1116,7 +1138,8 @@ export class PiWorker {
       termination: this.termination,
       durable: this.durable,
       retentionDays: this.retentionDays,
-      usage: this.usage(),
+      usage: this.usage(stats),
+      ...(diagnostics && stats?.contextUsage ? { contextUsage: stats.contextUsage } : {}),
       ...this.answerState(),
       ...(this.saved ?? {}),
       ...(this.reportIndex ? { reportIndex: this.reportIndex } : {}),
@@ -1133,10 +1156,10 @@ export class PiWorker {
    * extension works in between. Long silence in "model" is slow reasoning or a hung request.
    * Nothing while a question waits for the caller: that is the caller's turn, not a stall.
    */
-  private liveness(): { idleMs?: number; phase?: "model" | "tool" | "agent" } {
+  private liveness(): { idleMs?: number; phase?: Snapshot["phase"] } {
     if (this.state !== "running" || !this.isActive || this.questions.size > 0) return {};
     return { idleMs: Math.max(0, Date.now() - this.currentRun.lastActivityAt),
-      phase: this.openCalls.size > 0 ? "tool" : this.currentRun.awaitingModel ? "model" : "agent" };
+      phase: this.currentRun.compacting ? "compaction" : this.openCalls.size > 0 ? "tool" : this.currentRun.awaitingModel ? "model" : "agent" };
   }
 
   /** Only for a finished run, and only when its final text is not a usable conclusion. */
@@ -1149,8 +1172,7 @@ export class PiWorker {
   }
 
   /** Summed from the session's entries, so it survives durable recovery with them. */
-  private usage(): Usage | undefined {
-    const stats = this.session?.getSessionStats?.();
+  private usage(stats: ReturnType<AgentSession["getSessionStats"]> | undefined): Usage | undefined {
     if (!stats) return undefined;
     const { input, output, cacheRead, cacheWrite, total } = stats.tokens;
     const baseline = this.options.usageBaseline;
@@ -1178,10 +1200,10 @@ export function compactSnapshot(full: Snapshot): Snapshot {
   const trace: ToolCallSummary[] = full.toolCalls.slice(-RECENT_CALLS).map((c) => ({ seq: c.seq, name: c.name,
     state: c.state, ms: c.ms, args: c.args && c.args.length > COMPACT_ARGS ? `${c.args.slice(0, COMPACT_ARGS)}…` : c.args }));
   // A long text written to savedTo is not repeated; verbose still has it.
-  const { lastText, ...rest } = full;
+  const { lastText, contextUsage: _diagnostic, ...rest } = full;
   const boundary = full.runStartedAt ?? full.startedAt;
   const notices = full.notices.filter((n) => n.at >= boundary).slice(-RECENT_CALLS);
-  return { ...(omitsSavedText(full) ? rest : full), toolCalls: trace, notices } as Snapshot;
+  return { ...rest, ...(omitsSavedText(full) ? {} : { lastText }), toolCalls: trace, notices } as Snapshot;
 }
 
 /** Match committed results to calls; never blindly replay an interrupted side effect. */

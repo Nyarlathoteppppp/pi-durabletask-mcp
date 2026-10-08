@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- `resources` on `spawn`, `run`, `spawn_batch` and coordinator members: absolute paths of `contextFiles` (injected as project context) and `skills` (advertised with on-demand bodies; needs `read` or `bash`). Only the selected files are used; they pass the attachment size and secret-path checks, grant no tools, and durable tasks re-read them on recovery.
+- While Pi compacts the context, `phase` is `compaction`, and verbose results include `contextUsage` (`tokens`, `contextWindow`, `percent`; null when the SDK cannot estimate yet).
+- Coordinator codemode tools describe their result shapes, and new examples show tool discovery, an evidence ledger and revisiting it.
+- Supports a managed Pi SDK install and clarifies delegate result fields.
+
 ## 0.7.11 (2026-10-07)
 
 - Team members can select reviewed GitHub, Serena, browser and Exa tools through per-task `mcpServers` and exact `tools`. Host permissions still apply; server selection grants no tools by itself. Browser members can navigate/read/scroll/close, but cannot click, fill forms or execute JavaScript.

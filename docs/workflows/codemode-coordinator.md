@@ -105,12 +105,24 @@ external MCP tools are not wrapped by Pi's built-in secret-file guard.
 
 For example, execute [coordinator.js](../examples/coordinator.js) through codemode.
 It stores full reports and prints only a receipt; a subsequent script can use
-`load("team.reports")` to synthesize without fetching reports again. Scripts are examples,
+`load("team.reports")` to synthesize without fetching reports again. Stored data is visible to the
+model only after a script emits the relevant evidence through `text()` or `return`. Scripts are examples,
 not mandatory strategies. Stronger models can choose their own sequencing and analysis.
 For a specific unresolved claim, [coordinator-follow-up.js](../examples/coordinator-follow-up.js)
 shows a bounded follow-up that keeps both reports; run it in the same coordinator
 session and replace its placeholder with the claim. A new coordinator does not inherit
 the first one's dispatch membership or codemode storage.
+
+The four tools declare their actual result fields for Codemode's TypeScript signatures. Optional
+recipes: [filter report excerpts](../examples/coordinator-evidence.js),
+[revisit stored evidence](../examples/evidence-revisit.js), and
+[discover authorized tools](../examples/discover-tools.js). Text matching is a mechanical filter,
+not a correctness judgement: keep errors, incomplete coverage and original report references.
+Use `store` for small IDs/cursors/excerpts; inspect originals whenever the excerpts lack context.
+
+Members can select `resources.contextFiles` and `resources.skills` using absolute file paths.
+They do not inherit the coordinator's selection; [resource semantics](../reference.md#explicit-instructions-and-skills)
+also apply to member forks and follow-ups.
 
 ## Saved team index
 

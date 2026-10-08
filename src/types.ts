@@ -107,7 +107,9 @@ export interface Snapshot extends FollowUpInfo {
   reportIndexError?: string | undefined;
   /** While running: ms since the delegate last produced any event, and what it is waiting on. */
   idleMs?: number | undefined;
-  phase?: "model" | "tool" | "agent" | undefined;
+  phase?: "model" | "tool" | "agent" | "compaction" | undefined;
+  /** Explicit verbose diagnostics only; null token counts mean the SDK cannot yet estimate them. */
+  contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null };
   /** Tokens and cost of the whole session so far, across follow_up; cost uses pi's model prices. */
   usage?: Usage | undefined;
 }

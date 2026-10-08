@@ -30,6 +30,8 @@ export class WorkerRun {
   lastActivityAt = Date.now();
   /** A model request is outstanding: from turn_start to the assistant's message_end. */
   awaitingModel = false;
+  /** SDK context summarization, distinct from a delegate model request. */
+  compacting = false;
   /** An automatic retry is pending: its turn_start repeats the failed turn, not a new one. */
   retrying = false;
   /** This run's prompt and its last assistant message's stop reason, for answerState. */
