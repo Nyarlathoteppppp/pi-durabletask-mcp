@@ -121,6 +121,12 @@ references. Original report bodies remain in their own files; prompts and report
 bodies are not copied into the index. Index IO failure returns `reportIndexError`
 without undoing a successful dispatch or follow-up.
 
+Outer `status`, `run` and single/batch `wait` also carry `reportIndex` after a successful
+publication, including across coordinator follow-ups. A later failure keeps that last
+successful path and adds `reportIndexError`; the old snapshot may be stale or absent.
+The next successful publication clears the error. These fields require no model-written
+reference or additional filesystem read.
+
 The index updates only when the coordinator starts, waits, reads or follows up;
 check `updatedAt`/task `observedAt`. It can be stale if the coordinator ends without
 collecting its children. A new window can read the files, but the index does not
@@ -150,6 +156,8 @@ for no index IO. This is a report snapshot, not a runtime checkpoint.
   reports. A failed script must not be assumed to have committed its store writes.
   Errors/aborts may have no saved report.
 - `maxToolCalls` counts the coordinator's own calls, not each nested child-tool call.
+  Allow headroom in turns/calls for repeated waits; set slower members' `maxDurationMs`
+  explicitly when the default four minutes is insufficient. Follow-ups retain that time limit.
   The fixed caller plan bounds dispatches; child budgets and registry admission still
   apply. Tool access is not an OS sandbox. Report saving is an authorized host write.
 

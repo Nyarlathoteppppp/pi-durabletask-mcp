@@ -65,7 +65,7 @@ Teams support Codemode loops, conditions and parallel calls, with [per-member Gi
 
 ## Quick start
 
-**Requires macOS or Linux, Node.js 22.19+ and global Pi.** CI-tested with Pi **1.0.0 and 1.0.4**; Windows is not supported. Model calls use your own provider credentials and quota.
+**Requires macOS or Linux, Node.js 22.19+ and Pi (managed or npm-global).** CI covers Pi **1.0.0, 1.0.4 and 1.1.0**; Windows is not supported. Model calls use your own provider credentials and quota.
 
 ### 1 · Install
 
@@ -80,10 +80,10 @@ npm install -g pi-durabletask-mcp
 <details>
 <summary>Install and configure Pi first</summary>
 
-The bridge links to the global Pi SDK, so install Pi before the bridge:
+The bridge uses your installed Pi SDK. Managed-install support is currently source-only; use the source option below until the next npm release. Install Pi first:
 
 ```bash
-npm install -g @earendil-works/pi-coding-agent@1.0.0
+curl -fsSL https://pi.dev/install.sh | sh
 pi  # configure a provider or use /login
 ```
 
@@ -94,7 +94,7 @@ Search uses Pi's downloaded `rg` or ripgrep on PATH. [Authentication →](docs/r
 <details>
 <summary>Install from source</summary>
 
-Global Pi is still required.
+Pi must already be installed. Reconnect the MCP after each Pi update; new bridge processes follow the current SDK.
 
 ```bash
 git clone https://github.com/Nyarlathoteppppp/pi-durabletask-mcp.git

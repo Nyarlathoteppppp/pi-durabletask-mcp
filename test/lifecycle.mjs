@@ -231,6 +231,7 @@ unbind();
   w.onEvent({ type: "tool_execution_start", toolCallId: "c2", toolName: "read", args: {} });
   w.onEvent({ type: "turn_end", toolResults: [{}] });
   assert.deepEqual(session.tools, [], "two own calls: the cap");
+  assert.match(w.notices.at(-1).message, /tool-call cap 2\/2 \(turn 2\/50\)/);
   w.dispose();
 }
 

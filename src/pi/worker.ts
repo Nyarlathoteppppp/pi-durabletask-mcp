@@ -91,6 +91,9 @@ const FINALIZE_PROMPT =
 export class PiWorker {
   /** Runtime protocol adapters. Deliberately separate from persisted task options. */
   customTools: ToolDefinition[] = [];
+  /** Session-level publication receipts; coordinator follow-ups keep the same team index. */
+  reportIndex: string | undefined;
+  reportIndexError: string | undefined;
   readonly forkedFrom: string | undefined;
   readonly id: string;
   readonly label: string | undefined;
@@ -1037,15 +1040,19 @@ export class PiWorker {
   }
 
   /**
-   * Take the tools away for the session's last turn. Turns are counted across follow_up, so no
-   * later run of this session can use tools again; nothing needs restoring.
+   * Take tools away for the final answer. Explicitly renewed follow-ups can restore the grants.
    */
   private lastTurn(session = this.session): void {
     if (!session) return;
     const hadTools = session.getActiveToolNames().length > 0;
     session.setActiveToolsByName([]);
     this.activeTools = [];
-    if (hadTools) this.notices.push({ type: "warning", message: `turn ${this.budgetTurns}/${this.maxTurns}: tools removed for the last turn`, at: new Date().toISOString() });
+    if (hadTools) {
+      const budget = this.toolCallsSpent()
+        ? `tool-call cap ${this.budgetToolCalls()}/${this.maxToolCalls} (turn ${this.budgetTurns}/${this.maxTurns})`
+        : `turn ${this.budgetTurns}/${this.maxTurns}`;
+      this.notices.push({ type: "warning", message: `${budget}: tools removed for the last turn`, at: new Date().toISOString() });
+    }
   }
 
   /** Steer once per run toward a final answer, whichever budget gets close first. */
@@ -1112,6 +1119,8 @@ export class PiWorker {
       usage: this.usage(),
       ...this.answerState(),
       ...(this.saved ?? {}),
+      ...(this.reportIndex ? { reportIndex: this.reportIndex } : {}),
+      ...(this.reportIndexError ? { reportIndexError: this.reportIndexError } : {}),
       ...this.continuation,
       ...this.liveness(),
     };
@@ -1170,7 +1179,9 @@ export function compactSnapshot(full: Snapshot): Snapshot {
     state: c.state, ms: c.ms, args: c.args && c.args.length > COMPACT_ARGS ? `${c.args.slice(0, COMPACT_ARGS)}…` : c.args }));
   // A long text written to savedTo is not repeated; verbose still has it.
   const { lastText, ...rest } = full;
-  return { ...(omitsSavedText(full) ? rest : full), toolCalls: trace, notices: full.notices.slice(-RECENT_CALLS) } as Snapshot;
+  const boundary = full.runStartedAt ?? full.startedAt;
+  const notices = full.notices.filter((n) => n.at >= boundary).slice(-RECENT_CALLS);
+  return { ...(omitsSavedText(full) ? rest : full), toolCalls: trace, notices } as Snapshot;
 }
 
 /** Match committed results to calls; never blindly replay an interrupted side effect. */

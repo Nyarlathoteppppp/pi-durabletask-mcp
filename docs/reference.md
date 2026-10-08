@@ -161,15 +161,18 @@ loaded; durable ones beyond that stay on disk until retention removes them; `for
 
 `run` and single-session `wait` keep result collection compact: by default they return `sessionId`,
 `label`, `state`, `turns`, `toolCallCount`, `lastText`, pending `questions`, the newest 5
-`notices`, and any `error` or `termination`, plus `nextAction`. It omits tool traces and
+`notices` from the current run, and any `error` or `termination`, plus `nextAction`. It omits tool traces and
 configuration/timing metadata. For progress waits, pass the previous `turns` and
 `toolCallCount` as `afterTurns` and `afterToolCalls`.
 
 `status` remains the diagnostic view, including model, configuration and timing metadata.
 By default its `toolCalls` holds the last 5 calls with arguments cut to 120 characters;
-`toolCallCount` is the total and `notices` holds the newest 5. On `run`, `status` or single-session
+`toolCallCount` is the total and `notices` holds the current run's newest 5. Batch waits include these notices when nonempty. On `run`, `status` or single-session
 `wait`, `verbose: true` returns the full snapshot, including the full ordered trace,
-every notice, and call ids and results:
+every notice across all runs, and call ids and results:
+
+The compact notice boundary is the saved run-start timestamp, inclusive; notices from
+two runs starting/ending in the same millisecond can overlap at that boundary.
 
 ```json
 {
@@ -496,15 +499,20 @@ boundary, run this server inside a container.
 
 ### SDK updates on this machine
 
-The install hook links the bridge's SDK dependency to the globally installed Pi package
-from `npm root -g`. `pi update --all` therefore updates the SDK a new bridge process will
-load, without a separate bridge SDK update. Reconnect the MCP server after updating;
-already running Node processes must not hot-swap their loaded modules. `init.pi.sdkVersion`
-and `init.pi.sdkPath` report the code actually loaded. `npm run sdk:link` restores the link
-if an install was run with lifecycle scripts disabled. Install global Pi before the bridge.
+The bridge supports both official managed installs and npm-global Pi. The install hook
+links its SDK dependency to Pi; for managed installs, each MCP startup reads
+`install/current-version` and updates the link **before importing SDK-dependent modules**.
+Discovery checks `PI_MANAGED_INSTALL_ROOT`, the selected `pi` launcher on PATH, then
+`${PI_CODING_AGENT_DIR:-~/.pi/agent}/install`. Without a managed install, the install hook
+uses `npm root -g`; the global package location remains stable across updates.
+
+Reconnect the MCP server after updating Pi; already running Node processes do not hot-swap
+loaded modules. `init.pi.sdkVersion` and `init.pi.sdkPath` report the code actually loaded.
+`npm run sdk:link` restores the link if lifecycle scripts were disabled. Install Pi before
+the bridge. Startup must be able to replace the SDK symlink when a managed release changes.
 
 `@earendil-works/pi-durable` remains an independent package; it is not updated by the Pi CLI.
-After updating global Pi, run `npm test` in the bridge checkout, then reconnect the MCP
+After updating Pi, run `npm test` in the bridge checkout, then reconnect the MCP
 process. This checks the awaited event-callback contract used by the tool execution barriers.
 `@earendil-works/pi-durable` stays pinned separately in `package.json`.
 

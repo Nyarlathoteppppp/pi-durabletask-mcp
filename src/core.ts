@@ -134,7 +134,12 @@ function withCoordinator({ coordinator, ...request }: PreparedRequest): LaunchRe
   if (!pickTools(request.tools).includes("codemode")) throw new Error("coordinator requires explicitly permitted codemode in tools.");
   const plan = coordinatorSchema.parse(coordinator);
   if (plan.saveDir !== undefined) checkSavePath(plan.saveDir, "coordinator.saveDir");
-  return { ...request, createTools: (worker) => createCoordinatorTools(plan, worker.cwd, { startBatch, waitForMany, getState, followUp }) };
+  return { ...request, createTools: (worker) => createCoordinatorTools(plan, worker.cwd,
+    { startBatch, waitForMany, getState, followUp }, (fields) => {
+      if (fields.reportIndex !== undefined) worker.reportIndex = fields.reportIndex;
+      worker.reportIndexError = fields.reportIndexError;
+      worker.onChange?.();
+    }) };
 }
 
 const inline = async ({ attachments, ...request }: PreparedRequest): Promise<LaunchRequest> =>
@@ -401,6 +406,9 @@ export interface WaitSummary extends FollowUpInfo {
   savedTo?: string;
   savedChars?: number;
   saveError?: string;
+  reportIndex?: string;
+  reportIndexError?: string;
+  notices?: Snapshot["notices"];
   answerState?: Snapshot["answerState"];
   idleMs?: number;
   phase?: Snapshot["phase"];
@@ -418,7 +426,7 @@ export async function waitForMany(
   const watched = await watch(ids);
   await until(watched, mode, timeoutMs, signal);
   const sessions = watched.map((w): WaitSummary => {
-    const s = w.finished ?? waitingSnapshot(w.worker!);
+    const s = w.finished ? compactSnapshot(w.finished) : waitingSnapshot(w.worker!);
     const done = TERMINAL.has(s.state);
     return {
       sessionId: s.sessionId, label: s.label, state: s.state, turns: s.turns, toolCallCount: s.toolCallCount,
@@ -429,6 +437,9 @@ export async function waitForMany(
       ...(done && s.savedTo ? { savedTo: s.savedTo, savedChars: s.savedChars } : {}),
       ...(done && !omitsSavedText(s) ? { lastText: s.lastText } : {}),
       ...(s.saveError ? { saveError: s.saveError } : {}),
+      ...(s.reportIndex ? { reportIndex: s.reportIndex } : {}),
+      ...(s.reportIndexError ? { reportIndexError: s.reportIndexError } : {}),
+      ...(s.notices.length ? { notices: s.notices } : {}),
       ...(s.answerState ? { answerState: s.answerState } : {}),
       ...(s.error ? { error: s.error } : {}),
       ...(s.termination ? { termination: s.termination } : {}),

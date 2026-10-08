@@ -104,15 +104,26 @@ try {
 
   // 3. Any process can read a finished session, even one another process has loaded; only taking
   //    it over for follow_up needs that process to let go.
+  const recorded = JSON.parse(catalog("SELECT snapshot FROM jobs WHERE key = ?", row("second").key)[0].snapshot);
+  const boundary = recorded.runStartedAt ?? recorded.startedAt;
+  recorded.notices = [
+    { type: "warning", message: "previous run", at: new Date(Date.parse(boundary) - 1).toISOString() },
+    { type: "info", message: "current run", at: boundary },
+  ];
+  catalog("UPDATE jobs SET snapshot = ? WHERE key = ?", JSON.stringify(recorded), row("second").key);
   const other = await connect();
   assert.equal((await other.call("status", { sessionId: "second" })).state, "done", "readable while loaded elsewhere");
   const storedWait = await other.call("wait", { sessionId: "second", timeoutMs: 250 });
   assert.equal(storedWait.state, "done");
   assert.equal(storedWait.nextAction, "finish");
   assert.equal("toolCalls" in storedWait, false, "stored waits use the same minimal output");
+  assert.deepEqual(storedWait.notices.map((n) => n.message), ["current run"]);
+  const storedBatch = await other.call("wait", { sessionIds: ["second"], until: "all_settled" });
+  assert.deepEqual(storedBatch.sessions[0].notices.map((n) => n.message), ["current run"], "stored batch wait filters historical notices");
   const storedVerbose = await other.call("wait", { sessionId: "second", verbose: true, timeoutMs: 250 });
   assert.equal(storedVerbose.durable, true);
   assert.equal(storedVerbose.nextAction, "finish");
+  assert.deepEqual(storedVerbose.notices.map((n) => n.message), ["previous run", "current run"]);
   await assert.rejects(() => other.call("follow_up", { sessionId: "second", prompt: "x" }), /running or loaded in another MCP process/);
   assert.equal((await other.call("status", { sessionId: "first" })).lastText, "OK", "stored session readable without loading");
   assert.equal((await other.call("sessions")).sessions.some((s) => s.sessionId === "first"), false, "reading did not load it");

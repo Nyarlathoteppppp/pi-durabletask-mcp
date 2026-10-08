@@ -17,7 +17,7 @@ jobs:
         node: ["22", "24"]
         # The bridge links the globally installed Pi SDK; cover the pinned version and the latest
         # one known to work, whose pi-ai types differ from the pi-ai Pi Durable pins.
-        pi: ["1.0.0", "1.0.4"]
+        pi: ["1.0.0", "1.0.4", "1.1.0"]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7

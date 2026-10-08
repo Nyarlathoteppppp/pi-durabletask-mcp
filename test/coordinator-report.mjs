@@ -61,7 +61,9 @@ try {
       return { sessionId: id, state: "running", turnsSoFar: 1 };
     },
   };
-  const tools = createCoordinatorTools(plan(saveDir), dir, core);
+  const publications = [];
+  const tools = createCoordinatorTools(plan(saveDir), dir, core, (fields) => publications.push(fields));
+  assert.deepEqual(publications, [], "no publication before a flush");
   assert.ok(tools[0].description.includes("reportIndex"));
   await assert.rejects(readdir(saveDir), { code: "ENOENT" }); // no constructor IO
   const first = await call(tools, "delegate_start_batch", { taskIndexes: [1, 0] });
@@ -70,6 +72,7 @@ try {
   assert.equal(first.failures[0].taskIndex, 0);
   assert.match(basename(first.reportIndex), /^team-[0-9a-f-]{36}\.json$/);
   let saved = await index(first);
+  assert.deepEqual(publications.at(-1), { reportIndex: first.reportIndex }, "callback follows a completed write");
   assert.equal(saved.cwd, dir);
   assert.equal(basename(first.reportIndex), `team-${saved.teamId}.json`);
   assert.ok(Date.parse(saved.createdAt) && Date.parse(saved.updatedAt));
@@ -174,12 +177,13 @@ try {
   const blocked = join(dir, "not-a-directory");
   await writeFile(blocked, "file blocks mkdir");
   let ioStarts = 0;
+  const ioPublications = [];
   const failing = createCoordinatorTools(plan(blocked, 1), dir, {
     startBatch: async () => { ioStarts++; return batch([{ index: 0, sessionId: "io-child", state: "running", model: "actual/io" }]); },
     getState: async () => snapshot("io-child"),
     waitForMany: async () => summary([snapshot("io-child")]),
     followUp: async () => ({ sessionId: "io-child", state: "running" }),
-  });
+  }, (fields) => ioPublications.push(fields));
   const failedIndex = await call(failing, "delegate_start_batch");
   assert.equal(failedIndex.started, 1);
   assert.deepEqual(failedIndex.sessionIds, ["io-child"]);
@@ -195,6 +199,16 @@ try {
   await mkdir(blocked);
   const recoveredIndex = await call(failing, "delegate_get", { sessionId: "io-child" });
   assert.equal((await index(recoveredIndex)).tasks[0].followUpVersion, 1, "IO failure does not lose in-memory metadata or poison the write chain");
+  assert.deepEqual(ioPublications.at(-1), { reportIndex: recoveredIndex.reportIndex });
+  await rm(blocked, { recursive: true });
+  await writeFile(blocked, "block the previously successful publication");
+  const failedAfterSuccess = await call(failing, "delegate_get", { sessionId: "io-child" });
+  assert.equal(typeof ioPublications.at(-1).reportIndexError, "string");
+  assert.equal(failedAfterSuccess.reportIndex, undefined, "internal tool does not claim the old publication succeeded again");
+  await rm(blocked);
+  const publishedAgain = await call(failing, "delegate_get", { sessionId: "io-child" });
+  assert.deepEqual(ioPublications.at(-1), { reportIndex: recoveredIndex.reportIndex });
+  assert.equal(publishedAgain.reportIndexError, undefined);
 
   const noSaveDir = join(dir, "memory-only");
   await mkdir(noSaveDir);
@@ -206,7 +220,7 @@ try {
       assert.equal(saveTo, undefined);
       return { sessionId: "memory-child", state: "running" };
     },
-  });
+  }, () => { throw new Error("no saveDir must not publish metadata"); });
   assert.ok(!memory[0].description.includes("reportIndex"), "default description has no index guidance");
   for (const [name, args] of [
     ["delegate_start_batch", {}], ["delegate_wait", { timeoutMs: 0 }],

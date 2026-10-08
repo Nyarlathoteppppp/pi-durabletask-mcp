@@ -26,6 +26,7 @@ scenario("creation-failure", async () => {
     w.session = session(w, prompt);
     w.state = "done";
     w.lastText = "previous answer";
+    w.notices.push({ type: "warning", message: "previous notice", at: new Date().toISOString() });
     w.turns = 20;
     w.job = durable ? await DurableJob.open(w.options, "previous") : new MemoryJob();
     w.job.begin = async () => { throw new Error("task creation failed"); };
@@ -38,6 +39,7 @@ scenario("creation-failure", async () => {
       assert.equal(w.maxToolCalls, undefined);
       assert.deepEqual(w.snapshot().budgetStart, { turns: 0, toolCalls: 0 });
       assert.equal(w.lastText, "previous answer", "failed creation keeps the previous result");
+      assert.deepEqual(w.snapshot().notices.map((n) => n.message), ["previous notice"], "refused follow-up keeps the previous run's notice boundary");
     } finally { w.dispose(); await w.job.forget(); }
   }
 });
@@ -87,6 +89,32 @@ scenario("legacy-budget", async () => {
   assert.throws(() => w.followUp("invalid", { maxToolCalls: 0 }), /maxToolCalls must/);
   assert.equal(w.state, "done");
   w.dispose();
+});
+
+scenario("run-notices", async () => {
+  const w = worker("run-notices");
+  const prompt = Promise.withResolvers();
+  w.session = session(w, prompt);
+  w.job = new MemoryJob();
+  w.state = "done";
+  w.currentRun.startedAt = "2000-01-01T00:00:00.000Z";
+  const old = { type: "warning", message: "old run budget", at: w.currentRun.startedAt };
+  w.notices.push(old);
+  try {
+    await w.followUp("next");
+    const current = { type: "info", message: "this run", at: w.currentRun.startedAt };
+    w.notices.push(current);
+    assert.deepEqual(w.snapshot().notices, [current], "include boundary notices, exclude previous run");
+    assert.deepEqual(w.snapshot({ verbose: true }).notices, [old, current], "keep the full diagnostic history");
+    const checkpoint = w.checkpoint();
+    assert.deepEqual(checkpoint.snapshot.notices, [old, current]);
+    w.restoreSnapshot(checkpoint);
+    assert.deepEqual(w.snapshot().notices, [current], "recovery retains the original run boundary");
+    delete checkpoint.snapshot.runStartedAt;
+    checkpoint.snapshot.startedAt = old.at;
+    w.restoreSnapshot(checkpoint);
+    assert.deepEqual(w.snapshot().notices, [old, current], "legacy checkpoints preserve unscoped history");
+  } finally { prompt.resolve(); await w.run; w.dispose(); await w.job.forget(); }
 });
 
 scenario("old-completion", async () => {

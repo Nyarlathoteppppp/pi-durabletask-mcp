@@ -57,7 +57,10 @@ const http = createServer(async (req, res) => {
   };
   const answer = (content) => { emit({ role: "assistant", content }); emit({}, "stop"); };
   const scripts = request.messages.filter((m) => m.role === "assistant").flatMap((m) => m.tool_calls ?? []).filter((c) => c.function.name === "codemode").length;
-  if (prompt === '""') {
+  if (prompt.includes("INDEX_REFRESH")) {
+    if (request.messages.at(-1).role === "user") tool("codemode", { code: 'return await tools.delegate_wait({timeoutMs:0});' });
+    else answer("INDEX REFRESH DONE");
+  } else if (prompt === '""') {
     answer("EMPTY PROMPT PRESERVED");
   } else if (prompt.includes("PARALLEL_COORDINATOR")) {
     if (!scripts) tool("codemode", {code:'const [b,w]=await Promise.all([tools.delegate_start_batch({}),tools.delegate_wait({timeoutMs:5000})]); return {started:b.sessionIds.length,waited:w.sessions.length};'});
@@ -149,6 +152,29 @@ try {
   // Tool trace results are intentionally shortened; check the persisted team projection instead.
   const indexes = (await readdir(coordinator.saveDir)).filter((p) => /^team-.*\.json$/.test(p));
   assert.equal(indexes.length, 1);
+  const reportIndex = join(coordinator.saveDir, indexes[0]);
+  assert.equal(boss.reportIndex, reportIndex);
+  assert.equal(full.reportIndex, reportIndex);
+  assert.equal((await call("wait", { sessionId: "boss", until: "settled" })).reportIndex, reportIndex);
+  assert.equal((await call("wait", { sessionId: "boss", until: "settled", verbose: true })).reportIndex, reportIndex);
+  assert.equal((await call("wait", { sessionIds: ["boss"], until: "all_settled" })).sessions[0].reportIndex, reportIndex);
+  // A normal follow-up that performs no report publication retains the session's index.
+  await call("follow_up", { sessionId: "boss", prompt: "short follow-up", maxTurns: 2 });
+  assert.equal((await settle("boss")).reportIndex, reportIndex);
+  // A later write failure preserves the previous receipt but exposes that it is stale.
+  await rm(reportIndex);
+  await mkdir(reportIndex);
+  await call("follow_up", { sessionId: "boss", prompt: "INDEX_REFRESH", maxTurns: 3, maxToolCalls: 3 });
+  const failedPublication = await settle("boss");
+  assert.equal(failedPublication.state, "done", "index IO does not fail the execution");
+  assert.equal(failedPublication.reportIndex, reportIndex);
+  assert.equal(typeof failedPublication.reportIndexError, "string");
+  assert.equal(typeof (await call("wait", { sessionIds: ["boss"] })).sessions[0].reportIndexError, "string");
+  await rm(reportIndex, { recursive: true });
+  await call("follow_up", { sessionId: "boss", prompt: "INDEX_REFRESH", maxTurns: 3, maxToolCalls: 3 });
+  const republished = await settle("boss");
+  assert.equal(republished.reportIndex, reportIndex);
+  assert.equal(republished.reportIndexError, undefined, "successful publication clears the old error");
   const savedTeam = JSON.parse(await readFile(join(coordinator.saveDir, indexes[0]), "utf8"));
   const batch = { sessionIds: savedTeam.tasks.map((s) => s.sessionId), sessions: savedTeam.tasks };
   assert.deepEqual(savedTeam.tasks.map((s) => s.state), ["done", "error"]);

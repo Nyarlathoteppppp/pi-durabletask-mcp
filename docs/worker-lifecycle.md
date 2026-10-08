@@ -76,7 +76,7 @@ Public `session.subscribe()` callbacks run earlier and update the worker's trace
 | `agent_end` | Latest checkpoint, before job finalization |
 
 Native nested calls bypass the agent subscriber. Their awaited `tool_call` hook commits intent;
-`tool_execution_end` stages and saves the result. Keep both barriers. A global Pi update must
+`tool_execution_end` stages and saves the result. Keep both barriers. A Pi update must
 preserve these SDK ordering contracts; see `recovery.mjs` and `native-recovery.mjs` below.
 
 ## Cancel, suspend and resume

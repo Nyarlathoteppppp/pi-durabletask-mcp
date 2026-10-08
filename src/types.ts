@@ -101,6 +101,10 @@ export interface Snapshot extends FollowUpInfo {
   savedChars?: number | undefined;
   /** Writing the final text failed; it is returned inline instead. */
   saveError?: string | undefined;
+  /** Last successfully published team index; a snapshot, not live team state or recovery data. */
+  reportIndex?: string | undefined;
+  /** Latest team-index publication failed; reportIndex, if present, may be stale. */
+  reportIndexError?: string | undefined;
   /** While running: ms since the delegate last produced any event, and what it is waiting on. */
   idleMs?: number | undefined;
   phase?: "model" | "tool" | "agent" | undefined;

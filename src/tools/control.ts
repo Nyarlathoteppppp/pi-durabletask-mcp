@@ -21,11 +21,11 @@ export function registerControl(server: McpServer): void {
         "pending questions the agent is waiting on. A non-empty `questions` array means it is blocked " +
         "until you call `answer`. `toolCalls` holds the last 5 calls with shortened arguments and " +
         "`toolCallCount` the total; pass `verbose: true` for every call with ids and results. " +
-        "Notices include Pi's automatic provider retries. remainingTurns/canFollowUp report state and turn-budget " +
+        "Notices cover this run; verbose preserves their full history. Teams with saveDir expose reportIndex and publication errors. remainingTurns/canFollowUp report state and turn-budget " +
         "readiness; ownership, capacity and auth are checked by follow_up.",
       inputSchema: {
         sessionId: z.string(),
-        verbose: z.boolean().optional().describe("Include tool results and call ids in the trace"),
+        verbose: z.boolean().optional().describe("Include the full tool trace and notice history"),
       },
     },
     async ({ sessionId, verbose }) => json(withNextAction(await getState(sessionId, verbose))),
@@ -55,7 +55,8 @@ export function registerControl(server: McpServer): void {
         "(\"settled\") or all do (\"all_settled\"): settled/pending ids, continueIds (everything not finished, " +
         "including sessions waiting for an answer) and a summary per session, with the final text of finished " +
         "ones and any pending questions. Answer questions, then wait again on continueIds. " +
-        "Single-session results omit the tool trace and configuration by default; use verbose: true for the full snapshot. " +
+        "Single-session results omit the tool trace and configuration by default; use verbose: true for the full snapshot and notice history. " +
+        "Teams with saveDir expose reportIndex; reportIndexError means its latest publication failed. " +
         "nextAction is wait, answer or finish; finish means this run ended, so check state/error/termination. " +
         "Cancelling this wait leaves delegates running; use `abort` to stop one.",
       inputSchema: {

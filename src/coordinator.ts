@@ -69,9 +69,15 @@ export type CoordinatorOptions = z.input<typeof coordinatorSchema>;
 type Operations = { startBatch: typeof startBatch; waitForMany: typeof waitForMany; getState: typeof getState; followUp: typeof followUp };
 
 /** Runtime closures only: neither these definitions nor dispatch membership go into SQLite. */
-export function createCoordinatorTools(options: z.output<typeof coordinatorSchema>, cwd: string, core: Operations): ToolDefinition[] {
+export function createCoordinatorTools(options: z.output<typeof coordinatorSchema>, cwd: string, core: Operations,
+  onReport?: (fields: { reportIndex?: string; reportIndexError?: string }) => void): ToolDefinition[] {
   const report = createCoordinatorReport(options, cwd);
-  const reportFields = async () => report ? await report.flush() : {};
+  const reportFields = async () => {
+    if (!report) return {};
+    const fields = await report.flush();
+    onReport?.(fields);
+    return fields;
+  };
   const dispatched = new Set<number>();
   const owned = new Set<string>();
   /** Dispatches still starting: a wait for "all launched children" includes them. */

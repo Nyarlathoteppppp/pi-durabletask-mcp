@@ -67,7 +67,7 @@
 
 ## 快速开始
 
-**需要 macOS 或 Linux、Node.js 22.19+ 和全局安装的 Pi。** CI 覆盖 Pi **1.0.0 和 1.0.4**；不支持 Windows。模型调用使用你自己的供应商认证和额度。
+**需要 macOS 或 Linux、Node.js 22.19+ 和 Pi（托管或 npm 全局安装）。** CI 覆盖 Pi **1.0.0、1.0.4 和 1.1.0**；不支持 Windows。模型调用使用你自己的供应商认证和额度。
 
 ### 1 · 安装
 
@@ -82,10 +82,10 @@ npm install -g pi-durabletask-mcp
 <details>
 <summary>先安装并配置 Pi</summary>
 
-桥接服务会链接到全局 Pi SDK，因此要先装 Pi，再装桥接服务：
+桥接服务使用你已安装的 Pi SDK。托管安装适配目前仅在源码中，下次 npm 发版前请用下方源码安装方式。先安装 Pi：
 
 ```bash
-npm install -g @earendil-works/pi-coding-agent@1.0.0
+curl -fsSL https://pi.dev/install.sh | sh
 pi  # 配置模型供应商，或通过 /login 登录
 ```
 
@@ -96,7 +96,7 @@ pi  # 配置模型供应商，或通过 /login 登录
 <details>
 <summary>从源码安装</summary>
 
-仍需全局安装 Pi。
+需先安装 Pi。每次更新 Pi 后重连 MCP，新桥接进程会使用当前 SDK。
 
 ```bash
 git clone https://github.com/Nyarlathoteppppp/pi-durabletask-mcp.git
