@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `spawn_batch` also checks coordinator child attachments before starting any task, for both batch defaults and per-task plans.
 - Coordinator plans accept `attachments`, as a plan default for every member or per member (`[]` for none), with the same secret-path and size checks as `spawn_batch`, checked when the coordinator starts. Scripts cannot attach files through `delegate_follow_up`.
 - `resources` on `spawn`, `run`, `spawn_batch` and coordinator members: absolute paths of `contextFiles` (injected as project context) and `skills` (advertised with on-demand bodies; needs `read` or `bash`). Only the selected files are used; they pass the attachment size and secret-path checks, grant no tools, and durable tasks re-read them on recovery.
 - While Pi compacts the context, `phase` is `compaction`, and verbose results include `contextUsage` (`tokens`, `contextWindow`, `percent`; null when the SDK cannot estimate yet).

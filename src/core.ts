@@ -144,14 +144,17 @@ function withCoordinator({ coordinator, ...request }: PreparedRequest): LaunchRe
     }) };
 }
 
-const inline = async ({ attachments, ...request }: PreparedRequest): Promise<LaunchRequest> => {
+async function checkCoordinatorAttachments(plan: CoordinatorOptions | undefined): Promise<void> {
   // A coordinator plan's files are checked now, so a bad path fails this call, not a later dispatch.
   // Each member's own list, as dispatch will read it: limits apply per member, and a default every
   // member replaces is never read.
-  const plan = request.coordinator;
   const lists = new Map((plan?.tasks ?? []).map((t) => t.attachments ?? plan?.attachments ?? [])
     .filter((paths) => paths.length).map((paths) => [JSON.stringify(paths), paths]));
   for (const paths of lists.values()) await readTextFiles(paths, "coordinator.attachments");
+}
+
+const inline = async ({ attachments, ...request }: PreparedRequest): Promise<LaunchRequest> => {
+  await checkCoordinatorAttachments(request.coordinator);
   return { ...withCoordinator(request), prompt: await withAttachments(request.prompt, attachments) };
 };
 
@@ -229,6 +232,7 @@ export async function startBatch({
     try {
       pickTools(t.tools);
       withCoordinator(t);
+      await checkCoordinatorAttachments(t.coordinator);
       const taskCwd = await resolveDelegateCwd(t.cwd ?? cwd);
       validateNativeMcp(t, taskCwd);
       t.preparedResources = await prepareResources(t.resources, taskCwd, pickTools(t.tools));

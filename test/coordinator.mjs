@@ -247,6 +247,21 @@ try {
   assert.match(attachBoss.lastText,/without:NO_FILE/);
   const secretAttach=await raw("spawn",{cwd:dir,prompt:"x",tools:["codemode"],coordinator:{attachments:[join(dir,".env")],tasks:[{prompt:"ATTACH_CHILD",tools:[]}]}});
   assert.equal(secretAttach.isError,true,"a secret attachment is refused like on spawn_batch");
+  // Both inherited and per-task coordinator plans must fail batch preflight before any sibling starts.
+  const badAttachmentPlan = { ...shortPlan, attachments: [join(dir, "missing-team.diff")] };
+  for (const inheritedPlan of [true, false]) {
+    const ids = [`attach-batch-good-${inheritedPlan}`, `attach-batch-bad-${inheritedPlan}`];
+    const rejected = await raw("spawn_batch", { cwd: dir, maxTurns: 1,
+      ...(inheritedPlan ? { coordinator: badAttachmentPlan } : {}),
+      tasks: [
+        { id: ids[0], prompt: "preflight sibling", ...(inheritedPlan ? { coordinator: shortPlan } : { tools: [] }) },
+        { id: ids[1], prompt: "preflight coordinator", ...(inheritedPlan ? {} : { coordinator: badAttachmentPlan }) },
+      ] });
+    assert.equal(rejected.isError, true, "invalid child attachments must reject the whole batch");
+    assert.match(rejected.content[0].text, /tasks\[1\].*coordinator\.attachments/);
+    const sessions = (await call("sessions", {})).sessions;
+    assert.ok(!sessions.some((s) => ids.includes(s.sessionId)), "batch preflight must not start either task");
+  }
   // Limits apply per member, as at dispatch: 600 KB each is valid even though the plan holds 1.2 MB.
   const part=async(name)=>{ const f=join(dir,name); await writeFile(f,"x".repeat(200*1024)); return f; };
   const listA=[await part("a1.txt"),await part("a2.txt"),await part("a3.txt")], listB=[await part("b1.txt"),await part("b2.txt"),await part("b3.txt")];
