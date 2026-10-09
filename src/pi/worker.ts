@@ -34,6 +34,9 @@ import { nestedResults, repairEntries } from "./repair.js";
 import { createSession, loadResources, type SessionSpec } from "./session.js";
 import { compactSnapshot } from "./snapshot.js";
 
+// The public ./worker entry point exported these before they moved.
+export { compactSnapshot, message, repairEntries };
+
 type AgentSession = CreateAgentSessionResult["session"];
 
 const NOOP = (): void => {};
