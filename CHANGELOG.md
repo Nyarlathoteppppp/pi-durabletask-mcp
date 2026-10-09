@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Claude's local status line shows delegate model/thinking and state, with question priority and recent terminal details. Compact waits omit active-run partial prose and info notices while retaining questions, warnings/errors and terminal results; status and verbose diagnostics stay unchanged.
+- Server instructions ask callers to show work type, actual model and thinking once per started/continued delegate, without repeating on polling. `run` and `follow_up` now include actual model/thinking in their compact receipts for Codex and Claude callers.
 - `spawn_batch` also checks coordinator child attachments before starting any task, for both batch defaults and per-task plans.
 - Coordinator plans accept `attachments`, as a plan default for every member or per member (`[]` for none), with the same secret-path and size checks as `spawn_batch`, checked when the coordinator starts. Scripts cannot attach files through `delegate_follow_up`.
 - `resources` on `spawn`, `run`, `spawn_batch` and coordinator members: absolute paths of `contextFiles` (injected as project context) and `skills` (advertised with on-demand bodies; needs `read` or `bash`). Only the selected files are used; they pass the attachment size and secret-path checks, grant no tools, and durable tasks re-read them on recovery.

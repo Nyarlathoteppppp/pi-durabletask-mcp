@@ -203,7 +203,7 @@ export function registerSpawn(server: McpServer): void {
     async ({ verbose, ...args }, extra) => {
       // Progress notifications reset the MCP request timeout, which defaults to 60s.
       const token = extra?._meta?.progressToken;
-      return json(waitResult(await runExecution(args, {
+      const snapshot = await runExecution(args, {
         signal: extra.signal,
         verbose,
         onProgress: token ? async ({ state, turns }) => {
@@ -212,7 +212,8 @@ export function registerSpawn(server: McpServer): void {
             params: { progressToken: token, progress: turns, message: `${state}, turn ${turns}` },
           });
         } : undefined,
-      }), verbose));
+      });
+      return json({ ...waitResult(snapshot, verbose), model: snapshot.model, thinking: snapshot.thinking });
     },
   );
 }

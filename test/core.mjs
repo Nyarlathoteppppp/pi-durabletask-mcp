@@ -77,9 +77,27 @@ try {
 
   const started = await core.startExecution({ cwd: dir, id: "core-start", prompt: "work", tools: [] });
   const w = registry.loaded(started.sessionId);
+  w.lastText = "old partial narrative";
+  const noticeAt = new Date().toISOString();
+  const info = { type: "info", message: "ordinary update", at: noticeAt };
+  const warning = { type: "warning", message: "provider retry is visible", at: noticeAt };
+  const error = { type: "error", message: "extension failure is visible", at: noticeAt };
+  const custom = { type: "custom", message: "unknown notice types are preserved", at: noticeAt };
+  w.notices.push(info, warning, error, custom);
   assert.equal((await call("status", { sessionId: w.id })).state, "running");
   assert.equal((await call("status", { sessionId: w.id })).nextAction, "wait");
   assert.equal((await call("wait", { sessionId: w.id, afterTurns: 0 })).nextAction, "wait");
+  const briefWait = await call("wait", { sessionId: w.id, afterTurns: 0 });
+  assert.equal("lastText" in briefWait, false, "running waits do not repeat partial prose");
+  assert.deepEqual(briefWait.notices, [warning, error, custom]);
+  assert.equal(briefWait.toolCallCount, 0);
+  assert.equal(briefWait.phase, (await core.getState(w.id)).phase, "liveness remains visible");
+  const detailedWait = await call("wait", { sessionId: w.id, afterTurns: 0, verbose: true });
+  assert.equal(detailedWait.lastText, w.lastText);
+  assert.deepEqual(detailedWait.notices, w.notices);
+  const diagnosticState = await call("status", { sessionId: w.id });
+  assert.equal(diagnosticState.lastText, w.lastText);
+  assert.deepEqual(diagnosticState.notices, w.notices, "status stays diagnostic");
   assert.equal("nextAction" in await core.getState(w.id), false, "caller advice stays in the MCP adapter");
   assert.equal((await call("steer", { sessionId: w.id, message: "focus" })).queued, 1);
   assert.deepEqual(w.session.getSteeringMessages(), ["focus"]);
@@ -89,6 +107,8 @@ try {
   const questionSnapshot = await call("wait", { sessionId: w.id, timeoutMs: 1000 });
   assert.equal(questionSnapshot.questions[0].id, q.id);
   assert.equal(questionSnapshot.nextAction, "answer");
+  assert.equal("lastText" in questionSnapshot, false);
+  assert.deepEqual(questionSnapshot.notices, [warning, error, custom]);
   assert.equal((await call("status", { sessionId: w.id })).nextAction, "answer");
   assert.equal(w.questions.has(q.id), true, "wait observes the question without answering");
   await call("answer", { sessionId: w.id, requestId: q.id, value: true });
@@ -103,7 +123,10 @@ try {
   assert.equal((await raw("forget", { sessionId: w.id })).isError, true);
   runs.get(w.id).resolve();
   await w.run;
-  assert.equal((await call("wait", { sessionId: w.id, timeoutMs: 250 })).state, "done");
+  const finalWait = await call("wait", { sessionId: w.id, timeoutMs: 250 });
+  assert.equal(finalWait.state, "done");
+  assert.equal(finalWait.lastText, w.lastText, "terminal answers remain intact");
+  assert.deepEqual(finalWait.notices, w.notices, "terminal waits retain info notices too");
   assert.equal((await call("status", { sessionId: w.id })).nextAction, "finish");
   const turnsBefore = w.turns;
   await call("follow_up", { sessionId: w.id, prompt: "another run" });
@@ -183,12 +206,21 @@ try {
   // A batch member waiting for an answer stays in the set the caller keeps waiting on.
   const asker = await core.startExecution({ cwd: dir, id: "batch-asker", prompt: "work", tools: [] });
   const quiet = await core.startExecution({ cwd: dir, id: "batch-quiet", prompt: "work", tools: [] });
+  const quietWorker = registry.loaded(quiet.sessionId);
+  quietWorker.lastText = "still working";
+  const batchAt = new Date().toISOString();
+  const batchInfo = { type: "info", message: "ordinary batch update", at: batchAt };
+  const batchWarning = { type: "warning", message: "batch warning", at: batchAt };
+  const batchError = { type: "error", message: "batch error", at: batchAt };
+  quietWorker.notices.push(batchInfo, batchWarning, batchError);
   const ask = new Question("confirm", "continue?");
   registry.loaded(asker.sessionId).questions.set(ask.id, ask);
   const seenBatch = await call("wait", { sessionIds: [asker.sessionId, quiet.sessionId], timeoutMs: 1000 });
   assert.deepEqual(seenBatch.settled, [asker.sessionId], "a question settles the wait");
   assert.equal(seenBatch.nextAction, "answer");
   assert.equal(seenBatch.sessions.find((s) => s.sessionId === quiet.sessionId).nextAction, "wait");
+  assert.deepEqual(seenBatch.sessions.find((s) => s.sessionId === quiet.sessionId).notices, [batchWarning, batchError]);
+  assert.equal("lastText" in seenBatch.sessions.find((s) => s.sessionId === quiet.sessionId), false);
   assert.equal(seenBatch.sessions.find((s) => s.sessionId === asker.sessionId).nextAction, "answer");
   assert.deepEqual(seenBatch.continueIds?.sort(), [asker.sessionId, quiet.sessionId].sort(),
     "both still need waiting on after the answer");
@@ -199,6 +231,9 @@ try {
   assert.deepEqual(doneBatch.continueIds, []);
   assert.equal(doneBatch.nextAction, "finish");
   assert.ok(doneBatch.sessions.every((s) => s.nextAction === "finish"));
+  const quietDone = doneBatch.sessions.find((s) => s.sessionId === quiet.sessionId);
+  assert.equal(quietDone.lastText, quietWorker.lastText);
+  assert.deepEqual(quietDone.notices, quietWorker.notices);
 
   console.log("  OK -> core/custom MCP shared state, follow-up, interaction, cancel vs wait, progress cleanup");
 } finally {

@@ -3,6 +3,9 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 const [cmd, ...args] = process.argv.slice(2);
 const c = new Client({ name: "launch", version: "0" });
 await c.connect(new StdioClientTransport({ command: cmd, args }));
+const instructions = c.getInstructions();
+if (!instructions?.includes("<work type> · <model> · <thinking>") || !instructions.includes("Do not repeat on status/wait"))
+  throw new Error("clients must receive the once-per-delegate display instruction during initialization");
 const { tools } = await c.listTools();
 for (const name of ["status", "wait", "sessions", "models"]) {
   if (tools.find(tool => tool.name === name)?.annotations?.readOnlyHint !== true)

@@ -28,10 +28,11 @@ export function waitResult(snapshot: Snapshot, verbose?: boolean) {
     remainingTurns, canFollowUp, followUpBlockedReason, idleMs, phase, answerState, savedTo, savedChars, saveError,
     touchedFiles, editWriteCount, reportIndex, reportIndexError } = snapshot;
   const finished = state === "done" || state === "aborted" || state === "error";
+  const visibleNotices = finished ? notices : notices.filter((n) => n.type !== "info");
   return withNextAction({ sessionId, ...(forkedFrom ? { forkedFrom } : {}), label, state, turns, toolCallCount,
     // A long text the caller asked to have saved is not returned again; it is in savedTo.
-    ...(savedTo ? { savedTo, savedChars } : {}), ...(omitsSavedText(snapshot) ? {} : { lastText }), ...(saveError ? { saveError } : {}),
-    ...(answerState ? { answerState } : {}), questions, notices, error, termination,
+    ...(savedTo ? { savedTo, savedChars } : {}), ...(finished && !omitsSavedText(snapshot) ? { lastText } : {}), ...(saveError ? { saveError } : {}),
+    ...(answerState ? { answerState } : {}), questions, notices: visibleNotices, error, termination,
     ...(editWriteCount ? { touchedFiles, editWriteCount } : {}),
     ...(reportIndex ? { reportIndex } : {}), ...(reportIndexError ? { reportIndexError } : {}),
     remainingTurns, canFollowUp, ...(followUpBlockedReason ? { followUpBlockedReason } : {}),

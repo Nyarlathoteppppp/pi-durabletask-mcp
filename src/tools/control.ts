@@ -55,7 +55,7 @@ export function registerControl(server: McpServer): void {
         "(\"settled\") or all do (\"all_settled\"): settled/pending ids, continueIds (everything not finished, " +
         "including sessions waiting for an answer) and a summary per session, with the final text of finished " +
         "ones and any pending questions. Answer questions, then wait again on continueIds. " +
-        "Single-session results omit the tool trace and configuration by default; use verbose: true for the full snapshot and notice history. " +
+        "Running compact waits omit partial text and info notices; questions and warnings/errors remain. Use status or verbose: true for detail. " +
         "Teams with saveDir expose reportIndex; reportIndexError means its latest publication failed. " +
         "nextAction is wait, answer or finish; finish means this run ended, so check state/error/termination. " +
         "Cancelling this wait leaves delegates running; use `abort` to stop one.",

@@ -40,30 +40,45 @@ function mine(servers: StateFile[], cwd: string | undefined): PublishedSession[]
   return cwd ? sessions.filter((s) => s.cwd === cwd) : sessions;
 }
 
+function detail(s: PublishedSession, progress = false): string {
+  const fields: string[] = [s.state];
+  if (s.questions > 0) fields.push("waiting questions");
+  if (s.model) fields.push(s.model);
+  if (s.thinking !== undefined) fields.push(`thinking:${s.thinking}`);
+  if (progress) {
+    if (s.turns !== undefined) fields.push(`t${s.turns}`);
+    const age = elapsed(s.startedAt);
+    if (age) fields.push(age);
+  }
+  return `${short(s.label || s.id)}${DIM}·${fields.join("·")}${RESET}`;
+}
+
 export function segment(cwd?: string): string {
   const sessions = mine(readAll(), cwd);
   if (sessions.length === 0) return "";
 
   const running = sessions.filter((s) => s.state === "running" || s.state === "starting");
   const asking = sessions.filter((s) => s.questions > 0);
-  const failed = sessions.filter((s) => s.state === "error");
+  const terminal = sessions.filter((s) => ["done", "error", "aborted"].includes(s.state));
+  const done = terminal.filter((s) => s.state === "done").length;
+  const failed = terminal.filter((s) => s.state === "error").length;
+  const aborted = terminal.filter((s) => s.state === "aborted").length;
+  const counts: string[] = [];
+  if (done) counts.push(`${GREEN}✓${done}${RESET}`);
+  if (failed) counts.push(`${RED}✗${failed}${RESET}`);
+  if (aborted) counts.push(`${DIM}⊘${aborted} aborted${RESET}`);
 
-  if (running.length === 0 && asking.length === 0) {
-    const done = sessions.filter((s) => s.state === "done").length;
-    const parts: string[] = [];
-    if (done) parts.push(`${GREEN}✓${done}${RESET}`);
-    if (failed.length) parts.push(`${RED}✗${failed.length}${RESET}`);
+  // Pending answers get a detail slot even when other delegates are still running.
+  const active = [...asking, ...running.filter((s) => !(s.questions > 0))];
+  if (active.length === 0) {
+    const details = terminal.slice(-2).map((s) => detail(s));
+    const parts = [...details, ...counts];
     return parts.length ? `${DIM}π${RESET} ${parts.join(" ")}` : "";
   }
 
-  const detail = running
-    .slice(0, 3)
-    .map((s) => {
-      const age = elapsed(s.startedAt);
-      return `${short(s.label || s.id)}${DIM}·t${s.turns}${age ? `·${age}` : ""}${RESET}`;
-    })
-    .join(" ");
-  const more = running.length > 3 ? ` ${DIM}+${running.length - 3}${RESET}` : "";
+  const details = active.slice(0, 3).map((s) => detail(s, true)).join(" ");
+  const more = active.length > 3 ? ` ${DIM}+${active.length - 3}${RESET}` : "";
   const ask = asking.length ? ` ${YELLOW}?${asking.length} waiting${RESET}` : "";
-  return `${DIM}π${RESET} ${RUNNING} ${detail}${more}${ask}`.trim();
+  const summary = counts.length ? ` ${counts.join(" ")}` : "";
+  return `${DIM}π${RESET} ${RUNNING} ${details}${more}${ask}${summary}`.trim();
 }

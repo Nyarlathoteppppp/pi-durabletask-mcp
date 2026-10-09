@@ -444,6 +444,7 @@ export async function waitForMany(
   const sessions = watched.map((w): WaitSummary => {
     const s = w.finished ? compactSnapshot(w.finished) : waitingSnapshot(w.worker!);
     const done = TERMINAL.has(s.state);
+    const notices = done ? s.notices : s.notices.filter((n) => n.type !== "info");
     return {
       sessionId: s.sessionId, label: s.label, state: s.state, turns: s.turns, toolCallCount: s.toolCallCount,
       ...(s.forkedFrom ? { forkedFrom: s.forkedFrom } : {}),
@@ -455,7 +456,7 @@ export async function waitForMany(
       ...(s.saveError ? { saveError: s.saveError } : {}),
       ...(s.reportIndex ? { reportIndex: s.reportIndex } : {}),
       ...(s.reportIndexError ? { reportIndexError: s.reportIndexError } : {}),
-      ...(s.notices.length ? { notices: s.notices } : {}),
+      ...(notices.length ? { notices } : {}),
       ...(s.answerState ? { answerState: s.answerState } : {}),
       ...(s.error ? { error: s.error } : {}),
       ...(s.termination ? { termination: s.termination } : {}),
@@ -496,7 +497,8 @@ export async function followUp(sessionId: string, prompt: string, attachments?: 
   // Each run states its own destination; a follow_up without saveTo returns its text inline.
   const previousSaveTo = worker.saveTo;
   worker.saveTo = saveTo;
-  try { return { ...await worker.followUp(text, budget), state: observedState(worker), next: WAIT_HINT }; }
+  try { return { ...await worker.followUp(text, budget), model: worker.model,
+    thinking: worker.thinking, state: observedState(worker), next: WAIT_HINT }; }
   catch (error) { worker.saveTo = previousSaveTo; throw error; }
 }
 

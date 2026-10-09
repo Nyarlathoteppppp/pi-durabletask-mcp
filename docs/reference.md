@@ -188,14 +188,18 @@ before batch launch. Durable tasks retain the selection and re-read the current 
 resource contents are not frozen snapshots.
 
 `run` and single-session `wait` keep result collection compact: by default they return `sessionId`,
-`label`, `state`, `turns`, `toolCallCount`, `lastText`, pending `questions`, the newest 5
-`notices` from the current run, and any `error` or `termination`, plus `nextAction`. It omits tool traces and
-configuration/timing metadata. For progress waits, pass the previous `turns` and
+`label`, `state`, `turns`, `toolCallCount`, pending `questions`, current-run `notices`,
+and any `error` or `termination`, plus `nextAction`. Active compact waits omit partial `lastText`
+and `info` notices; warnings, errors and unknown notice types remain. Terminal results keep
+the final text and recent notices. `run` also reports the actual `model` and `thinking`, as do
+`spawn`, `spawn_batch` and `follow_up` receipts. Tool traces and other configuration/timing
+metadata are omitted. For progress waits, pass the previous `turns` and
 `toolCallCount` as `afterTurns` and `afterToolCalls`.
 
 `status` remains the diagnostic view, including model, configuration and timing metadata.
 By default its `toolCalls` holds the last 5 calls with arguments cut to 120 characters;
-`toolCallCount` is the total and `notices` holds the current run's newest 5. Batch waits include these notices when nonempty. On `run`, `status` or single-session
+`toolCallCount` is the total and `notices` holds the current run's newest 5. Batch waits use the
+same active/terminal notice filtering and include notices when nonempty. On `run`, `status` or single-session
 `wait`, `verbose: true` returns the full snapshot, including the full ordered trace,
 every notice across all runs, and call ids and results:
 
@@ -484,10 +488,15 @@ you already run and appends a segment showing this workspace's delegates:
 Drop `PI_DELEGATE_STATUSLINE_WRAP` to print the pi segment alone.
 
 ```
-π ▸ audit engine·t1·12s audit index·t2·8s   running, with turn counts and elapsed time
-π ▸ migrate·t7·3m04s ?1 waiting             one delegate is blocked on a question
-π ✓2                                        finished, nothing running
+π ▸ audit·running·provider/model·thinking:high·t1·12s
+π ▸ check·running·waiting questions·provider/model·thinking:off·t2·8s ?1 waiting
+π audit·done·provider/model·thinking:high ✓2
 ```
+
+This is local rendering, with no model requests or tokens. Pending answers take priority;
+at most three active tasks or two retained terminal task details are shown, with completion,
+failure and cancellation counts. Model and thinking come from the existing state file; absent
+values are omitted. This status line is for Claude Code's terminal UI, not the Codex desktop UI.
 
 ### Which delegates belong to which session
 

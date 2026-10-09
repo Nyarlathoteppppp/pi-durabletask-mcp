@@ -90,7 +90,9 @@ try {
 
   // 1. Compact status carries the last five calls with short arguments; verbose carries all.
   let host = await connect({ TEST_BROKEN_PROVIDER: "broken" });
-  await host.call("spawn", { cwd: directory, id: "many", prompt: "MANY_CALLS", tools: ["ls"], durable: false });
+  const started = await host.call("spawn", { cwd: directory, id: "many", prompt: "MANY_CALLS", tools: ["ls"], durable: false });
+  assert.equal(started.model, "test/one", "omitted model reports the SDK's actual choice");
+  assert.equal(started.thinking, "off", "omitted thinking reports the SDK's actual level");
   const compact = await settle(host, "many");
   assert.equal(compact.toolCallCount, 7);
   assert.equal(compact.toolCalls.length, 5);
@@ -126,7 +128,9 @@ try {
   assert.equal(ran.nextAction, "finish");
   assert.equal(ran.canFollowUp, true);
   assert.ok(ran.usage, "compact run retains token and cost totals");
-  for (const key of ["toolCalls", "model", "thinking", "cwd", "activeTools", "limits", "startedAt", "elapsedMs"])
+  assert.equal(ran.model, "test/one");
+  assert.equal(ran.thinking, "off");
+  for (const key of ["toolCalls", "cwd", "activeTools", "limits", "startedAt", "elapsedMs"])
     assert.equal(key in ran, false, `default run omits ${key}`);
   const diagnostic = await host.call("status", { sessionId: ran.sessionId, verbose: true });
   assert.ok(JSON.stringify(ran).length < JSON.stringify(diagnostic).length / 2, "run avoids repeating the diagnostic snapshot");
@@ -137,6 +141,10 @@ try {
   assert.equal(verboseRun.toolCalls.length, 7, "verbose run includes calls beyond the compact last five");
   assert.ok(verboseRun.toolCalls.every((c) => c.id && c.result), "verbose run retains call ids and results");
   assert.equal(verboseRun.lastText, ran.lastText);
+  const continued = await host.call("follow_up", { sessionId: ran.sessionId, prompt: "Reply OK" });
+  assert.equal(continued.model, ran.model, "follow-up reports the retained session's actual model");
+  assert.equal(continued.thinking, ran.thinking);
+  await settle(host, ran.sessionId);
   await host.call("forget", { sessionId: ran.sessionId });
   await host.call("forget", { sessionId: verboseRun.sessionId });
 
