@@ -1,26 +1,19 @@
 import { randomUUID } from "node:crypto";
 import {
-  createAgentSession,
-  DefaultResourceLoader,
-  defineTool,
-  SessionManager,
   type AgentSessionEvent,
   type ExtensionUIContext,
   type CreateAgentSessionResult,
   type FileEntry,
   type InlineExtension,
-  createCodemodeExtension,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { DurableJob, forgetOwnedJob, MemoryJob, releaseJob, type Checkpoint, type JobStore } from "../durable.js";
-import { AGENT_DIR, MAX_TURNS, RETENTION_DAYS, STALL_MS } from "../config.js";
+import { MAX_TURNS, RETENTION_DAYS, STALL_MS } from "../config.js";
 import { JUDGE_ENABLED, judgeAnswer } from "../judge.js";
 import { saveText } from "../save.js";
 import { message } from "../errors.js";
 import { followUpInfo } from "../continuation.js";
-import { secretPathGuard } from "../secrets.js";
-import { createProtectedGrepTool } from "./search.js";
-import { nativeMcpFactories, validateNativeMcp, type NativeMcpOptions } from "./native-mcp.js";
+import { validateNativeMcp, type NativeMcpOptions } from "./native-mcp.js";
 import type {
   Notice,
   PiThinkingLevel,
@@ -29,17 +22,16 @@ import type {
   Termination,
   TerminationReason,
   ToolCall,
-  ToolCallSummary,
   Usage,
 } from "../types.js";
 import { assertProviderReady, assertThinkingSupported, resolveModel } from "./models.js";
-import { getRuntime } from "./runtime.js";
 import { clipArgs, flatten } from "./trace.js";
 import { createUiContext, Question } from "./ui.js";
 import { prepareResources, type ResourceSelection, type PreparedResources } from "./resources.js";
 import { WorkerRun, type FollowUpBudget, type RunBudget } from "./run.js";
 import { FINALIZE_PROMPT, LAST_TURN_PROMPT, PROVIDER_REFUSAL } from "./prompts.js";
 import { nestedResults, repairEntries } from "./repair.js";
+import { createSession, loadResources, type SessionSpec } from "./session.js";
 import { compactSnapshot } from "./snapshot.js";
 
 type AgentSession = CreateAgentSessionResult["session"];
@@ -263,53 +255,15 @@ export class PiWorker {
 
     assertThinkingSupported(model, this.thinkingSpec);
 
-    // Third-party pi extensions start timers and sockets that outlive dispose() and then
-    // throw against a stale ctx. A delegate does not need them.
     const selectedResources = this.preparedResources ?? await prepareResources(this.options.resources, this.cwd, this.toolNames);
     this.preparedResources = undefined;
-    const resourceLoader = new DefaultResourceLoader({
-      cwd: this.cwd,
-      agentDir: AGENT_DIR,
-      noExtensions: !this.extensionsEnabled,
-      noSkills: true,
-      noContextFiles: true,
-      ...(this.options.resources ? {
-        skillsOverride: () => ({ skills: selectedResources.skills, diagnostics: [] }),
-        agentsFilesOverride: () => ({ agentsFiles: selectedResources.agentsFiles }),
-      } : {}),
-      extensionFactories: [secretPathGuard(this.cwd),
-        ...(this.nativeMcp && this.toolNames.length ? nativeMcpFactories(this.cwd, this.mcpServers) : []),
-        // codemode over the built-in tools, opted into by naming it; its model API stays off.
-        ...(!this.nativeMcp && this.toolNames.includes("codemode")
-          ? [{ name: "delegate-codemode", factory: createCodemodeExtension({ mode: "on", models: false }) }] : []),
-        ...(this.nestedCalls ? [this.nativeExecutionJournal()] : [])],
-    });
-
-    // The loader is lazy: getExtensions() returns nothing until reload() has run.
-    // Always reload so the inline secret-path guard is installed even when third-party
-    // extensions stay off. Failure must not leave the secret guard uninstalled.
-    await resourceLoader.reload();
+    const spec: SessionSpec = { cwd: this.cwd, tools: this.toolNames, extensions: this.extensionsEnabled,
+      nativeMcp: this.nativeMcp, mcpServers: this.mcpServers, resources: this.options.resources ? selectedResources : undefined,
+      customTools: this.customTools, journal: this.nestedCalls ? this.nativeExecutionJournal() : undefined };
+    const resourceLoader = await loadResources(spec);
     if (this.isStopped()) return this;
 
-    const { session } = await createAgentSession({
-      cwd: this.cwd,
-      modelRuntime: await getRuntime(),
-      model,
-      thinkingLevel: this.thinkingSpec,
-      // Dropping the inherited header lets the SDK create a new identity. Clone entries so
-      // compaction or transcript edits in one branch cannot mutate a sibling's history.
-      sessionManager: SessionManager.inMemory(this.cwd, undefined, saved ? repairEntries(saved)
-        : seedEntries ? structuredClone(seedEntries.filter((entry) => entry.type !== "session")) : undefined),
-      tools: [...this.toolNames, ...this.customTools.map((tool) => tool.name)],
-      // Pi 1.0.4 keeps MCP tools implicitly when no mcp__ name is selected. Delegates
-      // require explicit tool grants, including MCP resource tools without that prefix.
-      excludeTools: this.toolNames.some((name) => name.startsWith("mcp__")) ? undefined
-        : ["mcp__*", "list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource"]
-          .filter((name) => !this.toolNames.includes(name)),
-      customTools: [...this.customTools,
-        ...(this.toolNames.includes("grep") ? [defineTool(createProtectedGrepTool(this.cwd))] : [])],
-      resourceLoader,
-    });
+    const session = await createSession(spec, resourceLoader, { model, thinking: this.thinkingSpec, saved, seedEntries });
     this.session = session;
     if (this.isStopped()) {
       session.dispose();
