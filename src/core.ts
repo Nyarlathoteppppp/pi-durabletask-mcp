@@ -179,6 +179,7 @@ const WAIT_HINT = "Call wait with this sessionId, until \"settled\".";
 
 export interface BatchRequest extends Omit<LaunchRequest, "prompt" | "id" | "label"> {
   tasks: AttachedRequest[];
+  prompt?: string | undefined;
   attachments?: string[] | undefined;
   saveDir?: string | undefined;
   idPrefix?: string;
@@ -187,14 +188,15 @@ export interface BatchRequest extends Omit<LaunchRequest, "prompt" | "id" | "lab
 }
 
 export async function startBatch({
-  tasks, model, thinking, cwd, tools, extensions, durable, nativeMcp, mcpServers, forkFrom, resources,
+  tasks, prompt, model, thinking, cwd, tools, extensions, durable, nativeMcp, mcpServers, forkFrom, resources,
   maxTurns, maxDurationMs, maxToolCalls, retentionDays, idPrefix, attachments, saveDir, coordinator,
 }: BatchRequest) {
   const width = Math.max(String(tasks.length).length, 2);
   const seeds = new Map<string, ReturnType<PiWorker["forkSeed"]>>();
   const merged: PreparedRequest[] = [];
   for (const [i, t] of tasks.entries()) merged.push(await withFork({
-    prompt: t.prompt,
+    // A coordinator keeps its default synthesis unless the task itself names a prompt.
+    prompt: t.prompt ?? ((t.coordinator ?? coordinator) ? undefined : prompt),
     attachments: t.attachments ?? attachments,
     saveDir,
     label: t.label,

@@ -20,7 +20,7 @@ Use the connected server's tools; names below omit client-specific prefixes.
 - While running, `idleMs` is the time since the delegate's last event and `phase` is `model`, `tool` or `agent`. A long `idleMs` in phase `model` is slow reasoning or a hung request; `steer` lands only after the current turn, so decide whether to wait or `abort`.
 - For authorized implementation, select the needed server-permitted write tools and keep work within the user's scope.
 - Keep the returned `sessionId`; loop `wait` with `until: "settled"` until finished. Answer pending questions using `questions[].id` as `answer.requestId`, then wait again.
-- For independent tasks, use `spawn_batch`; for multiple angles on the same material, collect facts in a parent first, then batch with `forkFrom`. Wait with `sessionIds`, answer questions, then continue with returned `continueIds` until none remain.
+- For independent tasks, use `spawn_batch`; to send one prompt to several models, set the batch `prompt` and give each task only its `model`; for multiple angles on the same material, collect facts in a parent first, then batch with `forkFrom`. Wait with `sessionIds`, answer questions, then continue with returned `continueIds` until none remain.
 - Follow `nextAction`: `wait` to keep collecting, `answer` to resolve pending questions, `finish` when this run ends—not necessarily successfully; check `state`, `error`, `termination` and the result.
 - Use `steer` while running, `follow_up` when finished; fork to change model/tools or create an independent branch. Follow-ups keep remaining quotas; pass `maxTurns`/`maxToolCalls` to renew them. Forks start fresh.
 - Cancelling `wait` only stops waiting; use `abort` to stop the delegate.

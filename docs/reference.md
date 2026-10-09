@@ -388,6 +388,18 @@ batch-level `retentionDays` applies to the tasks that end up durable; a task can
 That names them `audit-01`, `audit-02`, `audit-03` and returns in a few milliseconds, since
 launching a delegate does not wait for it to think.
 
+A batch-level `prompt` is the default for tasks that omit their own, so one review can go to
+several models with one instruction. Coordinator tasks keep their default synthesis.
+
+```json
+{
+  "cwd": "/repo",
+  "prompt": "Review the attached diff; report only real defects.",
+  "attachments": ["/tmp/review/change.diff"],
+  "tasks": [{ "model": "xai/grok-4.7" }, { "model": "antigravity/gemini-3.8-flash" }]
+}
+```
+
 The batch is validated before anything starts: id format, ids duplicated inside the batch, ids
 already live, blocked tools, and every model name. One bad task fails the call and launches
 nothing. Half a fan-out is the worst outcome, because you pay for the delegates that did start
