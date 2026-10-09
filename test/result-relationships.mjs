@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { PiWorker, repairEntries } from "../dist/pi/worker.js";
+import { PiWorker } from "../dist/pi/worker.js";
+import { repairEntries } from "../dist/pi/repair.js";
 
 const worker = new PiWorker({ cwd: process.cwd(), tools: [], maxTurns: 8, maxDurationMs: 10000 });
 const manager = SessionManager.inMemory(process.cwd());

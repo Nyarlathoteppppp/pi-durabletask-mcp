@@ -15,7 +15,8 @@ import {
 import { DurableJob, forgetOwnedJob, MemoryJob, releaseJob, type Checkpoint, type JobStore } from "../durable.js";
 import { AGENT_DIR, MAX_TURNS, RETENTION_DAYS, STALL_MS } from "../config.js";
 import { JUDGE_ENABLED, judgeAnswer } from "../judge.js";
-import { omitsSavedText, saveText } from "../save.js";
+import { saveText } from "../save.js";
+import { message } from "../errors.js";
 import { followUpInfo } from "../continuation.js";
 import { secretPathGuard } from "../secrets.js";
 import { createProtectedGrepTool } from "./search.js";
@@ -37,6 +38,8 @@ import { clipArgs, flatten } from "./trace.js";
 import { createUiContext, Question } from "./ui.js";
 import { prepareResources, type ResourceSelection, type PreparedResources } from "./resources.js";
 import { WorkerRun, type FollowUpBudget, type RunBudget } from "./run.js";
+import { nestedResults, repairEntries } from "./repair.js";
+import { compactSnapshot } from "./snapshot.js";
 
 type AgentSession = CreateAgentSessionResult["session"];
 
@@ -65,8 +68,6 @@ export interface WorkerOptions extends NativeMcpOptions {
   usageBaseline?: Usage;
 }
 
-const RECENT_CALLS = 5;
-const COMPACT_ARGS = 120;
 
 /**
  * Provider notices that some routes deliver as an ordinary reply, without a stop reason: Gemini's safety
@@ -1190,70 +1191,4 @@ export class PiWorker {
     this.finishedAt ??= new Date().toISOString();
     this.job?.recordFinal(this.snapshot({ verbose: true }));
   }
-}
-
-/**
- * Polling a delegate must stay cheap for the caller's context: compact snapshots carry only the
- * last few calls, with short arguments, and the newest notices.
- */
-export function compactSnapshot(full: Snapshot): Snapshot {
-  const trace: ToolCallSummary[] = full.toolCalls.slice(-RECENT_CALLS).map((c) => ({ seq: c.seq, name: c.name,
-    state: c.state, ms: c.ms, args: c.args && c.args.length > COMPACT_ARGS ? `${c.args.slice(0, COMPACT_ARGS)}…` : c.args }));
-  // A long text written to savedTo is not repeated; verbose still has it.
-  const { lastText, contextUsage: _diagnostic, ...rest } = full;
-  const boundary = full.runStartedAt ?? full.startedAt;
-  const notices = full.notices.filter((n) => n.at >= boundary).slice(-RECENT_CALLS);
-  return { ...rest, ...(omitsSavedText(full) ? {} : { lastText }), toolCalls: trace, notices } as Snapshot;
-}
-
-/** Match committed results to calls; never blindly replay an interrupted side effect. */
-export function repairEntries(saved: Checkpoint): FileEntry[] {
-  const manager = SessionManager.inMemory(saved.snapshot.cwd, undefined, saved.entries);
-  const messages = manager.buildSessionContext().messages;
-  const answered = new Set(messages.filter((m) => m.role === "toolResult").map((m) => m.toolCallId));
-  for (const message of messages) {
-    if (message.role !== "assistant") continue;
-    for (const part of message.content) {
-      if (part.type !== "toolCall" || answered.has(part.id)) continue;
-      const result = saved.results[part.id];
-      const nested = nestedResults(saved.results, saved.snapshot.toolCalls, part.id);
-      const unknown = "Interrupted by MCP service restart. Execution outcome is unknown; inspect external state before retrying." +
-        (nested.length ? "\nCommitted nested tool results (do not replay the interrupted script):\n" +
-          JSON.stringify(nested.map(([id, value]) => ({ id, ...value }))) : "");
-      manager.appendMessage({ role: "toolResult", toolCallId: part.id, toolName: part.name,
-        content: result ? result.content as never : [{ type: "text", text:
-          unknown }],
-        details: result?.details as never, isError: result?.isError ?? true, timestamp: Date.now() });
-      answered.add(part.id);
-    }
-  }
-  return [manager.getHeader()!, ...manager.getEntries()];
-}
-
-/** SDK calls can nest again; the trace retains parents whose result is still pending. */
-function nestedResults(results: Checkpoint["results"], calls: Snapshot["toolCalls"], parentId: string) {
-  const children = new Map<string, Set<string>>();
-  const add = (id: string, parent: string): void => {
-    let siblings = children.get(parent);
-    if (!siblings) children.set(parent, siblings = new Set());
-    siblings.add(id);
-  };
-  for (const call of calls) {
-    if ("id" in call && call.id && call.parentToolCallId) add(call.id, call.parentToolCallId);
-  }
-  for (const [id, result] of Object.entries(results)) {
-    if (result.parentToolCallId) add(id, result.parentToolCallId);
-  }
-  const descendants = new Set([parentId]);
-  for (const id of descendants) {
-    for (const child of children.get(id) ?? []) descendants.add(child);
-  }
-  return Object.entries(results).filter(([id]) => id !== parentId && descendants.has(id));
-}
-
-/** Errors reach us as `unknown`; this is the one place that decides how to read them. */
-export function message(e: unknown): string {
-  if (e instanceof Error) return e.message;
-  if (typeof e === "object" && e !== null && "message" in e) return String((e as { message: unknown }).message);
-  return String(e);
 }

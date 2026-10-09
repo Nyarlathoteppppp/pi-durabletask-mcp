@@ -6,7 +6,8 @@ import {
 import type { LaunchRequest } from "./registry.js";
 import { storedJobs, storedSnapshot } from "./durable.js";
 import { prepareResources } from "./pi/resources.js";
-import { compactSnapshot, message } from "./pi/worker.js";
+import { message } from "./errors.js";
+import { compactSnapshot } from "./pi/snapshot.js";
 import { readTextFiles, withAttachments } from "./attachments.js";
 import { checkSavePath, omitsSavedText } from "./save.js";
 import type { FollowUpBudget } from "./pi/run.js";
