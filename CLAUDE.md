@@ -9,7 +9,7 @@
   - `src/core.ts` 编排入口、批次和 fork；`src/registry.ts` 管并发、持有和恢复；`src/durable.ts` 管 Harness 检查点、catalog 和内核锁；`src/coordinator.ts` 是团队编排。
   - `src/pi/worker.ts` 是 PiWorker 的有状态核心（start、beginDurable、track、onEvent、abort、suspend）；`run.ts` 是单次运行的控制状态（WorkerRun）。
   - `session.ts` 构造 Pi 会话（资源加载器、扩展顺序、工具白名单）；`snapshot.ts` 是精简结果；`repair.ts` 修复检查点；`prompts.ts` 放最后一轮、收尾和 provider 拒绝文本。
-- 测试：`npm test` 跑 `test/offline.mjs`，69 组，约 4 分钟；单跑用 `node test/offline.mjs <组名>`。
+- 测试：`npm test` 跑 `test/offline.mjs`，53 组（输出 69 行 OK），约 4 分钟；单跑用 `node test/offline.mjs <组名>`。
 
 ## 工作方式
 
