@@ -38,6 +38,7 @@ import { clipArgs, flatten } from "./trace.js";
 import { createUiContext, Question } from "./ui.js";
 import { prepareResources, type ResourceSelection, type PreparedResources } from "./resources.js";
 import { WorkerRun, type FollowUpBudget, type RunBudget } from "./run.js";
+import { FINALIZE_PROMPT, LAST_TURN_PROMPT, PROVIDER_REFUSAL } from "./prompts.js";
 import { nestedResults, repairEntries } from "./repair.js";
 import { compactSnapshot } from "./snapshot.js";
 
@@ -67,24 +68,6 @@ export interface WorkerOptions extends NativeMcpOptions {
   /** Full inherited usage, retained in entries for SDK context accounting but excluded from this task. */
   usageBaseline?: Usage;
 }
-
-
-/**
- * Provider notices that some routes deliver as an ordinary reply, without a stop reason: Gemini's safety
- * filter through Antigravity, for one. Exact openings only, so a real answer is never matched.
- */
-const PROVIDER_REFUSAL = /^This request was blocked by Gemini's filters\./;
-
-const LAST_TURN_PROMPT =
-  "This is your last turn, and your tools have been removed. Answer now from the evidence already collected. " +
-  "Follow the user's requested format and length. Preserve concrete findings and important limitations; " +
-  "do not add unrequested sections.";
-
-const FINALIZE_PROMPT =
-  "Stop expanding the investigation. Reserve one remaining turn for your final answer; use other " +
-  "remaining turns only for essential checks needed to support your conclusion. Return the best conclusion from " +
-  "the evidence already collected. Follow the user's requested format and length. Preserve concrete findings " +
-  "and important limitations; do not add unrequested sections.";
 
 /**
  * One delegated Pi session. The SDK remains live for steering and questions; durable
