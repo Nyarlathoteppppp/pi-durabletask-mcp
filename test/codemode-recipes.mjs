@@ -23,26 +23,45 @@ await inspect({}, store, load, text);
 assert.equal(output[0].ok, false);
 assert.equal(output[0].excerpts, undefined);
 assert.match(output[1].excerpts, /tools are callable/);
-// Refill: never more than SLOTS children at once, a freed slot is filled at once, a full server is retried.
+// Refill: never more than SLOTS children at once, a freed slot is filled at once, a full server is
+// retried, and a question returns to the caller without losing a child that finished in the same wait.
 const refill = await compile("coordinator-refill");
-const live = new Set(), launched = [];
+const live = new Set(), launched = [], asking = new Set();
 let peak = 0, refused = 0;
-const refilled = await refill({
+const refillTools = {
   delegate_start_batch: async ({ taskIndexes: [index] }) => {
     if (index === 3 && refused++ === 0) throw new Error("Delegate concurrency limit is 4");
     const id = `child-${index}`;
     live.add(id); launched.push(index); peak = Math.max(peak, live.size);
+    if (index === 1) asking.add(id);
     return { started: 1, sessionIds: [id] };
   },
   delegate_wait: async ({ sessionIds, until }) => {
     assert.equal(until, "settled");
-    const done = sessionIds[0]; // the first running child finishes; the others keep running
+    const done = sessionIds.find((id) => !asking.has(id)); // one child finishes; an asking one cannot
     live.delete(done);
-    return { settled: [done], sessions: sessionIds.map((sessionId) => ({ sessionId, pendingQuestions: 0 })) };
+    return { settled: [done, ...sessionIds.filter((id) => asking.has(id))],
+      continueIds: sessionIds.filter((id) => id !== done),
+      sessions: sessionIds.map((sessionId) => ({ sessionId, pendingQuestions: asking.has(sessionId) ? 1 : 0 })) };
   },
-}, store, load, text);
+};
+const paused = await refill(refillTools, store, load, text);
+assert.deepEqual(paused.finished, ["child-0"], "the child that finished beside a question is kept");
+assert.deepEqual(paused.running, ["child-1", "child-2"]);
+assert.deepEqual(paused.questions.map((q) => q.sessionId), ["child-1"]);
+asking.clear(); // the caller answered
+const refilled = await refill(refillTools, store, load, text);
 assert.deepEqual(launched, [0, 1, 2, 3, 4, 5]);
 assert.equal(peak, 3);
-assert.deepEqual(refilled, { finished: launched.map((i) => `child-${i}`), running: [], unlaunched: [] });
+assert.deepEqual([...refilled.finished].sort(), launched.map((i) => `child-${i}`).sort());
+assert.deepEqual([refilled.running, refilled.unlaunched, refilled.questions], [[], [], []]);
+// Progress lost with a failed script: already dispatched indexes are skipped, not retried forever.
+state.delete("refill");
+const restarted = await refill({ ...refillTools, delegate_start_batch: async ({ taskIndexes: [index] }) => {
+  if (index < 4) throw new Error(`Task ${index} already dispatched; call delegate_wait or delegate_get.`);
+  return refillTools.delegate_start_batch({ taskIndexes: [index + 10] });
+} }, store, load, text);
+assert.deepEqual(restarted.unlaunched, []);
+assert.deepEqual(launched.slice(6), [14, 15]);
 for (const name of ["coordinator-evidence", "evidence-revisit", "discover-tools"]) await compile(name);
 console.log("  OK -> research scripts retain MCP errors without presenting them as evidence; Codemode recipes compile as async bodies; refill keeps slots full");
