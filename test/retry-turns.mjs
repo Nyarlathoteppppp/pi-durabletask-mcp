@@ -14,7 +14,12 @@ const http = createServer(async (req, res) => {
   let body = "";
   for await (const chunk of req) body += chunk;
   const request = JSON.parse(body);
-  if (++requests <= 2) { res.writeHead(500, { "Content-Type": "application/json" }); return res.end('{"error":{"message":"overloaded"}}'); }
+  if (++requests === 1) { res.writeHead(500, { "Content-Type": "application/json" }); return res.end('{"error":{"message":"overloaded"}}'); }
+  // A gateway's verbose error body, as Cloudflare sends: the notice keeps its title, not the whole body.
+  if (requests === 2) { res.writeHead(503, { "Content-Type": "application/json" }); return res.end(JSON.stringify({
+    type: "https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-5xx-errors/error-524/",
+    title: "Error 524: A timeout occurred", detail: "The origin web server did not return a complete response. ".repeat(8),
+    ray_id: "a483c0e98d01e6d1", what_you_should_do: "Wait and retry. ".repeat(10) })); }
   res.writeHead(200, { "Content-Type": "text/event-stream" });
   const emit = (delta, finish_reason = null) => res.write(`data: ${JSON.stringify({ id: "r", object: "chat.completion.chunk",
     created: 1, model: request.model, choices: [{ index: 0, delta, finish_reason }] })}\n\n`);
@@ -40,10 +45,14 @@ try {
   const snap = JSON.parse(result.content[0].text);
   assert.equal(snap.state, "done", snap.error);
   assert.equal(snap.lastText, "OK");
-  assert.equal(snap.notices.filter((n) => /provider retry/.test(n.message)).length, 2, "two retries happened");
+  const retries = snap.notices.filter((n) => /provider retry/.test(n.message));
+  assert.equal(retries.length, 2, "two retries happened");
+  assert.match(retries[1].message, /: 503 Error 524: A timeout occurred$/);
+  assert.match(retries[0].message, /: 500: overloaded$/);
+  assert.ok(retries.every((n) => n.message.length <= 300), retries.map((n) => n.message).join("\n"));
   assert.equal(snap.turns, 1, "retries do not spend turns");
   assert.equal(snap.remainingTurns, 4);
-  console.log("  OK -> provider retries do not spend the turn budget");
+  console.log("  OK -> provider retries do not spend the turn budget; retry notices stay short");
 } finally {
   await client.close().catch(() => {});
   await new Promise((resolve) => http.close(resolve));

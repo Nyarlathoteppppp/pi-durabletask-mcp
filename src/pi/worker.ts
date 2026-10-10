@@ -11,7 +11,7 @@ import { DurableJob, forgetOwnedJob, MemoryJob, releaseJob, type Checkpoint, typ
 import { MAX_TURNS, RETENTION_DAYS, STALL_MS } from "../config.js";
 import { JUDGE_ENABLED, judgeAnswer } from "../judge.js";
 import { saveText } from "../save.js";
-import { message } from "../errors.js";
+import { briefError, message } from "../errors.js";
 import { followUpInfo } from "../continuation.js";
 import { validateNativeMcp, type NativeMcpOptions } from "./native-mcp.js";
 import type {
@@ -889,7 +889,7 @@ export class PiWorker {
         // Pi retries transient provider failures itself; record it so a caller can tell a flaky
         // provider from a broken prompt, and switch provider instead of retrying blindly.
         this.notices.push({ type: "warning", at: new Date().toISOString(),
-          message: `provider retry ${ev.attempt}/${ev.maxAttempts} in ${ev.delayMs}ms: ${ev.errorMessage}` });
+          message: `provider retry ${ev.attempt}/${ev.maxAttempts} in ${ev.delayMs}ms: ${briefError(ev.errorMessage)}` });
         this.onChange?.();
         break;
 
