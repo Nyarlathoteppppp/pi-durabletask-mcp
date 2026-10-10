@@ -8,7 +8,7 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { DurableJob, forgetOwnedJob, MemoryJob, releaseJob, type Checkpoint, type JobStore } from "../durable.js";
-import { MAX_TURNS, RETENTION_DAYS, STALL_MS } from "../config.js";
+import { FALLBACK_MODELS, MAX_TURNS, RETENTION_DAYS, STALL_MS } from "../config.js";
 import { JUDGE_ENABLED, judgeAnswer } from "../judge.js";
 import { saveText } from "../save.js";
 import { briefError, message } from "../errors.js";
@@ -24,12 +24,12 @@ import type {
   ToolCall,
   Usage,
 } from "../types.js";
-import { assertProviderReady, assertThinkingSupported, resolveModel } from "./models.js";
+import { assertProviderReady, assertThinkingSupported, fallbackModel, matchesModelPattern, resolveModel, scopedModels } from "./models.js";
 import { clipArgs, flatten } from "./trace.js";
 import { createUiContext, Question } from "./ui.js";
 import { prepareResources, type ResourceSelection, type PreparedResources } from "./resources.js";
 import { WorkerRun, type FollowUpBudget, type RunBudget } from "./run.js";
-import { FINALIZE_PROMPT, LAST_TURN_PROMPT, PROVIDER_REFUSAL } from "./prompts.js";
+import { FALLBACK_PROMPT, FINALIZE_PROMPT, LAST_TURN_PROMPT, PROVIDER_REFUSAL } from "./prompts.js";
 import { nestedResults, repairEntries } from "./repair.js";
 import { createSession, loadResources, type SessionSpec } from "./session.js";
 import { compactSnapshot } from "./snapshot.js";
@@ -62,6 +62,8 @@ export interface WorkerOptions extends NativeMcpOptions {
   forkedFrom?: string;
   /** Full inherited usage, retained in entries for SDK context accounting but excluded from this task. */
   usageBaseline?: Usage;
+  /** Models to continue on after a provider error; PI_DELEGATE_FALLBACK_MODELS when absent, [] for none. */
+  fallbackModels?: string[] | undefined;
 }
 
 /**
@@ -141,6 +143,10 @@ export class PiWorker {
   private recoveryInput: Checkpoint["recoveryInput"];
   private options: WorkerOptions;
 
+  private get fallbackModels(): string[] {
+    return this.options.fallbackModels ?? FALLBACK_MODELS;
+  }
+
   get durable(): boolean {
     return this.options.durable !== false;
   }
@@ -217,6 +223,7 @@ export class PiWorker {
     forkedFrom,
     usageBaseline,
     resources,
+    fallbackModels,
   }: WorkerOptions) {
     this.id = id ?? randomUUID();
     this.forkedFrom = forkedFrom;
@@ -233,7 +240,7 @@ export class PiWorker {
     this.currentRun = new WorkerRun(this.startedAt, { maxTurns, maxToolCalls, turnStart: 0, toolCallStart: 0 });
     this.options = { id: this.id, label, cwd, model, thinking, tools, extensions, resources, durable, retentionDays, nativeMcp, mcpServers: this.mcpServers, maxTurns, maxDurationMs,
       ...(maxToolCalls !== undefined ? { maxToolCalls } : {}), startedAt: this.startedAt,
-      ...(forkedFrom ? { forkedFrom, usageBaseline } : {}) };
+      ...(forkedFrom ? { forkedFrom, usageBaseline } : {}), ...(fallbackModels ? { fallbackModels } : {}) };
   }
 
   private uiContext(): ExtensionUIContext {
@@ -284,6 +291,13 @@ export class PiWorker {
     }
     this.model = chosen ? `${chosen.provider}/${chosen.id}` : "(pi default)";
     this.thinking = session.thinkingLevel;
+    // Stale or misspelt fallback entries are reported, not fatal: models change more often than config.
+    const fallbacks = this.fallbackModels;
+    if (fallbacks.length) {
+      const refs = (await scopedModels(this.cwd)).map((m) => m.ref);
+      for (const pattern of fallbacks.filter((p) => !refs.some((ref) => matchesModelPattern(p, ref))))
+        this.notices.push({ type: "warning", at: new Date().toISOString(), message: `fallback ${pattern} matches no model in scope` });
+    }
     this.activeTools = session.getActiveToolNames();
 
     this.unsubscribe = session.subscribe((ev) => this.onEvent(ev));
@@ -692,9 +706,14 @@ export class PiWorker {
     if (shortInMs > 0) run.finishTimer = setTimeout(() => {
       if (this.currentRun === run) run.timeShort = true;
     }, shortInMs);
-    const execution = session
-      .prompt(prompt)
-      .then(() => session.waitForIdle())
+    const execution = (async () => {
+      await session.prompt(prompt);
+      await session.waitForIdle();
+      while (await this.fallBack(session, run)) {
+        await session.prompt(FALLBACK_PROMPT);
+        await session.waitForIdle();
+      }
+    })()
       .then(async () => {
         if (this.currentRun !== run || this.state === "aborted" || this.suspended) return;
         if (run.providerError !== undefined) {
@@ -741,6 +760,38 @@ export class PiWorker {
       });
     if (!this.job) run.completion = execution;
     return execution;
+  }
+
+  /**
+   * After a provider error that Pi's own retries did not cure, switch this session to the next
+   * fallback model and report it; false when the error stands. Budgets keep counting.
+   */
+  private async fallBack(session: AgentSession, run: WorkerRun): Promise<boolean> {
+    if (run.providerError === undefined || this.currentRun !== run || this.isStopped()) return false;
+    // The continuation is another turn: without one left, or past the deadline, the error stands.
+    if (this.budgetTurns >= this.maxTurns || this.elapsedMs() >= this.maxDurationMs) return false;
+    const failed = this.model ?? "";
+    if (session.model) run.failedProviders.add(session.model.provider);
+    for (;;) {
+      const next = await fallbackModel(this.fallbackModels, run.failedProviders, this.cwd).catch(() => undefined);
+      if (!next || this.currentRun !== run || this.isStopped()) return false;
+      try { await session.setModel(next); }
+      catch { run.failedProviders.add(next.provider); continue; }
+      try {
+        assertThinkingSupported(next, this.thinkingSpec);
+        if (this.thinkingSpec) session.setThinkingLevel(this.thinkingSpec);
+      } catch { /* the fallback keeps its own default level */ }
+      const ref = `${next.provider}/${next.id}`;
+      this.notices.push({ type: "warning", at: new Date().toISOString(),
+        message: `${failed} provider error: ${briefError(run.providerError)}; continuing on ${ref}` });
+      run.providerError = undefined;
+      run.retriesExhausted = undefined;
+      this.model = ref;
+      this.thinking = session.thinkingLevel;
+      this.options = { ...this.options, model: ref, thinking: this.thinking };
+      this.onChange?.();
+      return true;
+    }
   }
 
   /**

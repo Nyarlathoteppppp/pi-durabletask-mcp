@@ -188,7 +188,7 @@ export interface BatchRequest extends Omit<LaunchRequest, "prompt" | "id" | "lab
 }
 
 export async function startBatch({
-  tasks, prompt, model, thinking, cwd, tools, extensions, durable, nativeMcp, mcpServers, forkFrom, resources,
+  tasks, prompt, model, thinking, fallbackModels, cwd, tools, extensions, durable, nativeMcp, mcpServers, forkFrom, resources,
   maxTurns, maxDurationMs, maxToolCalls, retentionDays, idPrefix, attachments, saveDir, coordinator,
 }: BatchRequest) {
   const width = Math.max(String(tasks.length).length, 2);
@@ -201,6 +201,7 @@ export async function startBatch({
     saveDir,
     label: t.label,
     model: t.model ?? model,
+    fallbackModels: t.fallbackModels ?? fallbackModels,
     thinking: t.thinking ?? thinking,
     cwd: t.cwd ?? cwd,
     tools: t.tools ?? tools,

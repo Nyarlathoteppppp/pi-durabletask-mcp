@@ -14,3 +14,7 @@ export const FINALIZE_PROMPT =
   "remaining turns only for essential checks needed to support your conclusion. Return the best conclusion from " +
   "the evidence already collected. Follow the user's requested format and length. Preserve concrete findings " +
   "and important limitations; do not add unrequested sections.";
+
+export const FALLBACK_PROMPT =
+  "The previous model stopped on a provider error. Continue the task from the conversation so far; " +
+  "do not repeat completed work.";

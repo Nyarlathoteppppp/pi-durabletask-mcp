@@ -277,6 +277,27 @@ At most 20 files, 256 KiB each and 1 MiB in total; files must be UTF-8 text. Sec
 inlined once when the call is made: a durable session stores the expanded prompt, and recovery
 never reads the files again. Attaching a file sends it to the delegate's model provider.
 
+## Continuing on another model after a provider error
+
+When a provider keeps failing after Pi's own automatic retries (a gateway timeout, a spent quota),
+the run can continue in the same session on a fallback model instead of ending with an error.
+Name the fallbacks in order with `fallbackModels` on `spawn`, `run` or `spawn_batch` (batch-wide or
+per task), or once for the server with `PI_DELEGATE_FALLBACK_MODELS`; `[]` turns it off for a call.
+
+```json
+{ "cwd": "/repo", "prompt": "Review the attached diff.", "fallbackModels": ["xai/*", "antigravity/gemini-*"] }
+```
+
+Entries are exact refs or patterns in Pi's scope syntax, resolved only when a failure happens, so
+updating Pi's models needs no change here. The first entry with a usable model (in scope, allowed,
+credentials resolving) wins, skipping every provider that already failed in this run, since an
+outage or quota usually takes the whole provider. The session keeps its id, history and budgets:
+the new model receives the conversation so far and a short instruction to continue, and a warning
+notice records the switch. The continuation is a turn of the run's budget, so with no turn left or
+past the deadline the error stands; aborts, budgets, deadlines and stalls never trigger it. Entries
+that match no model in scope are reported as a warning when the delegate starts; `init` shows what each server
+entry resolves to now. A durable task recovered after a restart starts again on its original model.
+
 ## Saving results to a file
 
 A delegate's final text can be long. When the caller only needs it in a file, declare the file
@@ -787,6 +808,7 @@ Recipes: [web research](research.md) · [parallel review and synthesis](workflow
 | `PI_DELEGATE_MODEL`           | pi's own default | Model used when a call omits `model`                                     |
 | `PI_DELEGATE_MODEL_ALLOWLIST` | unset            | Exact `provider/modelId` values this MCP server may delegate to           |
 | `PI_DELEGATE_MODEL_DENYLIST`  | unset            | Exact refs or `*` patterns excluded from the delegate catalog              |
+| `PI_DELEGATE_FALLBACK_MODELS` | unset            | Comma-separated models or `*` patterns a run continues on after a provider error |
 | `PI_DELEGATE_ALLOW_TOOLS`     | unset            | Comma list of extra tools to permit, e.g. `bash`                         |
 | `PI_DELEGATE_ALLOW_WRITE`     | unset            | `1` permits every tool                                                   |
 | `PI_DELEGATE_HISTORY`         | `50`             | Finished sessions kept for review                                        |

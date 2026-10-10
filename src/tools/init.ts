@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   ALLOW_ALL,
   DEFAULT_MODEL,
+  FALLBACK_MODELS,
   HISTORY_LIMIT,
   LIST_CAP,
   MAX_CONCURRENT,
@@ -18,7 +19,7 @@ import {
   TRACE_RESULT,
 } from "../config.js";
 import { DEFAULT_TOOLS, PERMITTED, READ_ONLY_TOOLS } from "../permissions.js";
-import { modelScope, preflight } from "../pi/models.js";
+import { matchesModelPattern, modelScope, preflight } from "../pi/models.js";
 import { json } from "./shared.js";
 import { DURABLE_DIR } from "../durable.js";
 import { ripgrepPath, RIPGREP_MISSING } from "../pi/search.js";
@@ -93,6 +94,10 @@ export function registerInit(server: McpServer): void {
           defaultWhenYouOmitModel: DEFAULT_MODEL ?? "(pi's own configured default)",
           delegateAllowlist: MODEL_ALLOWLIST.size ? [...MODEL_ALLOWLIST] : "not set",
           delegateDenylist: MODEL_DENYLIST.size ? [...MODEL_DENYLIST] : "not set",
+          // What each entry would pick right now, so a model update that leaves one stale shows here.
+          fallbackOnProviderError: FALLBACK_MODELS.length
+            ? FALLBACK_MODELS.map((pattern) => ({ pattern, now: all.find((ref) => matchesModelPattern(pattern, ref)) ?? null }))
+            : "not set (PI_DELEGATE_FALLBACK_MODELS)",
           format: 'Pass "provider/modelId". An unresolvable name is a hard error, never a silent fallback.',
           scoped: MODEL_ALLOWLIST.size
             ? "Only models in PI_DELEGATE_MODEL_ALLOWLIST that also pass pi's own scope may be used."

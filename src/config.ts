@@ -41,6 +41,15 @@ export const ALLOW_EXTRA = (process.env.PI_DELEGATE_ALLOW_TOOLS || "")
   .map((t) => t.trim())
   .filter(Boolean);
 
+/**
+ * Models a run continues on after a provider error, in order: patterns in pi's scope syntax
+ * ("xai/*"), resolved when the failure happens, so model updates need no change here.
+ */
+export const FALLBACK_MODELS = (process.env.PI_DELEGATE_FALLBACK_MODELS || "")
+  .split(",")
+  .map((model) => model.trim())
+  .filter(Boolean);
+
 /** Model used when a call omits `model`. Undefined means pi's own configured default. */
 export const DEFAULT_MODEL = process.env.PI_DELEGATE_MODEL || undefined;
 

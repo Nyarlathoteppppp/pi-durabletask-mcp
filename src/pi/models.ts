@@ -53,7 +53,7 @@ export function inDelegateAllowlist(provider: string, id: string): boolean {
   return MODEL_ALLOWLIST.size === 0 || MODEL_ALLOWLIST.has(`${provider}/${id}`);
 }
 
-function matchesModelPattern(pattern: string, ref: string): boolean {
+export function matchesModelPattern(pattern: string, ref: string): boolean {
   if (!pattern.includes("*")) return pattern === ref;
   const escaped = pattern
     .split("*")
@@ -272,4 +272,23 @@ export async function resolveModel(spec: string | undefined, cwd?: string): Prom
     );
   }
   return model;
+}
+
+/**
+ * The first usable model for a fallback list: in list order, a model in scope and allowed, whose
+ * credentials resolve, of a provider that has not failed this run (an outage or spent quota
+ * usually takes the whole provider).
+ */
+export async function fallbackModel(patterns: string[], failedProviders: Set<string>, cwd?: string): Promise<PiModel | undefined> {
+  const models = await scopedModels(cwd);
+  for (const pattern of patterns) {
+    for (const candidate of models.filter((m) => matchesModelPattern(pattern, m.ref))) {
+      if (failedProviders.has(candidate.provider)) continue;
+      try {
+        await assertProviderReady(candidate.provider);
+        return await resolveModel(candidate.ref, cwd);
+      } catch { /* this candidate is unusable now; try the next */ }
+    }
+  }
+  return undefined;
 }

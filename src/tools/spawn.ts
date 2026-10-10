@@ -31,6 +31,12 @@ const ATTACHMENTS_HELP =
   "scratchpad; they may lie outside cwd. At most 20, 256 KiB each, 1 MiB in total; secret paths are refused.";
 const attachments = z.array(z.string()).optional();
 
+const FALLBACK_HELP =
+  "Models to continue on, in this session, when a provider error outlasts Pi's own retries: patterns such as " +
+  "\"xai/*\" or exact refs, tried in order; models of the failed provider are skipped. Omit for the server's " +
+  "PI_DELEGATE_FALLBACK_MODELS; [] for none.";
+const fallbackModels = z.array(z.string()).optional();
+
 const spawnShape = {
   resources: resourcesSchema.optional().describe("Explicit instruction/skill files; omitted loads none. Forks inherit the selection; {} clears it. Does not grant tools."),
   coordinator: coordinatorSchema.optional().describe("Opt-in memory-only orchestration of caller-planned read-only children. Omitted prompt gives a concise synthesis with disagreements, failed coverage and original report references; omitted tools selects codemode, subject to server permissions. Children have independent budgets and count toward concurrency. Cancelling the coordinator leaves children running."),
@@ -39,6 +45,7 @@ const spawnShape = {
   attachments: attachments.describe(ATTACHMENTS_HELP),
   saveTo: z.string().optional().describe("Absolute file path: when the run finishes, its final text is written there and results show savedTo instead"),
   model: z.string().optional().describe('Omit for the configured default. Use "provider/modelId" from the models tool to choose another.'),
+  fallbackModels: fallbackModels.describe(FALLBACK_HELP),
   thinking: z
     .enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"])
     .optional()
@@ -97,6 +104,7 @@ const taskShape = z.object({
   id: z.string().optional().describe("Session id for this task. Defaults to `idPrefix`-NN, or a UUID."),
   label: z.string().optional().describe("Free-text note for this task"),
   model: z.string().optional().describe("Overrides the batch `model` for this task alone"),
+  fallbackModels: fallbackModels.describe("Overrides the batch `fallbackModels` for this task alone; [] for none"),
   thinking: z
     .enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"])
     .optional()
@@ -146,6 +154,7 @@ export function registerSpawn(server: McpServer): void {
         attachments: attachments.describe(`Default for every task in this batch. ${ATTACHMENTS_HELP}`),
         saveDir: z.string().optional().describe("Absolute directory: each finished task's final text is written to <sessionId>.md there"),
         model: z.string().optional().describe("Default model for every task in this batch"),
+        fallbackModels: fallbackModels.describe(`Default for every task in this batch. ${FALLBACK_HELP}`),
         thinking: z
           .enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"])
           .optional()

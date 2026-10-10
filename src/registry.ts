@@ -330,6 +330,7 @@ export interface LaunchRequest extends NativeMcpOptions {
   /** As saveTo, as <saveDir>/<sessionId>.md, for batches. */
   saveDir?: string | undefined;
   resources?: ResourceSelection | undefined;
+  fallbackModels?: string[] | undefined;
   /** Preflight-only resource contents; never stored in WorkerOptions. */
   preparedResources?: PreparedResources | undefined;
 }
@@ -363,6 +364,7 @@ function makeWorker(req: LaunchRequest & { cwd: string; tools: string[] }): PiWo
     maxToolCalls: req.maxToolCalls,
     forkedFrom: req.forkedFrom,
     usageBaseline: req.usageBaseline,
+    fallbackModels: req.fallbackModels,
     // Fixed at creation, so every process applies the same retention whatever its own default.
     retentionDays: req.durable ? req.retentionDays ?? RETENTION_DAYS : undefined,
   });

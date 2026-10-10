@@ -21,6 +21,8 @@ export class WorkerRun {
   timeShort = false;
   providerError: string | undefined;
   retriesExhausted: number | undefined;
+  /** Providers that failed this run; a fallback never returns to one (outages and quotas are provider-wide). */
+  readonly failedProviders = new Set<string>();
   abortPromise: Promise<void> | undefined;
   completion: Promise<void> | undefined;
   settling = false;
