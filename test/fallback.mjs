@@ -14,7 +14,7 @@ const server = (name, healthy) => createServer(async (req, res) => {
   let body = "";
   for await (const chunk of req) body += chunk;
   const request = JSON.parse(body);
-  seen.push({ provider: name, messages: request.messages.length,
+  seen.push({ provider: name, messages: request.messages.length, tools: request.tools?.length ?? 0,
     text: JSON.stringify(request.messages.findLast((m) => m.role === "user")?.content) });
   if (!healthy) { res.writeHead(503, { "Content-Type": "application/json" }); return res.end('{"error":{"message":"gateway down"}}'); }
   res.writeHead(200, { "Content-Type": "text/event-stream" });
@@ -82,7 +82,20 @@ try {
   assert.match(last.error, /gateway down/);
   assert.ok(!last.notices.some((n) => /continuing on/.test(n.message)));
 
-  // 5. init shows what each default entry resolves to now, so a stale one is visible after a model update.
+  // 5. A continuation on the last turn answers without tools, like any last turn.
+  seen.length = 0;
+  const lastTurn = await call("run", { cwd: dir, model: "down/m1", prompt: "hello", tools: ["read"], maxTurns: 2, fallbackModels: ["up/*"] });
+  assert.equal(lastTurn.state, "done", lastTurn.error);
+  assert.equal(seen.find((s) => s.provider === "up").tools, 0, "the fallback's last turn has no tools");
+
+  // 6. A fork inherits its parent's fallback list.
+  const plain = await connect();
+  await plain("run", { cwd: dir, id: "parent", model: "up/m1", prompt: "hello", tools: [], fallbackModels: ["up/*"] });
+  const child = await plain("run", { forkFrom: "parent", model: "down/m1", prompt: "again", verbose: true });
+  assert.equal(child.state, "done", child.error);
+  assert.equal(child.model, "up/m1");
+
+  // 7. init shows what each default entry resolves to now, so a stale one is visible after a model update.
   const init = await call("init", { cwd: dir });
   assert.deepEqual(init.models.fallbackOnProviderError, [{ pattern: "down/m2", now: "down/m2" },
     { pattern: "alsodown/*", now: "alsodown/m1" }, { pattern: "up/*", now: "up/m1" }]);

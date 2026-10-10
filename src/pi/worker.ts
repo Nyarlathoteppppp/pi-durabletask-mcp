@@ -367,7 +367,8 @@ export class PiWorker {
       usageBaseline: { input, output, cacheRead, cacheWrite, totalTokens: total, cost: stats.cost },
       inherited: { cwd: this.cwd, tools: [...this.toolNames], model: this.model,
         thinking: this.thinking, extensions: this.extensionsEnabled, nativeMcp: this.nativeMcp,
-        mcpServers: [...this.mcpServers], resources: structuredClone(this.options.resources) },
+        mcpServers: [...this.mcpServers], resources: structuredClone(this.options.resources),
+        ...(this.options.fallbackModels ? { fallbackModels: [...this.options.fallbackModels] } : {}) },
     };
   }
 
@@ -710,6 +711,8 @@ export class PiWorker {
       await session.prompt(prompt);
       await session.waitForIdle();
       while (await this.fallBack(session, run)) {
+        // The failed turn counted; the continuation may be the last one, which answers without tools.
+        if (this.budgetTurns >= this.maxTurns - 1 || this.toolCallsSpent()) this.lastTurn(session);
         await session.prompt(FALLBACK_PROMPT);
         await session.waitForIdle();
       }
@@ -777,6 +780,7 @@ export class PiWorker {
       if (!next || this.currentRun !== run || this.isStopped()) return false;
       try { await session.setModel(next); }
       catch { run.failedProviders.add(next.provider); continue; }
+      if (this.currentRun !== run || this.isStopped()) return false;
       try {
         assertThinkingSupported(next, this.thinkingSpec);
         if (this.thinkingSpec) session.setThinkingLevel(this.thinkingSpec);

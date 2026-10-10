@@ -125,6 +125,7 @@ async function withFork(request: AttachedRequest, seeds = new Map<string, Return
     model: task.model ?? seed.inherited.model, thinking: task.thinking ?? seed.inherited.thinking,
     extensions: task.extensions ?? seed.inherited.extensions, nativeMcp: task.nativeMcp ?? seed.inherited.nativeMcp,
     mcpServers: task.mcpServers ?? seed.inherited.mcpServers,
+    fallbackModels: task.fallbackModels ?? seed.inherited.fallbackModels,
     resources: task.resources ?? seed.inherited.resources,
     seedEntries: seed.entries, usageBaseline: seed.usageBaseline, forkedFrom: forkFrom };
 }
