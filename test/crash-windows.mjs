@@ -129,7 +129,39 @@ try {
   assert.equal(renewed.turns, 2);
   assert.equal(renewed.remainingTurns, 2, "the renewed quota of 3 applies from the follow_up");
   await close(host);
-  console.log("  OK -> crashes before the store exists or after a renewing follow_up commits recover correctly");
+  // 3. A stored job this server's policy now refuses (its cwd is gone) is reported once and held,
+  //    not released and claimed again on every recovery tick; forget removes it.
+  const gone = join(directory, "gone");
+  await mkdir(gone);
+  host = await connect();
+  await host.call("spawn", { cwd: gone, id: "blocked", prompt: "HOLD blocked", tools: [], durable: true });
+  await waitUntil(() => prompts.some((p) => p.includes("HOLD blocked")), "the blocked model request");
+  await kill(host);
+  await rm(gone, { recursive: true, force: true });
+  host = await connect();
+  const blocked = await settled(host, "blocked");
+  assert.equal(blocked.state, "error");
+  assert.match(blocked.error, /policy/);
+  await new Promise((resolve) => setTimeout(resolve, 1500)); // several recovery ticks
+  assert.equal(catalogRow("blocked").attempts, 1, "claimed once, not on every tick");
+  await host.call("forget", { sessionId: "blocked" });
+  assert.equal(catalogRow("blocked"), undefined);
+  await close(host);
+
+  // 4. A job past its recovery attempts keeps its lock even when history eviction runs.
+  host = await connect();
+  await host.call("spawn", { cwd: directory, id: "spent", prompt: "HOLD spent", tools: [], durable: true });
+  await waitUntil(() => prompts.some((p) => p.includes("HOLD spent")), "the spent model request");
+  await kill(host);
+  { const catalog = new DatabaseSync(join(durableDir, "catalog.sqlite"));
+    try { catalog.prepare("UPDATE jobs SET attempts = 5 WHERE json_extract(options, '$.id') = 'spent'").run(); } finally { catalog.close(); } }
+  host = await connect({ PI_DELEGATE_HISTORY: "1" });
+  assert.equal((await settled(host, "spent")).state, "error");
+  await host.call("run", { cwd: directory, prompt: "plain", tools: [] }); // a finished session pushes history over 1
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  assert.equal(catalogRow("spent").attempts, 6, "not released and claimed again after eviction");
+  await close(host);
+  console.log("  OK -> crashes before the store exists or after a renewing follow_up commits recover correctly; refused or spent recoveries are held, not retried every tick");
 } finally {
   for (const host of clients) await host.client.close().catch(() => {});
   for (const socket of sockets) socket.destroy();

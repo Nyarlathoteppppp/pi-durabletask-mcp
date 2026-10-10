@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- A durable task this server's policy now refuses on recovery (its cwd is gone, a tool no longer permitted) is held and reported as an error that `forget` can remove, instead of being released and claimed again on every recovery tick with its row stuck as pending.
+- A task past its recovery attempts keeps its lock and diagnostic worker through history eviction and storage sweeps, so it is no longer released and reclaimed on the next tick.
+- `label` descriptions state that labels are never sent to the delegate.
 - Fallback entries can name the thinking level their model runs at (`xai/*:high`); without one, the run's level carries over as before.
 - A turn Pi begins after an abort was decided is no longer counted, so an aborted run reports the turns it actually used.
 - The SDK link check treats a link it cannot resolve during concurrent starts as stale and relinks it atomically, instead of failing the start.

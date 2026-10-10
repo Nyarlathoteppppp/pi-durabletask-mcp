@@ -129,6 +129,8 @@ export class PiWorker {
   recoveryKey: string | undefined;
   /** A failed executor close retains ownership and its diagnostic worker until cleanup succeeds. */
   recoveryCleanupFailed = false;
+  /** Recovery stopped for good (attempts spent, policy refused): held, with its lock, until forgotten. */
+  recoveryStopped = false;
   private journalUnsubscribe: (() => void) | undefined;
   private suspended = false;
   /** File the next finished run's text goes to, set by whoever starts the run; kept in memory only. */

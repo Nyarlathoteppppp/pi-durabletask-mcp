@@ -58,7 +58,7 @@ const spawnShape = {
       'Your own session id for traceability, e.g. "search-audit-01". 1-64 chars of [A-Za-z0-9._:-], ' +
         "must start alphanumeric, must not already be in use. Defaults to a UUID.",
     ),
-  label: z.string().optional().describe("Free-text note shown in `sessions`, e.g. what this delegate is for"),
+  label: z.string().optional().describe("Free-text note shown in `sessions`, e.g. what this delegate is for; never sent to the delegate"),
   tools: z
     .array(z.string())
     .optional()
@@ -102,7 +102,7 @@ const taskShape = z.object({
   forkFrom: z.string().optional().describe("Overrides the batch forkFrom for this task"),
   attachments: attachments.describe("Overrides the batch `attachments` for this task alone; [] attaches nothing"),
   id: z.string().optional().describe("Session id for this task. Defaults to `idPrefix`-NN, or a UUID."),
-  label: z.string().optional().describe("Free-text note for this task"),
+  label: z.string().optional().describe("Free-text note for this task, never sent to the delegate: put what differs between tasks in their `prompt`"),
   model: z.string().optional().describe("Overrides the batch `model` for this task alone"),
   fallbackModels: fallbackModels.describe("Overrides the batch `fallbackModels` for this task alone; [] for none"),
   thinking: z
