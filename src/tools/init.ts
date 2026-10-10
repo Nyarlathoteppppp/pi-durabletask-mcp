@@ -19,7 +19,7 @@ import {
   TRACE_RESULT,
 } from "../config.js";
 import { DEFAULT_TOOLS, PERMITTED, READ_ONLY_TOOLS } from "../permissions.js";
-import { matchesModelPattern, modelScope, preflight } from "../pi/models.js";
+import { matchesModelPattern, modelScope, parseFallback, preflight } from "../pi/models.js";
 import { json } from "./shared.js";
 import { DURABLE_DIR } from "../durable.js";
 import { ripgrepPath, RIPGREP_MISSING } from "../pi/search.js";
@@ -96,7 +96,10 @@ export function registerInit(server: McpServer): void {
           delegateDenylist: MODEL_DENYLIST.size ? [...MODEL_DENYLIST] : "not set",
           // What each entry would pick right now, so a model update that leaves one stale shows here.
           fallbackOnProviderError: FALLBACK_MODELS.length
-            ? FALLBACK_MODELS.map((pattern) => ({ pattern, now: all.find((ref) => matchesModelPattern(pattern, ref)) ?? null }))
+            ? FALLBACK_MODELS.map((entry) => {
+              const { pattern, thinking } = parseFallback(entry);
+              return { pattern, ...(thinking ? { thinking } : {}), now: all.find((ref) => matchesModelPattern(pattern, ref)) ?? null };
+            })
             : "not set (PI_DELEGATE_FALLBACK_MODELS)",
           format: 'Pass "provider/modelId". An unresolvable name is a hard error, never a silent fallback.',
           scoped: MODEL_ALLOWLIST.size

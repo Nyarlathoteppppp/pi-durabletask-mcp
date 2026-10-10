@@ -5,6 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { parseFallback } from "../dist/pi/models.js";
+
+// A trailing thinking level is split off; a colon that is part of a model id is not.
+assert.deepEqual(parseFallback("xai/*:high"), { pattern: "xai/*", thinking: "high" });
+assert.deepEqual(parseFallback("openrouter/some-model:free"), { pattern: "openrouter/some-model:free" });
+assert.deepEqual(parseFallback("antigravity/gemini-*"), { pattern: "antigravity/gemini-*" });
 
 // A run whose provider keeps failing after Pi's own retries continues, in the same session, on the
 // first fallback model of another provider; the caller's session id and wait do not change.
@@ -26,7 +32,7 @@ const server = (name, healthy) => createServer(async (req, res) => {
 });
 const servers = { down: server("down", false), alsodown: server("alsodown", false), up: server("up", true) };
 for (const http of Object.values(servers)) await new Promise((resolve) => http.listen(0, "127.0.0.1", resolve));
-const model = (id) => ({ id, name: id, reasoning: false, input: ["text"], contextWindow: 16000, maxTokens: 512,
+const model = (id) => ({ id, name: id, reasoning: true, input: ["text"], contextWindow: 16000, maxTokens: 512,
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } });
 const provider = (name) => ({ baseUrl: `http://127.0.0.1:${servers[name].address().port}/v1`, api: "openai-completions",
   apiKey: "fake-key", models: [model("m1"), model("m2")] });
@@ -95,7 +101,16 @@ try {
   assert.equal(child.state, "done", child.error);
   assert.equal(child.model, "up/m1");
 
-  // 7. init shows what each default entry resolves to now, so a stale one is visible after a model update.
+  // 7. An entry can name the thinking level its model runs at; without one the run's level carries over.
+  const levelled = await call("run", { cwd: dir, model: "down/m1", thinking: "medium", prompt: "hello", tools: [],
+    fallbackModels: ["up/*:low"], verbose: true });
+  assert.equal(levelled.state, "done", levelled.error);
+  assert.deepEqual([levelled.model, levelled.thinking], ["up/m1", "low"]);
+  const carried = await call("run", { cwd: dir, model: "down/m1", thinking: "medium", prompt: "hello", tools: [],
+    fallbackModels: ["up/*"], verbose: true });
+  assert.deepEqual([carried.model, carried.thinking], ["up/m1", "medium"]);
+
+  // 8. init shows what each default entry resolves to now, so a stale one is visible after a model update.
   const init = await call("init", { cwd: dir });
   assert.deepEqual(init.models.fallbackOnProviderError, [{ pattern: "down/m2", now: "down/m2" },
     { pattern: "alsodown/*", now: "alsodown/m1" }, { pattern: "up/*", now: "up/m1" }]);

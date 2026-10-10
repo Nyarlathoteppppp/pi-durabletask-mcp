@@ -24,7 +24,7 @@ import type {
   ToolCall,
   Usage,
 } from "../types.js";
-import { assertProviderReady, assertThinkingSupported, fallbackModel, matchesModelPattern, resolveModel, scopedModels } from "./models.js";
+import { assertProviderReady, assertThinkingSupported, fallbackModel, matchesModelPattern, parseFallback, resolveModel, scopedModels } from "./models.js";
 import { clipArgs, flatten } from "./trace.js";
 import { createUiContext, Question } from "./ui.js";
 import { prepareResources, type ResourceSelection, type PreparedResources } from "./resources.js";
@@ -295,7 +295,7 @@ export class PiWorker {
     const fallbacks = this.fallbackModels;
     if (fallbacks.length) {
       const refs = (await scopedModels(this.cwd)).map((m) => m.ref);
-      for (const pattern of fallbacks.filter((p) => !refs.some((ref) => matchesModelPattern(p, ref))))
+      for (const pattern of fallbacks.map((e) => parseFallback(e).pattern).filter((p) => !refs.some((ref) => matchesModelPattern(p, ref))))
         this.notices.push({ type: "warning", at: new Date().toISOString(), message: `fallback ${pattern} matches no model in scope` });
     }
     this.activeTools = session.getActiveToolNames();
@@ -776,14 +776,17 @@ export class PiWorker {
     const failed = this.model ?? "";
     if (session.model) run.failedProviders.add(session.model.provider);
     for (;;) {
-      const next = await fallbackModel(this.fallbackModels, run.failedProviders, this.cwd).catch(() => undefined);
-      if (!next || this.currentRun !== run || this.isStopped()) return false;
+      const found = await fallbackModel(this.fallbackModels, run.failedProviders, this.cwd).catch(() => undefined);
+      if (!found || this.currentRun !== run || this.isStopped()) return false;
+      const next = found.model;
       try { await session.setModel(next); }
       catch { run.failedProviders.add(next.provider); continue; }
       if (this.currentRun !== run || this.isStopped()) return false;
+      // The entry's own level, else the run's; either only if this model supports it.
+      const level = found.thinking ?? this.thinkingSpec;
       try {
-        assertThinkingSupported(next, this.thinkingSpec);
-        if (this.thinkingSpec) session.setThinkingLevel(this.thinkingSpec);
+        assertThinkingSupported(next, level);
+        if (level) session.setThinkingLevel(level);
       } catch { /* the fallback keeps its own default level */ }
       const ref = `${next.provider}/${next.id}`;
       this.notices.push({ type: "warning", at: new Date().toISOString(),
@@ -861,8 +864,9 @@ export class PiWorker {
       case "turn_start":
         this.currentRun.awaitingModel = true;
         // Pi starts a new turn for each automatic retry of a failed request; that is not budget spent.
+        // Nor is a turn Pi begins after an abort was decided: it ends before any work.
         if (this.currentRun.retrying) this.currentRun.retrying = false;
-        else this.turns++;
+        else if (this.state !== "aborted") this.turns++;
         this.onChange?.();
         break;
 

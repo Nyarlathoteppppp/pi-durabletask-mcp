@@ -289,7 +289,9 @@ per task), or once for the server with `PI_DELEGATE_FALLBACK_MODELS`; `[]` turns
 ```
 
 Entries are exact refs or patterns in Pi's scope syntax, resolved only when a failure happens, so
-updating Pi's models needs no change here. The first entry with a usable model (in scope, allowed,
+updating Pi's models needs no change here. An entry may end in a thinking level, as in `xai/*:high`:
+the fallback then runs at that level; otherwise the run's own level carries over. Either applies only
+if the model supports it, else the model's default is used. The first entry with a usable model (in scope, allowed,
 credentials resolving) wins, skipping every provider that already failed in this run, since an
 outage or quota usually takes the whole provider. The session keeps its id, history and budgets:
 the new model receives the conversation so far and a short instruction to continue, and a warning

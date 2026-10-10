@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Fallback entries can name the thinking level their model runs at (`xai/*:high`); without one, the run's level carries over as before.
+- A turn Pi begins after an abort was decided is no longer counted, so an aborted run reports the turns it actually used.
+- The SDK link check treats a link it cannot resolve during concurrent starts as stale and relinks it atomically, instead of failing the start.
 - Opt-in `PI_DELEGATE_ANSWER_GRACE=1`: a model that calls a tool on its tool-free last turn (the call fails without effect) gets one more tool-free turn to answer, once per run, instead of being aborted at `max_turns` with no answer. Off by default.
 - Model fallback: after a provider error that outlasts Pi's retries, a run continues in the same session on the next model from `fallbackModels` (per call or batch) or `PI_DELEGATE_FALLBACK_MODELS`, skipping providers that already failed; patterns such as `xai/*` resolve at failure time. `init` shows what each entry resolves to.
 - Coordinator `delegate_wait` accepts `until: "settled"` to return when any child settles (default stays `all_settled`), so a plan larger than the free slots can start its next task at once; see `docs/examples/coordinator-refill.js`. Coordinator tool parameters are published in their input form, so `delegate_wait` without `timeoutMs` uses its documented default instead of failing Codemode validation.

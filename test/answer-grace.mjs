@@ -61,6 +61,7 @@ try {
   // Off unless the server opts in: the run ends at max_turns as before.
   const plain = await run("STUBBORN");
   assert.equal(plain.state, "aborted");
+  assert.equal(plain.turns, 2, "a turn the abort cut off before it began is not counted");
   assert.equal(grace(plain).length, 0);
   delete requests.stubborn;
 
@@ -75,6 +76,7 @@ try {
   assert.equal(hopeless.state, "aborted");
   assert.equal(hopeless.termination.reason, "max_turns");
   assert.equal(requests.hopeless, 3, "the grace turn is given once");
+  assert.equal(hopeless.turns, 3);
   assert.equal(grace(hopeless).length, 1);
   console.log("  OK -> a tool call after the tools were removed gets one answer-only grace turn, once per run, when the server opts in");
 } finally {

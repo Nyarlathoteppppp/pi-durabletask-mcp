@@ -52,7 +52,10 @@ export function linkPiSdk({ root = bridgeRoot, managedOnly = false, quiet = fals
     throw new Error(`Pi SDK not found at ${source}. Install Pi first: https://pi.dev/install.sh`);
   }
   const target = join(root, "node_modules", packageName);
-  if (!existsSync(target) || realpathSync(target) !== realpathSync(source)) {
+  // Concurrent starts can find the link mid-rename (seen as EINVAL on macOS); relinking is atomic.
+  let current;
+  try { current = realpathSync(target); } catch { current = undefined; }
+  if (current !== realpathSync(source)) {
     mkdirSync(dirname(target), { recursive: true });
     // Initial directory conversion belongs to postinstall/sdk:link. Doing it during
     // concurrent MCP starts would leave a gap while another process imports the SDK.

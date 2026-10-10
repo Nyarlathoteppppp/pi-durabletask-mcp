@@ -274,19 +274,29 @@ export async function resolveModel(spec: string | undefined, cwd?: string): Prom
   return model;
 }
 
+/** A fallback entry: a model pattern and, after a final ":", an optional thinking level ("xai/*:high"). */
+export function parseFallback(entry: string): { pattern: string; thinking?: PiThinkingLevel } {
+  const colon = entry.lastIndexOf(":");
+  const level = entry.slice(colon + 1) as PiThinkingLevel;
+  // Only a known level counts, so model ids that contain a colon ("…:free") stay whole.
+  return colon > 0 && THINKING_LEVELS.includes(level) ? { pattern: entry.slice(0, colon), thinking: level } : { pattern: entry };
+}
+
 /**
  * The first usable model for a fallback list: in list order, a model in scope and allowed, whose
  * credentials resolve, of a provider that has not failed this run (an outage or spent quota
  * usually takes the whole provider).
  */
-export async function fallbackModel(patterns: string[], failedProviders: Set<string>, cwd?: string): Promise<PiModel | undefined> {
+export async function fallbackModel(entries: string[], failedProviders: Set<string>, cwd?: string):
+  Promise<{ model: PiModel; thinking?: PiThinkingLevel } | undefined> {
   const models = await scopedModels(cwd);
-  for (const pattern of patterns) {
+  for (const { pattern, thinking } of entries.map(parseFallback)) {
     for (const candidate of models.filter((m) => matchesModelPattern(pattern, m.ref))) {
       if (failedProviders.has(candidate.provider)) continue;
       try {
         await assertProviderReady(candidate.provider);
-        return await resolveModel(candidate.ref, cwd);
+        const model = await resolveModel(candidate.ref, cwd);
+        if (model) return { model, ...(thinking ? { thinking } : {}) };
       } catch { /* this candidate is unusable now; try the next */ }
     }
   }
