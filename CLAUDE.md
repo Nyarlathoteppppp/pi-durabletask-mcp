@@ -9,7 +9,7 @@
   - `src/core.ts` 编排入口、批次和 fork；`src/registry.ts` 管并发、持有和恢复；`src/durable.ts` 管 Harness 检查点、catalog 和内核锁；`src/coordinator.ts` 是团队编排。
   - `src/pi/worker.ts` 是 PiWorker 的有状态核心（start、beginDurable、track、onEvent、abort、suspend）；`run.ts` 是单次运行的控制状态（WorkerRun）。
   - `session.ts` 构造 Pi 会话（资源加载器、扩展顺序、工具白名单）；`snapshot.ts` 是精简结果；`repair.ts` 修复检查点；`prompts.ts` 放最后一轮、收尾和 provider 拒绝文本。
-- 测试：`npm test` 跑 `test/offline.mjs`，53 组（输出 69 行 OK），约 4 分钟；单跑用 `node test/offline.mjs <组名>`。
+- 测试：`npm test` 跑 `test/offline.mjs`，54 组（输出 70 行 OK），约 4 分钟；单跑用 `node test/offline.mjs <组名>`。
 
 ## 工作方式
 
@@ -40,14 +40,17 @@
 
 ## 待办
 
-- 故障注入测试：针对 durable 链路（认领锁 → Harness → 检查点 → 模型完成 → Jev → `saveTo` → `recordFinal` → 释放锁），挑风险最高的提交点用 SIGKILL 杀进程，重启后检查不变量：
-  - 同一任务最多一个所有者；
-  - 已完成的任务不重跑，未完成的被恢复，或者在 `PI_DELEGATE_MAX_RECOVERY_ATTEMPTS` 次后报错；
-  - catalog 和 Harness 的状态一致；
-  - 没有写了一半的 `saveTo` 文件；
-  - 结果未知的工具调用不重放。
+- 崩溃窗口覆盖（2026-10-10 核对）。不变量：同一任务最多一个所有者；已完成的不重跑；结果未知的工具调用不重放。各窗口由以下测试覆盖：
+  - catalog 已插入、Harness 还没建：`crash-windows.mjs` 用例 1，从原始 prompt 重跑；
+  - 工具执行开始、结果未落盘：`recovery.mjs`（TOOL_BARRIER）、`native-recovery.mjs`（嵌套调用）；
+  - 答案已存、终态未提交：`review-claims.mjs`（CRASH_AFTER_ANSWER）；
+  - 终态已提交、catalog 未记录：`retention.mjs`（CRASH_BEFORE_FINAL）；
+  - follow_up 已提交：`retention.mjs`（CRASH_AFTER_FOLLOWUP_COMMIT），续预算的情况见 `crash-windows.mjs` 用例 2；
+  - 恢复中再崩溃、超过次数上限：`ownership.mjs`、`recovery-failure.mjs`；关闭到释放之间：`ownership.mjs`（CLOSE_BARRIER）；
+  - 认领竞争：`claim-race.mjs`；没有 catalog 行的存储：`orphan-gc.mjs`；
+  - `saveTo` 用临时文件加 rename，崩溃不会留下写了一半的目标文件。
 
-  可以参考已有的 `test/recovery-server.mjs`（带故障钩子）和 `test/claim-race.mjs`。
+  已知且接受：Jev 判断期间崩溃，恢复后不再重新判断 `narration`（opt-in 的提示性字段）；`saveTo` 只保存在内存，恢复后的结果直接返回。故障钩子都在 `test/recovery-server.mjs`，新窗口优先加在那里。
 - Jev 的其他用途（存活诊断、识别原地打转）还没做。约定：每个判断只输出一个枚举字段，失败或超时就省略；规则能判断的不交给 Jev。
 - sdk-link 并发启动时偶发 `EINVAL`：2026-10-10 全套测试里出现 1 次，之后 39 次都没复现。原因是 `realpathSync` 正好碰上另一个进程在重命名 symlink。再出现就修：读链接失败时当作需要重新链接。
 
