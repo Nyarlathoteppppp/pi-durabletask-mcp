@@ -8,7 +8,7 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { DurableJob, forgetOwnedJob, MemoryJob, releaseJob, type Checkpoint, type JobStore } from "../durable.js";
-import { FALLBACK_MODELS, MAX_TURNS, RETENTION_DAYS, STALL_MS } from "../config.js";
+import { ANSWER_GRACE, FALLBACK_MODELS, MAX_TURNS, RETENTION_DAYS, STALL_MS } from "../config.js";
 import { JUDGE_ENABLED, judgeAnswer } from "../judge.js";
 import { saveText } from "../save.js";
 import { briefError, message } from "../errors.js";
@@ -872,8 +872,8 @@ export class PiWorker {
         if (this.state !== "running" || this.suspended || ev.toolResults.length === 0) break;
         if (this.budgetTurns >= this.maxTurns) {
           // A model can still call a tool after its tools were removed; the call failed without effect.
-          // Once per run, give it one more tool-free turn to answer rather than lose the whole run.
-          if (!this.currentRun.graceUsed && this.activeTools?.length === 0 && ev.toolResults.every((r) => r.isError)) {
+          // Opt-in, once per run: one more tool-free turn to answer rather than lose the whole run.
+          if (ANSWER_GRACE && !this.currentRun.graceUsed && this.activeTools?.length === 0 && ev.toolResults.every((r) => r.isError)) {
             this.currentRun.graceUsed = true;
             this.notices.push({ type: "warning", at: new Date().toISOString(),
               message: `turn ${this.budgetTurns}/${this.maxTurns}: called a tool after tools were removed; one answer-only grace turn` });

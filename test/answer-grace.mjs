@@ -33,7 +33,7 @@ const http = createServer(async (req, res) => {
   res.end("data: [DONE]\n\n");
 });
 await new Promise((resolve) => http.listen(0, "127.0.0.1", resolve));
-const client = new Client({ name: "answer-grace", version: "1" });
+const clients = [];
 try {
   const agentDir = join(dir, "agent");
   await mkdir(agentDir);
@@ -42,9 +42,15 @@ try {
     baseUrl: `http://127.0.0.1:${http.address().port}/v1`, api: "openai-completions", apiKey: "fake-key",
     models: [{ id: "one", name: "one", reasoning: false, input: ["text"], contextWindow: 16000, maxTokens: 512,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] } } }));
-  await client.connect(new StdioClientTransport({ command: process.execPath, args: ["dist/index.js"], stderr: "ignore",
-    env: { ...process.env, PI_OFFLINE: "1", PI_CODING_AGENT_DIR: agentDir, PI_DELEGATE_STATE_DIR: join(dir, "state"),
-      PI_DELEGATE_MODEL: "test/one", PI_DELEGATE_IGNORE_SCOPE: "1", PI_DELEGATE_STALL_MS: "0" } }));
+  const connect = async (env) => {
+    const client = new Client({ name: "answer-grace", version: "1" });
+    await client.connect(new StdioClientTransport({ command: process.execPath, args: ["dist/index.js"], stderr: "ignore",
+      env: { ...process.env, PI_OFFLINE: "1", PI_CODING_AGENT_DIR: agentDir, PI_DELEGATE_STATE_DIR: join(dir, "state"),
+        PI_DELEGATE_MODEL: "test/one", PI_DELEGATE_IGNORE_SCOPE: "1", PI_DELEGATE_STALL_MS: "0", ...env } }));
+    clients.push(client);
+    return client;
+  };
+  let client = await connect({});
   const run = async (prompt) => {
     const result = await client.callTool({ name: "run", arguments: { cwd: dir, prompt, tools: ["ls"], maxTurns: 2, verbose: true } });
     assert.ok(!result.isError, result.content?.[0]?.text);
@@ -52,6 +58,13 @@ try {
   };
   const grace = (r) => r.notices.filter((n) => /answer-only grace turn/.test(n.message));
 
+  // Off unless the server opts in: the run ends at max_turns as before.
+  const plain = await run("STUBBORN");
+  assert.equal(plain.state, "aborted");
+  assert.equal(grace(plain).length, 0);
+  delete requests.stubborn;
+
+  client = await connect({ PI_DELEGATE_ANSWER_GRACE: "1" });
   const stubborn = await run("STUBBORN");
   assert.equal(stubborn.state, "done", JSON.stringify(stubborn.termination ?? stubborn.error ?? null));
   assert.equal(stubborn.lastText, "FINAL ANSWER");
@@ -63,9 +76,9 @@ try {
   assert.equal(hopeless.termination.reason, "max_turns");
   assert.equal(requests.hopeless, 3, "the grace turn is given once");
   assert.equal(grace(hopeless).length, 1);
-  console.log("  OK -> a tool call after the tools were removed gets one answer-only grace turn, once per run");
+  console.log("  OK -> a tool call after the tools were removed gets one answer-only grace turn, once per run, when the server opts in");
 } finally {
-  await client.close().catch(() => {});
+  for (const c of clients) await c.close().catch(() => {});
   await new Promise((resolve) => http.close(resolve));
   await rm(dir, { recursive: true, force: true });
 }

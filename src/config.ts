@@ -50,6 +50,9 @@ export const FALLBACK_MODELS = (process.env.PI_DELEGATE_FALLBACK_MODELS || "")
   .map((model) => model.trim())
   .filter(Boolean);
 
+/** Opt-in: a call made after the tools were removed earns one more tool-free turn to answer. */
+export const ANSWER_GRACE = process.env.PI_DELEGATE_ANSWER_GRACE === "1";
+
 /** Model used when a call omits `model`. Undefined means pi's own configured default. */
 export const DEFAULT_MODEL = process.env.PI_DELEGATE_MODEL || undefined;
 

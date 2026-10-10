@@ -808,6 +808,7 @@ Recipes: [web research](research.md) · [parallel review and synthesis](workflow
 | `PI_DELEGATE_MODEL`           | pi's own default | Model used when a call omits `model`                                     |
 | `PI_DELEGATE_MODEL_ALLOWLIST` | unset            | Exact `provider/modelId` values this MCP server may delegate to           |
 | `PI_DELEGATE_MODEL_DENYLIST`  | unset            | Exact refs or `*` patterns excluded from the delegate catalog              |
+| `PI_DELEGATE_ANSWER_GRACE`    | off              | `1` gives one more tool-free turn when a model calls a tool after its tools were removed |
 | `PI_DELEGATE_FALLBACK_MODELS` | unset            | Comma-separated models or `*` patterns a run continues on after a provider error |
 | `PI_DELEGATE_ALLOW_TOOLS`     | unset            | Comma list of extra tools to permit, e.g. `bash`                         |
 | `PI_DELEGATE_ALLOW_WRITE`     | unset            | `1` permits every tool                                                   |
@@ -862,8 +863,8 @@ turn's batch. The current quota's last turn has no tools: at the end of the turn
 before it they are removed and the delegate is told to answer, so a model that ignores the
 reminders gets a tool-free turn to conclude (a run that starts
 with one turn left starts without tools). Some models still call a tool on that turn; the call
-fails without effect, and once per run the delegate gets one more tool-free turn to answer before
-`max_turns` applies, with a warning notice. Timeouts, provider/auth errors or cancellation can still interrupt it. Reaching the
+fails without effect. With `PI_DELEGATE_ANSWER_GRACE=1`, once per run the delegate then gets one
+more tool-free turn to answer before `max_turns` applies, with a warning notice. Timeouts, provider/auth errors or cancellation can still interrupt it. Reaching the
 turn or time ceiling aborts the underlying pi session and records `termination.reason`, while keeping
 the trace and any partial text. Finished results carry `usage`: input, output and cache tokens and
 the cost by pi's model prices, summed over the whole session including follow-ups. Cancelling a blocking `run` also aborts its underlying worker.
