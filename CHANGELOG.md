@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Coordinator `delegate_wait` accepts `until: "settled"` to return when any child settles (default stays `all_settled`), so a plan larger than the free slots can start its next task at once; see `docs/examples/coordinator-refill.js`. Coordinator tool parameters are published in their input form, so `delegate_wait` without `timeoutMs` uses its documented default instead of failing Codemode validation.
 - Provider retry notices show a short summary of the error (a gateway's JSON body is reduced to its title or message, at most 200 characters) instead of the whole body; the final `error` keeps the full text.
 - `spawn_batch` accepts a batch-level `prompt`, the default for tasks without their own (one review across several models). Coordinator tasks keep their default synthesis.
 - Claude's local status line shows delegate model/thinking and state, with question priority and recent terminal details. Compact waits omit active-run partial prose and info notices while retaining questions, warnings/errors and terminal results; status and verbose diagnostics stay unchanged.

@@ -165,6 +165,9 @@ for no index IO. This is a report snapshot, not a runtime checkpoint.
 - The coordinator occupies a concurrency slot. With the default limit of four, it
   can start at most three children at once when no other work is running. Larger
   plans can launch subsets in successive batches; there is no new admission queue.
+  `delegate_wait({until: "settled"})` returns when any child settles, so
+  [coordinator-refill.js](../examples/coordinator-refill.js) starts the next task in the
+  freed slot instead of waiting for the slowest child of each batch.
 - Cancelling a wait **or the coordinator**, or the coordinator finishing without waiting
   for them, leaves children running within their own budgets. Their IDs appear in ordinary `sessions`/`status`/`wait`; the main agent
   can `answer` questions or `abort` them. `delegate_wait` surfaces pending questions;

@@ -89,6 +89,10 @@ give it to a fresh verifier that has not seen the reviewers' reasoning. Use a pl
 }
 ```
 
+To verify while other reviewers still run, `wait` on the reviewer IDs with
+`until: "settled"` and start a verifier for each report as it arrives. A coordinator can
+only launch its planned tasks, so independent verifiers are started by the main agent.
+
 Write each finding as trigger, violated invariant and concrete consequence, so the verifier
 has something to test. Verify only findings you would act on. For an executable defect,
 a test that fails on the old code and passes after the fix outranks any verdict.

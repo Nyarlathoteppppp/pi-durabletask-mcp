@@ -93,13 +93,16 @@ export function createCoordinatorTools(options: z.output<typeof coordinatorSchem
   };
   // The SDK accepts JSON Schema, including schemas supplied by MCP. Keep Zod as our schema source.
   const schema = (shape: z.ZodType): ToolDefinition["parameters"] => z.toJSONSchema(shape) as ToolDefinition["parameters"];
+  // Codemode validates calls against the input view, where a field with a default is optional.
+  const params = (shape: z.ZodType): ToolDefinition["parameters"] => z.toJSONSchema(shape, { io: "input" }) as ToolDefinition["parameters"];
   const result = (value: object): AgentToolResult<undefined> => {
     const text = JSON.stringify(value);
     return { content: [{ type: "text", text }], structuredContent: JSON.parse(text), details: undefined };
   };
-  const start = z.object({ taskIndexes: z.array(z.number().int().min(0).max(options.tasks.length - 1)).min(1).optional() });
-  const wait = z.object({ sessionIds: z.array(z.string()).min(1).optional(), timeoutMs: z.number().int().min(0).max(55_000).default(30_000) });
-  const get = z.object({ sessionId: z.string() });
+  const start = z.object({ taskIndexes: z.array(z.number().int().min(0).max(options.tasks.length - 1)).min(1).optional() }).strict();
+  const wait = z.object({ sessionIds: z.array(z.string()).min(1).optional(), timeoutMs: z.number().int().min(0).max(55_000).default(30_000),
+    until: z.enum(["all_settled", "settled"]).default("all_settled") }).strict();
+  const get = z.object({ sessionId: z.string() }).strict();
   const follow = z.object({
     sessionId: z.string(), prompt: z.string(),
     maxTurns: z.number().int().min(1).max(MAX_TURNS).optional(),
@@ -113,7 +116,7 @@ export function createCoordinatorTools(options: z.output<typeof coordinatorSchem
         "Failed scripts leave children running but discard that script's store writes. Recover their IDs/state with delegate_wait({timeoutMs:0}), without launching more work. " +
         "The coordinator also occupies a concurrency slot; start smaller batches if capacity is full. Plans: " +
         JSON.stringify(options.tasks.map((t, index) => ({ index, label: t.label, prompt: t.prompt, model: t.model }))),
-      parameters: schema(start), outputSchema: schema(coordinatorOutputs.delegate_start_batch),
+      parameters: params(start), outputSchema: schema(coordinatorOutputs.delegate_start_batch),
       async execute(_id, params, signal) {
         signal?.throwIfAborted();
         const { taskIndexes } = start.parse(params);
@@ -157,15 +160,15 @@ export function createCoordinatorTools(options: z.output<typeof coordinatorSchem
     }),
     defineTool({
       name: "delegate_wait", label: "Wait for delegates", exposure: "codemode",
-      description: "Wait for all selected children, or all launched children when sessionIds is omitted. timeoutMs: max 55000, default 30000 when omitted. Returns compact per-child state, questions, errors and save diagnostics; use delegate_get for full reports. Cancelling the wait/coordinator leaves children running within their budgets; the caller can answer or abort them with ordinary MCP tools.",
-      annotations: { readOnlyHint: true }, parameters: schema(wait), outputSchema: schema(coordinatorOutputs.delegate_wait),
+      description: "Wait for all selected children, or all launched children when sessionIds is omitted; until:\"settled\" returns as soon as any one settles, so a larger plan can start its next task in the freed slot. timeoutMs: max 55000, default 30000 when omitted. Returns compact per-child state, questions, errors and save diagnostics; use delegate_get for full reports. Cancelling the wait/coordinator leaves children running within their budgets; the caller can answer or abort them with ordinary MCP tools.",
+      annotations: { readOnlyHint: true }, parameters: params(wait), outputSchema: schema(coordinatorOutputs.delegate_wait),
       async execute(_id, params, signal) {
         const args = wait.parse(params);
         // A script may dispatch and wait at once; children of a dispatch still starting count as launched.
         if (!args.sessionIds) await Promise.allSettled([...starting]);
         const ids = own(args.sessionIds ?? [...owned]);
         const versions = report && new Map(ids.map((id) => [id, report.version(id)]));
-        const batch = await core.waitForMany(ids, { timeoutMs: args.timeoutMs, until: "all_settled", signal });
+        const batch = await core.waitForMany(ids, { timeoutMs: args.timeoutMs, until: args.until, signal });
         report?.observe(batch.sessions, versions);
         if (report && versions) {
           // A wait spanning a follow-up may return the new run without a savedTo version hint.
@@ -184,7 +187,7 @@ export function createCoordinatorTools(options: z.output<typeof coordinatorSchem
     defineTool({
       name: "delegate_get", label: "Read delegate report", exposure: "codemode",
       description: "Get one launched child's full report, state and follow-up readiness (without renewing quotas), including questions, failures and save diagnostics. store() reports within the SDK's storage limits; print only the conclusions/references the caller needs. Original savedTo files remain independent of summaries.",
-      annotations: { readOnlyHint: true }, parameters: schema(get), outputSchema: schema(coordinatorOutputs.delegate_get),
+      annotations: { readOnlyHint: true }, parameters: params(get), outputSchema: schema(coordinatorOutputs.delegate_get),
       async execute(_id, params) {
         const { sessionId } = get.parse(params);
         own([sessionId]);
@@ -203,7 +206,7 @@ export function createCoordinatorTools(options: z.output<typeof coordinatorSchem
         "Use only when a report or specific evidence is missing; no mandatory debate round. Omit budget fields to use remaining quotas; " +
         "maxTurns/maxToolCalls renew only the supplied quota. Returns a start receipt: wait, then get the updated report. " +
         "With plan saveDir, each follow-up saves to a new file, preserving previous reports. Cancelling the coordinator leaves children running.",
-      parameters: schema(follow), outputSchema: schema(coordinatorOutputs.delegate_follow_up),
+      parameters: params(follow), outputSchema: schema(coordinatorOutputs.delegate_follow_up),
       async execute(_id, params, signal) {
         signal?.throwIfAborted();
         const { sessionId, prompt, maxTurns, maxToolCalls } = follow.parse(params);

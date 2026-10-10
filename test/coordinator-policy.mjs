@@ -61,7 +61,22 @@ const retrying = createCoordinatorTools(plan, process.cwd(), {
 });
 await assert.rejects(retrying[0].execute("rejected", {}), /no capacity/);
 assert.equal((await retrying[0].execute("retry", {})).structuredContent.started, 1);
-console.log("  OK -> concurrent duplicate dispatch, partial startup receipts, own-ID isolation and admission retry");
+// A plan larger than the free slots refills them: delegate_wait can return as soon as any child settles.
+const waits = [];
+const refilling = createCoordinatorTools(plan, process.cwd(), {
+  startBatch: async () => ({ requested: 2, started: 2, sessionIds: ["fast", "slow"], sessions: [{ index: 0, sessionId: "fast" }, { index: 1, sessionId: "slow" }] }),
+  waitForMany: async (ids, options) => { waits.push(options.until); return { settled: [], pending: ids, continueIds: ids, sessions: [] }; },
+});
+await refilling[0].execute("start", {});
+await refilling[1].execute("any", { until: "settled", timeoutMs: 0 });
+await refilling[1].execute("all", { timeoutMs: 0 });
+assert.deepEqual(waits, ["settled", "all_settled"], "until: settled returns on the first child; the default still waits for all");
+await assert.rejects(refilling[1].execute("bad", { until: "progress" }));
+// Codemode validates calls against these schemas: a field with a default must stay optional there.
+for (const tool of refilling) assert.deepEqual(tool.parameters.required ?? [], tool.name === "delegate_get" ? ["sessionId"]
+  : tool.name === "delegate_follow_up" ? ["sessionId", "prompt"] : [], tool.name);
+for (const tool of refilling) assert.equal(tool.parameters.additionalProperties, false, `${tool.name} rejects misspelt arguments`);
+console.log("  OK -> concurrent duplicate dispatch, partial startup receipts, own-ID isolation and admission retry; wait for any child");
 
 let researchRequest;
 const researching = createCoordinatorTools(coordinatorSchema.parse({ research: true, tasks: [{prompt:"web",tools:[]},{prompt:"off",research:false}] }), process.cwd(), {

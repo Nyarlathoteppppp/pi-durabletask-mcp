@@ -23,5 +23,26 @@ await inspect({}, store, load, text);
 assert.equal(output[0].ok, false);
 assert.equal(output[0].excerpts, undefined);
 assert.match(output[1].excerpts, /tools are callable/);
+// Refill: never more than SLOTS children at once, a freed slot is filled at once, a full server is retried.
+const refill = await compile("coordinator-refill");
+const live = new Set(), launched = [];
+let peak = 0, refused = 0;
+const refilled = await refill({
+  delegate_start_batch: async ({ taskIndexes: [index] }) => {
+    if (index === 3 && refused++ === 0) throw new Error("Delegate concurrency limit is 4");
+    const id = `child-${index}`;
+    live.add(id); launched.push(index); peak = Math.max(peak, live.size);
+    return { started: 1, sessionIds: [id] };
+  },
+  delegate_wait: async ({ sessionIds, until }) => {
+    assert.equal(until, "settled");
+    const done = sessionIds[0]; // the first running child finishes; the others keep running
+    live.delete(done);
+    return { settled: [done], sessions: sessionIds.map((sessionId) => ({ sessionId, pendingQuestions: 0 })) };
+  },
+}, store, load, text);
+assert.deepEqual(launched, [0, 1, 2, 3, 4, 5]);
+assert.equal(peak, 3);
+assert.deepEqual(refilled, { finished: launched.map((i) => `child-${i}`), running: [], unlaunched: [] });
 for (const name of ["coordinator-evidence", "evidence-revisit", "discover-tools"]) await compile(name);
-console.log("  OK -> research scripts retain MCP errors without presenting them as evidence; Codemode recipes compile as async bodies");
+console.log("  OK -> research scripts retain MCP errors without presenting them as evidence; Codemode recipes compile as async bodies; refill keeps slots full");
