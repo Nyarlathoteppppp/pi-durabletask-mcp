@@ -18,3 +18,6 @@ export const FINALIZE_PROMPT =
 export const FALLBACK_PROMPT =
   "The previous model stopped on a provider error. Continue the task from the conversation so far; " +
   "do not repeat completed work.";
+
+export const GRACE_PROMPT =
+  "Your tools are no longer available, so that call did nothing. Answer now from the evidence already collected.";

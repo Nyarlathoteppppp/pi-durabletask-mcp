@@ -21,6 +21,8 @@ export class WorkerRun {
   timeShort = false;
   providerError: string | undefined;
   retriesExhausted: number | undefined;
+  /** The one extra tool-free turn after a call made once tools were removed has been given. */
+  graceUsed = false;
   /** Providers that failed this run; a fallback never returns to one (outages and quotas are provider-wide). */
   readonly failedProviders = new Set<string>();
   abortPromise: Promise<void> | undefined;

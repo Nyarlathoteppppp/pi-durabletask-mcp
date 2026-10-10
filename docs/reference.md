@@ -861,7 +861,9 @@ next turn has no tools and must answer. A turn's parallel calls can overshoot th
 turn's batch. The current quota's last turn has no tools: at the end of the turn
 before it they are removed and the delegate is told to answer, so a model that ignores the
 reminders gets a tool-free turn to conclude (a run that starts
-with one turn left starts without tools). Timeouts, provider/auth errors or cancellation can still interrupt it. Reaching the
+with one turn left starts without tools). Some models still call a tool on that turn; the call
+fails without effect, and once per run the delegate gets one more tool-free turn to answer before
+`max_turns` applies, with a warning notice. Timeouts, provider/auth errors or cancellation can still interrupt it. Reaching the
 turn or time ceiling aborts the underlying pi session and records `termination.reason`, while keeping
 the trace and any partial text. Finished results carry `usage`: input, output and cache tokens and
 the cost by pi's model prices, summed over the whole session including follow-ups. Cancelling a blocking `run` also aborts its underlying worker.

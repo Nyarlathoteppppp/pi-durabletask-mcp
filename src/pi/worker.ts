@@ -29,7 +29,7 @@ import { clipArgs, flatten } from "./trace.js";
 import { createUiContext, Question } from "./ui.js";
 import { prepareResources, type ResourceSelection, type PreparedResources } from "./resources.js";
 import { WorkerRun, type FollowUpBudget, type RunBudget } from "./run.js";
-import { FALLBACK_PROMPT, FINALIZE_PROMPT, LAST_TURN_PROMPT, PROVIDER_REFUSAL } from "./prompts.js";
+import { FALLBACK_PROMPT, FINALIZE_PROMPT, GRACE_PROMPT, LAST_TURN_PROMPT, PROVIDER_REFUSAL } from "./prompts.js";
 import { nestedResults, repairEntries } from "./repair.js";
 import { createSession, loadResources, type SessionSpec } from "./session.js";
 import { compactSnapshot } from "./snapshot.js";
@@ -871,6 +871,17 @@ export class PiWorker {
         // continuing the tool loop, so a conclusion at the limit is not thrown away.
         if (this.state !== "running" || this.suspended || ev.toolResults.length === 0) break;
         if (this.budgetTurns >= this.maxTurns) {
+          // A model can still call a tool after its tools were removed; the call failed without effect.
+          // Once per run, give it one more tool-free turn to answer rather than lose the whole run.
+          if (!this.currentRun.graceUsed && this.activeTools?.length === 0 && ev.toolResults.every((r) => r.isError)) {
+            this.currentRun.graceUsed = true;
+            this.notices.push({ type: "warning", at: new Date().toISOString(),
+              message: `turn ${this.budgetTurns}/${this.maxTurns}: called a tool after tools were removed; one answer-only grace turn` });
+            void this.session?.steer(GRACE_PROMPT).catch((e: unknown) => {
+              this.notices.push({ type: "warning", message: `grace steer failed: ${message(e)}`, at: new Date().toISOString() });
+            });
+            break;
+          }
           this.abortForBudget("max_turns", { limit: this.maxTurns, observed: this.budgetTurns });
           break;
         }

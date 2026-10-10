@@ -9,7 +9,7 @@
   - `src/core.ts` 编排入口、批次和 fork；`src/registry.ts` 管并发、持有和恢复；`src/durable.ts` 管 Harness 检查点、catalog 和内核锁；`src/coordinator.ts` 是团队编排。
   - `src/pi/worker.ts` 是 PiWorker 的有状态核心（start、beginDurable、track、onEvent、abort、suspend）；`run.ts` 是单次运行的控制状态（WorkerRun）。
   - `session.ts` 构造 Pi 会话（资源加载器、扩展顺序、工具白名单）；`snapshot.ts` 是精简结果；`repair.ts` 修复检查点；`prompts.ts` 放最后一轮、收尾和 provider 拒绝文本。
-- 测试：`npm test` 跑 `test/offline.mjs`，54 组（输出 70 行 OK），约 4 分钟；单跑用 `node test/offline.mjs <组名>`。
+- 测试：`npm test` 跑 `test/offline.mjs`，56 组（输出 72 行 OK），约 4 分钟；单跑用 `node test/offline.mjs <组名>`。
 
 ## 工作方式
 
@@ -23,7 +23,7 @@
 
 - 审查：把 diff 写成文件放进 `attachments`，写明检查点，要求只报确定的问题并限制字数。同一个 prompt 发给多个模型，用批次级 `prompt`。
 - 审查结论要逐条核实。常见误报是理论竞态，比如"await 之前捕获了某个字段"，实际上那个字段只在启动前赋值。
-- 模型：灵算 astra 适合讨论设计；Codex 6.1 sol 有额度时审查和干活；反重力 3.8 Flash 免费，但轮次和 token 用得多；grok 用 medium、`maxDurationMs: 900000`；GLM 很慢，用 low thinking 加检查清单。委托不用 openrouter 的模型。
+- 模型：灵算 astra 适合讨论设计；Codex 6.1 sol 有额度时审查和干活；反重力 3.8 Flash 免费，但轮次和 token 用得多；grok 思考时间长：用 high（不用 xhigh），`maxDurationMs: 900000`；GLM 很慢，用 low thinking 加检查清单。委托不用 openrouter 的模型。
 - 轮询：`wait` 一次只发一个，同一批发多个会同时返回。`idleMs`/`phase` 能分清是慢思考还是挂起。`termination.reason: deadline` 之后如果还有轮次，用 `follow_up` 让它根据已读内容直接总结。
 - 判断有没有结论时，先对 `lastText` 做 trim。
 
