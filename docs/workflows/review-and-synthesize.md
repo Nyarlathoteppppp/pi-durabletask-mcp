@@ -22,8 +22,8 @@ Omit `model` for the configured default, or choose actual IDs from `models` per 
   "maxToolCalls": 12,
   "maxDurationMs": 240000,
   "tasks": [
-    { "label": "recovery", "prompt": "Review src/durable.ts and recovery paths in src/pi/worker.ts for concrete correctness bugs. Read only. Report each finding with file:line, trigger, impact and evidence; distinguish confirmed facts from uncertainty. Do not invent stress scenarios. Finish with a concise report, including no findings if appropriate." },
-    { "label": "attachments", "prompt": "Review src/attachments.ts and its call sites for concrete correctness bugs. Read only. Report each finding with file:line, trigger, impact and evidence; distinguish confirmed facts from uncertainty. Do not invent stress scenarios. Finish with a concise report, including no findings if appropriate." }
+    { "label": "recovery", "prompt": "Review src/durable.ts and recovery paths in src/pi/worker.ts for concrete correctness bugs. Read only. Report each finding with file:line, trigger, violated invariant, impact and evidence; distinguish confirmed facts from uncertainty. Do not invent stress scenarios. Finish with a concise report, including no findings if appropriate." },
+    { "label": "attachments", "prompt": "Review src/attachments.ts and its call sites for concrete correctness bugs. Read only. Report each finding with file:line, trigger, violated invariant, impact and evidence; distinguish confirmed facts from uncertainty. Do not invent stress scenarios. Finish with a concise report, including no findings if appropriate." }
   ]
 }
 ```
@@ -71,6 +71,27 @@ or pass `maxTurns`/`maxToolCalls` for fresh quotas, then refresh the report and 
 Fork when changing model/tools or needing an independent branch. This step is optional,
 not a required debate round. A [codemode coordinator](codemode-coordinator.md) can do
 this itself with `delegate_follow_up` on its own children.
+
+## 4. Falsify candidate findings before acting
+
+Agreement between reviewers is not evidence: models share blind spots and can repeat the
+same false positive. Before acting on a finding, including one every reviewer agreed on,
+give it to a fresh verifier that has not seen the reviewers' reasoning. Use a plain
+`spawn`, not `forkFrom` from a reviewer:
+
+```json
+{
+  "cwd": "/absolute/repo",
+  "attachments": ["/absolute/reports/review-01/change.diff", "/absolute/reports/review-01/finding-3.md"],
+  "maxTurns": 8,
+  "maxToolCalls": 15,
+  "prompt": "The attached finding claims a defect in the attached diff. Try to refute it from the current source: check whether the trigger can occur, whether the stated invariant really holds, and whether the consequence follows. Answer Confirmed, Rejected or Inconclusive on the first line, then the evidence with file:line. Say Inconclusive when the source does not settle it; do not guess."
+}
+```
+
+Write each finding as trigger, violated invariant and concrete consequence, so the verifier
+has something to test. Verify only findings you would act on. For an executable defect,
+a test that fails on the old code and passes after the fix outranks any verdict.
 
 `durable: true` can retain individual delegates across restarts. This recipe itself is
 caller-driven; it does not make the entire workflow automatically recoverable.
