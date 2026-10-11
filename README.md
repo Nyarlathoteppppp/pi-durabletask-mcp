@@ -8,140 +8,87 @@
 
 # pi-durabletask-mcp
 
-Let your main Claude Code / Codex agent plan the work, with [Pi](https://pi.dev) coordinating agents across providers and collecting results.
+From Claude Code or Codex, hand reviews and investigations to [Pi](https://pi.dev) agents running on any provider — Gemini, Grok, GPT, DeepSeek and more — in the background, and get back their reports.
 
 [![npm](https://img.shields.io/npm/v/pi-durabletask-mcp)](https://www.npmjs.com/package/pi-durabletask-mcp)
 [![CI](https://github.com/Nyarlathoteppppp/pi-durabletask-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Nyarlathoteppppp/pi-durabletask-mcp/actions/workflows/ci.yml)
 [![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A5%2022.19-30343b?logo=nodedotjs&logoColor=white)](package.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-e78260.svg)](LICENSE)
 
-[Quick start](#quick-start) · [Team example](docs/workflows/codemode-coordinator.md) · [Reference](docs/reference.md)
+[Quick start](#quick-start) · [What you can do](#what-you-can-do) · [Reference](docs/reference.md)
 
 </div>
 
 ---
 
-| **01 · Orchestrate by Task** | **02 · Fork Shared Context** | **03 · Question Then Synthesize** |
-| :--- | :--- | :--- |
-| Your main agent plans; Pi dispatches work to models selected for each role. | Fork a settled session’s facts and context into independent branches to explore different directions. | Ask targeted follow-ups on disagreements; collect evidence and gaps with references to original reports. |
-| [Codemode teams →](docs/workflows/codemode-coordinator.md) | `forkFrom` · independent branches, fresh budgets | `follow_up` · summaries and full reports |
+## Why
 
-## Example workflow
+- **Other model families, other blind spots.** Reviewers from one family tend to miss the same things. Send one diff to Gemini, Grok and GPT at once and compare.
+- **Use the subscriptions you already pay for.** Delegates run on your own Pi providers, not on your main agent's quota.
+- **Your main context stays small.** Delegates read the code on their own budget; you get compact status and the final report, or just a file path.
+- **Built to finish.** Every run has turn, time and tool-call budgets with a tool-free last turn for the answer; opt-in model fallback on provider errors; opt-in durable tasks that survive a restart.
 
-> Have a team review authentication changes without edits, question disagreements, and summarize missing tests.
+Your main agent stays in charge: it plans, chooses models and judges the results.
 
-**Supply a goal and assignments → Pi dispatches in parallel → question disagreements → collect the synthesis and original reports.**
+## In 30 seconds
 
-Choose a provider/model per role: one checks permissions, one researches sources with Exa, and one proposes tests. Your main agent keeps the final judgment. [See the full task plan and configuration →](docs/workflows/codemode-coordinator.md)
+Ask your agent:
 
-**A plan is enough.** With `codemode` permitted, `spawn` can dispatch, collect and synthesize:
+> Use Pi to review the attached diff with Gemini, Grok and GPT in parallel. Don't edit files. Report only real defects with file:line.
 
-```json
-{
-  "cwd": "/absolute/repo",
-  "coordinator": {
-    "tasks": [
-      { "label": "permissions", "prompt": "Review authentication permission checks; cite evidence." },
-      { "label": "tests", "prompt": "Check authentication tests for concrete coverage gaps." }
-    ]
-  }
-}
-```
-
-Add models, `forkFrom` and `saveDir` as needed. Supply `prompt` for your own strategy;
-use `spawn_batch` for parallel reports without synthesis.
-
-## What you can do
-
-| | Highlights |
-| :--- | :--- |
-| **Delegate & Explore** | **Parallel models:** select with `models`, dispatch with `spawn_batch`. **Shared context:** `forkFrom` a settled session. **Web research:** opt-in [Exa search and fetch](docs/research.md). **Native MCP:** selected [optional integrations](docs/optional-tools.md); Pi extensions configured separately. |
-| **Refine & Report** | **Adjust the direction:** `steer` live work, `follow_up` finished work, and renew budgets as needed. **Pass materials, keep results:** `attachments` and `saveTo`, with summaries, original report references, an opt-in [team index](docs/workflows/codemode-coordinator.md#saved-team-index), token usage and cost. |
-| **Permissions & Recovery** | **Authorized implementation:** ordinary delegates can edit or run commands and report successful changed-file paths. **Project conventions:** opt-in [instruction files and skills](docs/reference.md#explicit-instructions-and-skills). **Visible progress:** `idleMs`, `phase`, execution budgets and verbose context usage. **Optional single-session recovery:** SQLite checkpoints and cross-window `handoff`. |
-
-Teams support Codemode loops, conditions and parallel calls, with [per-member GitHub, Serena, browser and Exa tools](docs/workflows/codemode-coordinator.md#member-mcp-tools). They use one level of memory-only children for read-only tasks; permit `codemode` on the server (selected automatically when team tools are omitted). For a single task, use an ordinary delegate.
-
----
+It calls `spawn_batch` with one prompt and three models, waits with `wait`, and returns three independent reports with token usage and cost. One provider down? With fallback configured, that review continues on another model in the same session.
 
 ## Quick start
 
-**Requires macOS or Linux, Node.js 22.19+ and Pi (managed or npm-global).** CI covers Pi **1.0.0, 1.0.4 and 1.1.0**; Windows is not supported. Model calls use your own provider credentials and quota.
+**Requires macOS or Linux, Node.js 22.19+ and Pi.** CI covers Pi 1.0.0, 1.0.4 and 1.1.0. Model calls use your own provider credentials.
 
-### 1 · Install
+**1 · Install Pi** (skip if you have it) and configure a provider:
 
-The team workflow above is in **GitHub v0.7.11**; use the source-install option below. The current npm release is **0.7.8**.
+```bash
+curl -fsSL https://pi.dev/install.sh | sh
+pi  # then /login or configure a provider
+```
 
-Already configured Pi? Install the bridge:
+**2 · Install the bridge.** The npm release (0.7.8) lags behind `main`; for everything below, install from source:
+
+```bash
+git clone https://github.com/Nyarlathoteppppp/pi-durabletask-mcp.git
+cd pi-durabletask-mcp && npm ci && npm run build
+```
+
+<details>
+<summary>Or the npm release</summary>
 
 ```bash
 npm install -g pi-durabletask-mcp
 ```
 
-<details>
-<summary>Install and configure Pi first</summary>
-
-The bridge uses your installed Pi SDK. Managed-install support is currently source-only; use the source option below until the next npm release. Install Pi first:
-
-```bash
-curl -fsSL https://pi.dev/install.sh | sh
-pi  # configure a provider or use /login
-```
-
-Search uses Pi's downloaded `rg` or ripgrep on PATH. [Authentication →](docs/reference.md#auth)
+Then use `pi-durabletask-mcp` as the command below instead of `node …/dist/index.js`.
 
 </details>
 
-<details>
-<summary>Install from source</summary>
-
-Pi must already be installed. Reconnect the MCP after each Pi update; new bridge processes follow the current SDK.
+**3 · Connect.** Claude Code:
 
 ```bash
-git clone https://github.com/Nyarlathoteppppp/pi-durabletask-mcp.git
-cd pi-durabletask-mcp
-npm ci
-npm run build
+claude mcp add --scope user pi -- node /absolute/path/pi-durabletask-mcp/dist/index.js
 ```
 
-Connect with `node /absolute/path/pi-durabletask-mcp/dist/index.js` instead of the installed command.
-
-</details>
-
-### 2 · Connect
-
-<details>
-<summary>Claude Code</summary>
-
-```bash
-claude mcp add --scope user pi -- pi-durabletask-mcp
-```
-
-</details>
-
-<details>
-<summary>Codex</summary>
-
-Add to `~/.codex/config.toml`:
+Codex (`~/.codex/config.toml`):
 
 ```toml
 [mcp_servers.pi]
-command = "pi-durabletask-mcp"
+command = "node"
+args = ["/absolute/path/pi-durabletask-mcp/dist/index.js"]
 ```
 
-</details>
+Reconnect the MCP after updating the bridge or Pi. [Other clients →](docs/reference.md#other-mcp-clients)
 
-Already connected? Update the existing entry and reconnect. [Other clients →](docs/reference.md#other-mcp-clients)
-
-### 3 · Try a review
-
-> Use Pi to review authentication for missing permission checks. Don't edit files. Report file locations and suggested regression tests.
-
-The agent uses `spawn` → `wait(until: "settled")`, answering questions with `answer`. `init` is optional diagnostics; `models` lists available models.
+**4 · Try it:** "Use Pi to check the auth module for missing permission checks. Read only." `init` shows your models and settings; `models` lists what each delegate may use.
 
 <details>
 <summary>Optional: install the Agent Skill</summary>
 
-Connect the MCP server first; this [skill](skills/pi-durabletask-mcp/SKILL.md) only guides tool use. Choose your client's user-level directory and download just `SKILL.md`:
+The [skill](skills/pi-durabletask-mcp/SKILL.md) teaches your agent the workflow. Put `SKILL.md` in your client's skills directory:
 
 ```bash
 dir="$HOME/.claude/skills/pi-durabletask-mcp" # Claude Code
@@ -151,22 +98,43 @@ curl -fsSL https://raw.githubusercontent.com/Nyarlathoteppppp/pi-durabletask-mcp
   -o "$dir/SKILL.md"
 ```
 
-Start a new client session after installing.
-
 </details>
 
-## Defaults & recovery
+## What you can do
 
-Tasks use your configured model, **read-only tools and memory storage by default**; memory sessions disappear when their MCP process exits.
-With explicit `durable: true`, recovery happens after a bridge restart: per-run time limits include downtime, and tools with unknown outcomes are not blindly replayed—verify external state before retrying.
-`handoff` stores notes written by the main agent; reading them does not take over execution.
-Cross-window continuation requires a durable task with its original history and note still retained; a live owner must release the task before another process can continue it.
+**Delegate**
+- `spawn` one task, `spawn_batch` up to four at once (one shared `prompt` for a multi-model review), `run` for a quick blocking question.
+- `forkFrom` a finished session: read the code once, then ask several independent questions from the same context.
+- Pass material with `attachments` (a diff, notes); add [instruction files and skills](docs/reference.md#explicit-instructions-and-skills) or [web research and MCP tools](docs/optional-tools.md) per task.
+
+**Steer and follow up**
+- `wait` returns on progress, a question or the end (`until: "settled"`, or any/all of a batch); `status` for a snapshot with `idleMs` and `phase`, so you can tell slow reasoning from a hung request.
+- `steer` a running agent, `answer` its questions, `follow_up` a finished one with renewed budgets, `abort` when needed.
+
+**Results**
+- Compact results by default; `saveTo` / `saveDir` write long reports to files and return the path.
+- `answerState` flags empty or cut-off answers; `usage` reports tokens and cost.
+
+**Reliability**
+- Budgets on turns, time and tool calls, with a wrap-up nudge at 75% and a tool-free last turn.
+- [Model fallback](docs/reference.md#continuing-on-another-model-after-a-provider-error) (opt-in): after a provider error that outlasts Pi's retries — gateway timeout, spent quota — the run continues on the next model you list, e.g. `PI_DELEGATE_FALLBACK_MODELS="xai/*:high,antigravity/gemini-*"`.
+- [Durable tasks](docs/reference.md#recovery-after-a-server-restart) (opt-in, `durable: true`): SQLite checkpoints, recovery after a restart, interrupted side effects never blindly replayed; `handoff` notes for another window.
+
+**Teams (advanced)**
+- An opt-in [coordinator](docs/workflows/codemode-coordinator.md) that dispatches your planned read-only members, asks follow-ups on disagreements and writes one synthesis with links to the original reports. For most work, `spawn_batch` and your own judgment are simpler.
+
+## Safe defaults
+
+- Read-only tools (`read`, `grep`, `find`, `ls`) unless the server permits more with `PI_DELEGATE_ALLOW_TOOLS`. This is not a sandbox: a delegate given `bash` can do anything you can.
+- Secret paths (`.env`, `~/.ssh`, credentials) are refused for attachments, reads and searches.
+- Memory sessions by default; they end with the MCP process. Durable storage, fallback and the answer grace turn are off unless you turn them on.
+- At most four delegates at once per server process (`PI_DELEGATE_MAX_CONCURRENT`).
 
 ## Documentation
 
-- [Agent instructions](docs/reference.md#agent-instructions) · [Tools](docs/reference.md#tools) · [Configuration](docs/reference.md#configuration)
-- [Handoff](docs/reference.md#handing-over-between-windows) · [Native MCP](docs/reference.md#native-mcp)
-- [Recovery, ownership & retention](docs/reference.md#recovery-after-a-server-restart)
+- [Reference](docs/reference.md): [tools](docs/reference.md#tools), [configuration](docs/reference.md#configuration), [authentication](docs/reference.md#auth), [native MCP](docs/reference.md#native-mcp)
+- [Review and synthesize](docs/workflows/review-and-synthesize.md), including falsifying findings before you act on them
+- [Recovery, ownership and retention](docs/reference.md#recovery-after-a-server-restart) · [Handoff](docs/reference.md#handing-over-between-windows)
 - [Development](docs/reference.md#development) · [Changelog](CHANGELOG.md) · [Issues](https://github.com/Nyarlathoteppppp/pi-durabletask-mcp/issues)
 
 ---
