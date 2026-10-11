@@ -123,6 +123,17 @@ curl -fsSL https://raw.githubusercontent.com/Nyarlathoteppppp/pi-durabletask-mcp
 **Teams (advanced)**
 - An opt-in [coordinator](docs/workflows/codemode-coordinator.md) that dispatches your planned read-only members, asks follow-ups on disagreements and writes one synthesis with links to the original reports. For most work, `spawn_batch` and your own judgment are simpler.
 
+## What we learned using it
+
+We build this with it: reviews, design discussions and research for this repo run through these tools every day. What stood out:
+
+- **Agreement is not proof.** In one review round, two of four reviewers reported the same false positive. In another, independent verifiers refuted one reviewer's top "major" finding and confirmed two real recovery bugs, which we fixed. We now send every finding we would act on to a fresh agent that tries to refute it ([how](docs/workflows/review-and-synthesize.md)).
+- **Providers fail mid-run more often than you would think.** In one day we hit gateway timeouts on large contexts and a spent Codex quota three times, and rescued each run by hand by forking it to another model. With fallback configured, the same quota error later switched the run to Grok within seconds, same session, nothing for us to do.
+- **Forking keeps what was read.** A forked session answered in one turn from the code its parent had already read. Across providers the prompt cache does not carry over, so a large fork can cost noticeably more than you expect.
+- **Not every model respects a tool-free last turn.** Some still call a tool after their tools are gone, and the run used to end with no answer. That is what the opt-in grace turn is for.
+- **Different models, different habits.** A fast model is cheap but uses many turns; a strong reasoning model can think past its deadline on the last turn. Budget time accordingly and keep thinking levels moderate for long reviews.
+- **Labels are not prompts.** A task's `label` is never sent to the delegate. Put what differs between tasks in their `prompt`.
+
 ## Safe defaults
 
 - Read-only tools (`read`, `grep`, `find`, `ls`) unless the server permits more with `PI_DELEGATE_ALLOW_TOOLS`. This is not a sandbox: a delegate given `bash` can do anything you can.
