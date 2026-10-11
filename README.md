@@ -23,9 +23,9 @@ From Claude Code or Codex, hand reviews and investigations to [Pi](https://pi.de
 
 ## Why
 
+- **Spend far less of your Claude Code / Codex quota on the same work.** The heavy part of a review or investigation — reading code, searching, cross-checking — runs on other providers. Your main agent only plans, waits and judges, and receives compact status and the final report, or just a file path.
+- **Put your other subscriptions to work.** Free tiers and plans you already pay for (Gemini, Grok, GPT, DeepSeek…) usually sit half unused. Pi runs on all of them, so that capacity does real work instead of expiring.
 - **Other model families, other blind spots.** Reviewers from one family tend to miss the same things. Send one diff to Gemini, Grok and GPT at once and compare.
-- **Use the subscriptions you already pay for.** Delegates run on your own Pi providers, not on your main agent's quota.
-- **Your main context stays small.** Delegates read the code on their own budget; you get compact status and the final report, or just a file path.
 - **Built to finish.** Every run has turn, time and tool-call budgets with a tool-free last turn for the answer; opt-in model fallback on provider errors; opt-in durable tasks that survive a restart.
 
 Your main agent stays in charge: it plans, chooses models and judges the results.
@@ -123,16 +123,25 @@ curl -fsSL https://raw.githubusercontent.com/Nyarlathoteppppp/pi-durabletask-mcp
 **Teams (advanced)**
 - An opt-in [coordinator](docs/workflows/codemode-coordinator.md) that dispatches your planned read-only members, asks follow-ups on disagreements and writes one synthesis with links to the original reports. For most work, `spawn_batch` and your own judgment are simpler.
 
-## What we learned using it
+## What we get from it
 
-We build this with it: reviews, design discussions and research for this repo run through these tools every day. What stood out:
+We build this project with it: reviews, design discussions and research for this repo run through these tools every day.
 
-- **Agreement is not proof.** In one review round, two of four reviewers reported the same false positive. In another, independent verifiers refuted one reviewer's top "major" finding and confirmed two real recovery bugs, which we fixed. We now send every finding we would act on to a fresh agent that tries to refute it ([how](docs/workflows/review-and-synthesize.md)).
-- **Providers fail mid-run more often than you would think.** In one day we hit gateway timeouts on large contexts and a spent Codex quota three times, and rescued each run by hand by forking it to another model. With fallback configured, the same quota error later switched the run to Grok within seconds, same session, nothing for us to do.
-- **Forking keeps what was read.** A forked session answered in one turn from the code its parent had already read. Across providers the prompt cache does not carry over, so a large fork can cost noticeably more than you expect.
-- **Not every model respects a tool-free last turn.** Some still call a tool after their tools are gone, and the run used to end with no answer. That is what the opt-in grace turn is for.
-- **Different models, different habits.** A fast model is cheap but uses many turns; a strong reasoning model can think past its deadline on the last turn. Budget time accordingly and keep thinking levels moderate for long reviews.
-- **Labels are not prompts.** A task's `label` is never sent to the delegate. Put what differs between tasks in their `prompt`.
+**Highlights**
+
+- **Our Claude quota goes to judgment, not reading.** In the pre-release review, four agents read about two million tokens of this codebase on Gemini, Grok and a GPT model. Our Claude session received about 7 KB of reports and spent its turns deciding what to fix.
+- **Subscriptions we were already paying for do the heavy lifting.** Most runs go to Gemini and Grok plans we had anyway. The four Gemini runs of that review round (one review, three verifications) came to about $0.10 at API prices, and to nothing extra on the plan.
+- **Several model families find more, and verification keeps it honest.** Parallel reviews from different families surface different issues; an independent verifier then refutes what does not hold. In that pre-release round, verifiers rejected one reviewer's top "major" and confirmed two real recovery bugs, which we fixed the same day.
+- **Runs finish when a provider does not.** Gateway timeouts and spent quotas used to cost us a manual rescue each. With fallback configured, a Codex quota error now continues on Grok within seconds, in the same session.
+- **Read once, ask many.** A session forked from one that had already read the code answered in a single turn.
+
+**Lessons**
+
+- Agreement is not proof: two of four reviewers once reported the same false positive. Verify findings before acting ([how](docs/workflows/review-and-synthesize.md)).
+- Across providers the prompt cache does not carry over, so a large fork can cost more than you expect.
+- Some models call a tool even after their tools are gone; the opt-in grace turn keeps that from ending a run with no answer.
+- Fast models are cheap but take more turns; strong reasoners can think past their deadline. Leave time and keep thinking levels moderate for long reviews.
+- A task's `label` is never sent to the delegate; put what differs between tasks in their `prompt`.
 
 ## Safe defaults
 
