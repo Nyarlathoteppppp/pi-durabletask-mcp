@@ -46,6 +46,7 @@ export const coordinatorOutputs = {
       touchedFiles: z.array(z.string()).optional(), editWriteCount: z.number().optional(),
       notices: z.array(z.object({ type: z.string(), message: z.string(), at: z.string() })).optional(),
       idleMs: z.number().optional(), phase: z.enum(["model", "tool", "agent", "compaction"]).optional(),
+      preview: z.string().optional(), runningElsewhere: z.boolean().optional(),
       ...publication,
     })),
     nextAction, ...publication,

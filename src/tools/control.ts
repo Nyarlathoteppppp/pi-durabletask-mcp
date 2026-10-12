@@ -5,7 +5,7 @@ import {
   cancelExecution, followUp, forgetSession, getState, listSessions, resolveInteraction,
   steerExecution, waitForMany, waitForState,
 } from "../core.js";
-import { batchNextAction, json, waitResult, withNextAction } from "./shared.js";
+import { batchNextAction, json, pollSummary, waitResult, withNextAction } from "./shared.js";
 import { resolveDelegateCwd } from "../workspace.js";
 
 // Preserve the existing helper import path for consumers.
@@ -55,7 +55,8 @@ export function registerControl(server: McpServer): void {
         "(\"settled\") or all do (\"all_settled\"): settled/pending ids, continueIds (everything not finished, " +
         "including sessions waiting for an answer) and a summary per session, with the final text of finished " +
         "ones and any pending questions. Answer questions, then wait again on continueIds. " +
-        "Running compact waits omit partial text and info notices; questions and warnings/errors remain. Use status or verbose: true for detail. " +
+        "Polls of running work show only what changed: no partial text, and only warnings/errors raised during this wait (status lists all); questions always. " +
+        "A long text saved with saveTo comes back as savedTo plus a short preview. Use status or verbose: true for detail. " +
         "Teams with saveDir expose reportIndex; reportIndexError means its latest publication failed. " +
         "nextAction is wait, answer or finish; finish means this run ended, so check state/error/termination. " +
         "Cancelling this wait leaves delegates running; use `abort` to stop one.",
@@ -73,14 +74,16 @@ export function registerControl(server: McpServer): void {
     async ({ sessionId, sessionIds, ...options }, extra) => {
       if ((sessionId === undefined) === (sessionIds === undefined))
         throw new Error("Pass exactly one of sessionId or sessionIds.");
+      // Notices raised before this wait were shown by an earlier one, or are in status.
+      const since = new Date().toISOString();
       if (sessionIds) {
         if (options.until === "progress") throw new Error('With sessionIds, until is "settled" or "all_settled".');
         const { timeoutMs, until } = options;
         const result = await waitForMany(sessionIds, { timeoutMs, until, signal: extra.signal });
         const sessions = result.sessions.map((s) => withNextAction(s));
-        return json({ ...result, sessions, nextAction: batchNextAction(sessions) });
+        return json({ ...result, sessions: sessions.map((s) => pollSummary(s, since)), nextAction: batchNextAction(sessions) });
       }
-      return json(waitResult(await waitForState(sessionId!, { ...options, signal: extra.signal }), options.verbose));
+      return json(waitResult(await waitForState(sessionId!, { ...options, signal: extra.signal }), options.verbose, since));
     },
   );
 

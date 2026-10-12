@@ -377,11 +377,10 @@ const settledNow = (w: Watched): boolean => finishedNow(w) || (!w.remote && w.wo
 const progressed = (w: Watched): boolean =>
   settledNow(w) || (!w.remote && (w.worker!.turns > w.turns || w.worker!.toolCalls.length > w.calls));
 
-/** What this process can say about a session another process is still running. */
+/** What this process can say about a session another process is still running: that, and nothing more. */
 function remoteSnapshot(sessionId: string): Snapshot {
-  return { sessionId, state: "running", turns: 0, toolCalls: [], toolCallCount: 0, questions: [],
-    notices: [{ type: "info", at: new Date().toISOString(),
-      message: "Running in another MCP process; only its result is visible here. Wait again to keep waiting." }] } as unknown as Snapshot;
+  return { sessionId, state: "running", runningElsewhere: true, turns: 0, toolCalls: [], toolCallCount: 0,
+    questions: [], notices: [] } as unknown as Snapshot;
 }
 
 async function watch(ids: string[], afterTurns?: number, afterToolCalls?: number): Promise<Watched[]> {
@@ -447,6 +446,8 @@ export interface WaitSummary extends FollowUpInfo {
   /** Present while it waits for an answer, so answer needs no extra status call. */
   questions?: Snapshot["questions"];
   lastText?: string;
+  preview?: string;
+  runningElsewhere?: true;
   error?: string;
   termination?: Snapshot["termination"];
   usage?: Snapshot["usage"];
@@ -486,6 +487,8 @@ export async function waitForMany(
       ...(s.questions.length ? { questions: s.questions } : {}),
       ...(done && s.savedTo ? { savedTo: s.savedTo, savedChars: s.savedChars } : {}),
       ...(done && !omitsSavedText(s) ? { lastText: s.lastText } : {}),
+      ...(done && s.preview ? { preview: s.preview } : {}),
+      ...(s.runningElsewhere ? { runningElsewhere: true as const } : {}),
       ...(s.saveError ? { saveError: s.saveError } : {}),
       ...(s.reportIndex ? { reportIndex: s.reportIndex } : {}),
       ...(s.reportIndexError ? { reportIndexError: s.reportIndexError } : {}),

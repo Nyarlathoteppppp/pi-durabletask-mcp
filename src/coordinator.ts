@@ -1,5 +1,6 @@
 /** Caller-planned, one-level codemode delegation. Lifecycle and admission stay in the core. */
 import { defineTool, type ToolDefinition, type AgentToolResult } from "@earendil-works/pi-coding-agent";
+import { previewOf } from "./pi/snapshot.js";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
@@ -180,7 +181,9 @@ export function createCoordinatorTools(options: z.output<typeof coordinatorSchem
             report.observe([latest], new Map([[id, version]]));
           }));
         }
-        const sessions = batch.sessions.map(({ lastText: _report, ...s }) => withNextAction(s));
+        // Reports stay out of the script's context; preview shows enough to decide which to read in full.
+        const sessions = batch.sessions.map(({ lastText, ...s }) =>
+          withNextAction({ ...s, ...(lastText && !s.preview ? { preview: previewOf(lastText) } : {}) }));
         return result({ ...batch, sessions, nextAction: batchNextAction(sessions), ...await reportFields() });
       },
     }),

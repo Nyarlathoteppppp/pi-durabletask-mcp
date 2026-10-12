@@ -3,6 +3,16 @@ import type { Snapshot, ToolCallSummary } from "../types.js";
 
 const RECENT_CALLS = 5;
 const COMPACT_ARGS = 120;
+const PREVIEW_CHARS = 160;
+
+/** The start of a text with its whitespace collapsed, cut at a word boundary and marked when cut. */
+export function previewOf(text: string): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  if (flat.length <= PREVIEW_CHARS) return flat;
+  const cut = flat.slice(0, PREVIEW_CHARS);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > PREVIEW_CHARS - 20 ? cut.slice(0, space) : cut).trimEnd()}…`;
+}
 
 /**
  * Polling a delegate must stay cheap for the caller's context: compact snapshots carry only the
@@ -15,5 +25,5 @@ export function compactSnapshot(full: Snapshot): Snapshot {
   const { lastText, contextUsage: _diagnostic, ...rest } = full;
   const boundary = full.runStartedAt ?? full.startedAt;
   const notices = full.notices.filter((n) => n.at >= boundary).slice(-RECENT_CALLS);
-  return { ...rest, ...(omitsSavedText(full) ? {} : { lastText }), toolCalls: trace, notices } as Snapshot;
+  return { ...rest, ...(omitsSavedText(full) ? { preview: previewOf(lastText) } : { lastText }), toolCalls: trace, notices } as Snapshot;
 }

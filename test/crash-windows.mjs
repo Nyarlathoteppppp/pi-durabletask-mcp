@@ -181,6 +181,8 @@ try {
   const runner = await connect();
   await runner.call("spawn", { cwd: directory, id: "elsewhere", prompt: "SLOW elsewhere", tools: [], durable: true });
   const watcher = await connect({ PI_DELEGATE_RECOVERY_INTERVAL_MS: "600000" });
+  const meanwhile = await watcher.call("wait", { sessionId: "elsewhere", until: "settled", timeoutMs: 250 });
+  assert.deepEqual([meanwhile.state, meanwhile.runningElsewhere], ["running", true]);
   const waited = await watcher.call("wait", { sessionId: "elsewhere", until: "settled", timeoutMs: 15000 });
   assert.equal(waited.state, "done");
   assert.equal(waited.lastText, "ANSWERED");

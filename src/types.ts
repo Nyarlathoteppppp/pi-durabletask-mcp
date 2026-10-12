@@ -99,6 +99,10 @@ export interface Snapshot extends FollowUpInfo {
   /** The final text was written to this file (the caller asked with saveTo); compact results omit it. */
   savedTo?: string | undefined;
   savedChars?: number | undefined;
+  /** The start of a saved text that compact results leave out, enough to read the gist without the file. */
+  preview?: string | undefined;
+  /** Another MCP process runs this session; only its recorded result is visible here. */
+  runningElsewhere?: true | undefined;
   /** Writing the final text failed; it is returned inline instead. */
   saveError?: string | undefined;
   /** Last successfully published team index; a snapshot, not live team state or recovery data. */

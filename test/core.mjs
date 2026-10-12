@@ -78,18 +78,22 @@ try {
   const started = await core.startExecution({ cwd: dir, id: "core-start", prompt: "work", tools: [] });
   const w = registry.loaded(started.sessionId);
   w.lastText = "old partial narrative";
+  // A running wait shows the notices raised while it waited, not info, and not again on the next poll.
+  const noticeWait = call("wait", { sessionId: w.id, until: "settled", timeoutMs: 500 });
+  await new Promise((resolve) => setTimeout(resolve, 50));
   const noticeAt = new Date().toISOString();
   const info = { type: "info", message: "ordinary update", at: noticeAt };
   const warning = { type: "warning", message: "provider retry is visible", at: noticeAt };
   const error = { type: "error", message: "extension failure is visible", at: noticeAt };
   const custom = { type: "custom", message: "unknown notice types are preserved", at: noticeAt };
   w.notices.push(info, warning, error, custom);
-  assert.equal((await call("status", { sessionId: w.id })).state, "running");
-  assert.equal((await call("status", { sessionId: w.id })).nextAction, "wait");
-  assert.equal((await call("wait", { sessionId: w.id, afterTurns: 0 })).nextAction, "wait");
-  const briefWait = await call("wait", { sessionId: w.id, afterTurns: 0 });
+  const briefWait = await noticeWait;
+  assert.equal(briefWait.nextAction, "wait");
   assert.equal("lastText" in briefWait, false, "running waits do not repeat partial prose");
   assert.deepEqual(briefWait.notices, [warning, error, custom]);
+  assert.deepEqual((await call("wait", { sessionId: w.id, until: "settled", timeoutMs: 250 })).notices, [], "shown once while running");
+  assert.equal((await call("status", { sessionId: w.id })).state, "running");
+  assert.equal((await call("status", { sessionId: w.id })).nextAction, "wait");
   assert.equal(briefWait.toolCallCount, 0);
   assert.equal(briefWait.phase, (await core.getState(w.id)).phase, "liveness remains visible");
   const detailedWait = await call("wait", { sessionId: w.id, afterTurns: 0, verbose: true });
@@ -108,7 +112,7 @@ try {
   assert.equal(questionSnapshot.questions[0].id, q.id);
   assert.equal(questionSnapshot.nextAction, "answer");
   assert.equal("lastText" in questionSnapshot, false);
-  assert.deepEqual(questionSnapshot.notices, [warning, error, custom]);
+  assert.deepEqual(questionSnapshot.notices, [], "notices an earlier wait showed are not repeated");
   assert.equal((await call("status", { sessionId: w.id })).nextAction, "answer");
   assert.equal(w.questions.has(q.id), true, "wait observes the question without answering");
   await call("answer", { sessionId: w.id, requestId: q.id, value: true });
@@ -208,6 +212,9 @@ try {
   const quiet = await core.startExecution({ cwd: dir, id: "batch-quiet", prompt: "work", tools: [] });
   const quietWorker = registry.loaded(quiet.sessionId);
   quietWorker.lastText = "still working";
+  // Raised while the batch wait runs, so it reports them; then a question settles it.
+  const batchWait = call("wait", { sessionIds: [asker.sessionId, quiet.sessionId], timeoutMs: 1000 });
+  await new Promise((resolve) => setTimeout(resolve, 50));
   const batchAt = new Date().toISOString();
   const batchInfo = { type: "info", message: "ordinary batch update", at: batchAt };
   const batchWarning = { type: "warning", message: "batch warning", at: batchAt };
@@ -215,7 +222,7 @@ try {
   quietWorker.notices.push(batchInfo, batchWarning, batchError);
   const ask = new Question("confirm", "continue?");
   registry.loaded(asker.sessionId).questions.set(ask.id, ask);
-  const seenBatch = await call("wait", { sessionIds: [asker.sessionId, quiet.sessionId], timeoutMs: 1000 });
+  const seenBatch = await batchWait;
   assert.deepEqual(seenBatch.settled, [asker.sessionId], "a question settles the wait");
   assert.equal(seenBatch.nextAction, "answer");
   assert.equal(seenBatch.sessions.find((s) => s.sessionId === quiet.sessionId).nextAction, "wait");

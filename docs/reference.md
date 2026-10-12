@@ -189,9 +189,13 @@ resource contents are not frozen snapshots.
 
 `run` and single-session `wait` keep result collection compact: by default they return `sessionId`,
 `label`, `state`, `turns`, `toolCallCount`, pending `questions`, current-run `notices`,
-and any `error` or `termination`, plus `nextAction`. Active compact waits omit partial `lastText`
-and `info` notices; warnings, errors and unknown notice types remain. Terminal results keep
-the final text and recent notices. `run` also reports the actual `model` and `thinking`, as do
+and any `error` or `termination`, plus `nextAction`. A poll of a running delegate shows what
+changed: it omits partial `lastText`, `info` notices and notices raised before this wait began
+(an earlier wait showed them; `status` lists all), and the follow-up fields that only say it is
+still running; batch summaries also drop a zero `pendingQuestions`. Terminal results keep the final
+text and recent notices. A long text written to `saveTo` is not repeated; `preview` shows its first
+160 characters, enough to see for instance that a review found nothing. A session another MCP
+process runs reports `runningElsewhere: true` until its result is recorded. Results are compact JSON. `run` also reports the actual `model` and `thinking`, as do
 `spawn`, `spawn_batch` and `follow_up` receipts. Tool traces and other configuration/timing
 metadata are omitted. For progress waits, pass the previous `turns` and
 `toolCallCount` as `afterTurns` and `afterToolCalls`.
