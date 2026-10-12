@@ -79,9 +79,9 @@ function unload(worker: PiWorker): Promise<void> {
   unloading.set(worker.id, done);
   return done;
 }
-/** Stored options must still pass this process's policy before they run again. */
 /**
- * A stored task this server now refuses (its cwd is gone, a tool is no longer permitted) cannot
+ * Stored options must still pass this process's policy before they run again. A stored task this
+ * server now refuses (its cwd is gone, a tool is no longer permitted) cannot
  * recover by retrying, so it stops like a task past its attempts: held and reported, not reclaimed.
  */
 async function checkStoredPolicy(options: WorkerOptions): Promise<void> {
@@ -102,12 +102,15 @@ const touch = (id: string): void => { lastUsed.set(id, Date.now()); };
 export const loaded = (id: string): PiWorker | undefined => sessions.get(id);
 
 /** Say why a session cannot be used here, so a caller does not retry a missing or busy id blindly. */
+/** The session exists but another MCP process runs or holds it, or will recover it. */
+export class SessionElsewhere extends Error {}
+
 function unavailable(id: string, reason: "held" | "pending" | undefined): Error {
   if (reason === "held")
-    return new Error(`Session ${id} is running or loaded in another MCP process. status and wait read it here ` +
-      "once it has finished; to steer, follow up or forget it, use that process or stop it.");
+    return new SessionElsewhere(`Session ${id} is running or loaded in another MCP process. wait waits for it here and ` +
+      "status reads it once it has finished; to steer, follow up or forget it, use that process or stop it.");
   if (reason === "pending")
-    return new Error(`Session ${id} is unfinished and waiting for recovery; a process resumes it when a ` +
+    return new SessionElsewhere(`Session ${id} is unfinished and waiting for recovery; a process resumes it when a ` +
       "delegate slot is free. Check again shortly.");
   return new Error(`Unknown sessionId: ${id}. Sessions without durable: true end with the MCP process that ran ` +
     "them, or earlier once finished when PI_DELEGATE_HISTORY (default 50) newer ones push them out; durable ones " +
@@ -247,7 +250,12 @@ export async function recoverAbandoned(): Promise<void> {
         try {
           await checkStoredPolicy(record.options);
           await PiWorker.recover({ ...record.options, durable: true }, record.prompt, record.key, worker);
-          void worker.run?.then(() => { evictHistory(); sweepStorage(); setImmediate(() => void recoverAbandoned()); });
+          void worker.run?.then(() => {
+            // Recovered in the background, not for anyone here: release it once it settles, so the
+            // window that continues the work can load it. Its finished state stays readable everywhere.
+            if (!shuttingDown && sessions.get(worker.id) === worker && !worker.isActive && worker.finishedAt) void unload(worker);
+            evictHistory(); sweepStorage(); setImmediate(() => void recoverAbandoned());
+          });
         } catch (error) {
           process.stderr.write(`[pi-delegate] recovery failed for ${record.options.id}: ${String(error)}\n`);
           if (error instanceof RecoveryStopped) {

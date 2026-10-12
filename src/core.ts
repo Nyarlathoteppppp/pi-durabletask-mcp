@@ -1,7 +1,7 @@
 /** Execution operations shared by protocol adapters. Registry and PiWorker own lifecycle/state. */
 import { PROGRESS_MS, RUN_DEFAULT_DURATION_MS, RUN_DEFAULT_TURNS } from "./config.js";
 import {
-  all, assertCapacity, claimId, evictHistory, forget, launch, launchBatch, loaded, resolve,
+  all, assertCapacity, claimId, evictHistory, forget, launch, launchBatch, loaded, resolve, SessionElsewhere,
 } from "./registry.js";
 import type { LaunchRequest } from "./registry.js";
 import { storedJobs, storedSnapshot } from "./durable.js";
@@ -359,19 +359,33 @@ export interface WaitOptions {
 }
 
 /** A session being waited on: live in this process, or finished and read from the catalog. */
-type Watched = { id: string; worker?: PiWorker; finished?: Snapshot; turns: number; calls: number };
+/** `remote`: another MCP process runs it; only its recorded finish is visible here. */
+type Watched = { id: string; worker?: PiWorker; finished?: Snapshot; remote?: true; turns: number; calls: number };
 
-const finishedNow = (w: Watched): boolean => w.finished !== undefined || hasFinished(w.worker!);
-const settledNow = (w: Watched): boolean => finishedNow(w) || w.worker!.questions.size > 0;
+const finishedNow = (w: Watched): boolean =>
+  w.finished !== undefined || (w.remote ? (w.finished = stored(w.id, true)) !== undefined : hasFinished(w.worker!));
+const settledNow = (w: Watched): boolean => finishedNow(w) || (!w.remote && w.worker!.questions.size > 0);
 const progressed = (w: Watched): boolean =>
-  settledNow(w) || w.worker!.turns > w.turns || w.worker!.toolCalls.length > w.calls;
+  settledNow(w) || (!w.remote && (w.worker!.turns > w.turns || w.worker!.toolCalls.length > w.calls));
+
+/** What this process can say about a session another process is still running. */
+function remoteSnapshot(sessionId: string): Snapshot {
+  return { sessionId, state: "running", turns: 0, toolCalls: [], toolCallCount: 0, questions: [],
+    notices: [{ type: "info", at: new Date().toISOString(),
+      message: "Running in another MCP process; only its result is visible here. Wait again to keep waiting." }] } as unknown as Snapshot;
+}
 
 async function watch(ids: string[], afterTurns?: number, afterToolCalls?: number): Promise<Watched[]> {
   return Promise.all(ids.map(async (id) => {
     // A finished session elsewhere cannot progress; its recorded state is the answer.
     const finished = stored(id, true);
     if (finished) return { id, finished, turns: finished.turns, calls: finished.toolCallCount };
-    const worker = await resolve(id);
+    // Running in, or about to be recovered by, another process: wait for its recorded finish.
+    const worker = await resolve(id).catch((error: unknown) => {
+      if (error instanceof SessionElsewhere) return undefined;
+      throw error;
+    });
+    if (!worker) return { id, remote: true as const, turns: 0, calls: 0 };
     return { id, worker, turns: afterTurns ?? worker.turns, calls: afterToolCalls ?? worker.toolCalls.length };
   }));
 }
@@ -404,6 +418,8 @@ export async function waitForState(
   const [watched] = await watch([sessionId], afterTurns, afterToolCalls);
   if (watched!.finished) return verbose ? watched!.finished : compactSnapshot(watched!.finished);
   await until([watched!], mode, timeoutMs, signal);
+  if (watched!.finished) return verbose ? watched!.finished : compactSnapshot(watched!.finished);
+  if (watched!.remote) return remoteSnapshot(sessionId);
   return waitingSnapshot(watched!.worker!, verbose);
 }
 
@@ -447,7 +463,7 @@ export async function waitForMany(
   const watched = await watch(ids);
   await until(watched, mode, timeoutMs, signal);
   const sessions = watched.map((w): WaitSummary => {
-    const s = w.finished ? compactSnapshot(w.finished) : waitingSnapshot(w.worker!);
+    const s = w.finished ? compactSnapshot(w.finished) : w.remote ? remoteSnapshot(w.id) : waitingSnapshot(w.worker!);
     const done = TERMINAL.has(s.state);
     const notices = done ? s.notices : s.notices.filter((n) => n.type !== "info");
     return {

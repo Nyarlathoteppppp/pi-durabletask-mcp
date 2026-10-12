@@ -69,6 +69,11 @@ const connect = async (env = {}) => {
   return host;
 };
 const close = async (host) => { await host.client.close().catch(() => {}); clients.delete(host); };
+// Recovered: loaded here, or already settled and released (then listed as stored, which unfinished jobs never are).
+const isRecovered = async (host, id) => {
+  const listed = await host.call("sessions");
+  return [...listed.sessions, ...(listed.stored ?? [])].some((s) => s.sessionId === id);
+};
 const settle = async (host, id) => {
   let status;
   await waitUntil(async () => !["starting", "running"].includes((status = await host.call("status", { sessionId: id })).state));
@@ -148,7 +153,7 @@ try {
   await writeFile(brokenFile, "test");
   await new Promise((resolve) => setTimeout(resolve, 1100));
   host = await connect();
-  await waitUntil(async () => (await host.call("sessions")).sessions.some((s) => s.sessionId === "answered"));
+  await waitUntil(() => isRecovered(host, "answered"));
   const answered = await settle(host, "answered");
   assert.equal(answered.state, "done", `recovered without a model call: ${answered.error}`);
   assert.equal(answered.lastText, "OK");
@@ -170,7 +175,7 @@ try {
       // Break credentials even with unused budget: recording the saved answer needs no model.
       await writeFile(brokenFile, "test");
       host = await connect();
-      await waitUntil(async () => (await host.call("sessions")).sessions.some((s) => s.sessionId === id));
+      await waitUntil(() => isRecovered(host, id));
       const recovered = await settle(host, id);
       assert.deepEqual([recovered.state, recovered.answerState, recovered.lastText, recovered.turns],
         ["done", "partial", "CUT_OK", 1]);
@@ -224,7 +229,7 @@ try {
     await writeFile(brokenFile, "test");
     await new Promise((resolve) => setTimeout(resolve, 1100));
     host = await connect();
-    await waitUntil(async () => (await host.call("sessions")).sessions.some((s) => s.sessionId === "late"));
+    await waitUntil(() => isRecovered(host, "late"));
     const late = await settle(host, "late");
     assert.equal(late.state, "aborted", `marked aborted without a model call: ${late.error}`);
     assert.equal(late.termination?.reason, "deadline");

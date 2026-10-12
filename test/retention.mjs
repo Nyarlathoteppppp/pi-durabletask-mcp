@@ -204,7 +204,9 @@ try {
   clients.delete(host);
   assert.equal(row("new").finished_at, null, "a committed follow-up is never marked finished");
   host = await connect();
-  assert.ok((await host.call("sessions")).sessions.some((s) => s.sessionId === "new"), "startup recovery resumed it");
+  // Once settled, the recovering process releases it: it is then listed as stored rather than loaded.
+  const listed = await host.call("sessions");
+  assert.ok([...listed.sessions, ...(listed.stored ?? [])].some((s) => s.sessionId === "new"), "startup recovery resumed it");
   await done(host, "new");
   assert.equal((await host.call("status", { sessionId: "new" })).turns, 2);
   assert.ok(row("new").finished_at > 0);

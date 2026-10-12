@@ -159,15 +159,18 @@ try {
   await host.call("spawn", { cwd: directory, id: "unknown", prompt: "UNKNOWN_EFFECT", tools: ["effect"], extensions: true });
   await waitUntil(async () => { try { return (await readFile(join(directory, "effects.txt"), "utf8")) === "effect\n"; } catch { return false; } });
   await kill(host);
+  const recoveries = () => requests.filter((r) => JSON.stringify(r.messages).includes("UNKNOWN_EFFECT") &&
+    JSON.stringify(r.messages).includes("The MCP service restarted.")).length;
+  const recoveredBefore = recoveries();
   const racers = await Promise.all([connect(), connect()]);
-  const ownership = await Promise.all(racers.map((candidate) => candidate.call("sessions")));
-  const owners = ownership.map((result, i) => result.sessions.some((session) => session.sessionId === "unknown") ? i : -1)
-    .filter((i) => i >= 0);
-  assert.equal(owners.length, 1, "a dead worker is claimed by exactly one process");
-  host = racers[owners[0]];
-  const loser = racers[1 - owners[0]];
-  await loser.client.close(); clients.delete(loser);
-  assert.equal((await finish(host, "unknown")).state, "done");
+  // The recovering process releases the task once it settles; wait reads it from either one.
+  let unknownState;
+  do unknownState = await racers[0].call("wait", { sessionId: "unknown", until: "settled", timeoutMs: 15000 });
+  while (["starting", "running"].includes(unknownState.state));
+  assert.equal(unknownState.state, "done");
+  assert.equal(recoveries() - recoveredBefore, 1, "a dead worker is recovered by exactly one process");
+  host = racers[0];
+  await racers[1].client.close(); clients.delete(racers[1]);
   assert.equal(await readFile(join(directory, "effects.txt"), "utf8"), "effect\n", "interrupted effect was not replayed");
   const unknownRequest = requests.findLast((r) => JSON.stringify(r.messages).includes("UNKNOWN_EFFECT"));
   assert.match(JSON.stringify(unknownRequest.messages.find((m) => m.role === "tool").content), /outcome is unknown/);

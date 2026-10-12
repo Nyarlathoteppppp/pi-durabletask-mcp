@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- A durable task recovered in the background by another MCP process (for example after its window closed) is released once it settles, so the window that continues the work can `follow_up` or `forget` it instead of finding it held elsewhere.
+- `wait` on a session that another MCP process is running now waits for its recorded result instead of failing at once.
 - A durable task this server's policy now refuses on recovery (its cwd is gone, a tool no longer permitted) is held and reported as an error that `forget` can remove, instead of being released and claimed again on every recovery tick with its row stuck as pending.
 - A task past its recovery attempts keeps its lock and diagnostic worker through history eviction and storage sweeps, so it is no longer released and reclaimed on the next tick.
 - `label` descriptions state that labels are never sent to the delegate.
