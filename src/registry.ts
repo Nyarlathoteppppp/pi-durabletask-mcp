@@ -16,7 +16,7 @@ import { resolveDelegateCwd } from "./workspace.js";
 import type { PiThinkingLevel, TerminationReason, Usage } from "./types.js";
 import type { FileEntry } from "@earendil-works/pi-coding-agent";
 import { publish } from "./statusline/state.js";
-import { claimAbandonedSettled, claimStored, jitter, unclaim, forgetOwnedJob, RecoveryStopped, storageBytes, storedIdInUse, sweep } from "./durable.js";
+import { claimAbandonedSettled, claimStored, jitter, unclaim, forgetOwnedJob, RecoveryStopped, storageBytes, storedIdInUse, storedSnapshot, sweep } from "./durable.js";
 import { message } from "./errors.js";
 import { validateNativeMcp, type NativeMcpOptions } from "./pi/native-mcp.js";
 import { checkSavePath, saveDirPath } from "./save.js";
@@ -250,10 +250,16 @@ export async function recoverAbandoned(): Promise<void> {
         try {
           await checkStoredPolicy(record.options);
           await PiWorker.recover({ ...record.options, durable: true }, record.prompt, record.key, worker);
-          void worker.run?.then(() => {
+          // A recovery that only recorded an already committed result starts no run; it is settled now.
+          void (worker.run ?? Promise.resolve()).then(async () => {
+            // An aborted run can settle before its SDK abort drains; wait for that, not for a new run.
+            for (let i = 0; i < 150 && worker.isActive && ["done", "error", "aborted"].includes(worker.state); i++)
+              await new Promise((resolve) => setTimeout(resolve, 200));
             // Recovered in the background, not for anyone here: release it once it settles, so the
             // window that continues the work can load it. Its finished state stays readable everywhere.
-            if (!shuttingDown && sessions.get(worker.id) === worker && !worker.isActive && worker.finishedAt) void unload(worker);
+            // Only once the catalog records the finish: a failed final write stays here with its error.
+            if (!shuttingDown && sessions.get(worker.id) === worker && !worker.isActive && worker.finishedAt &&
+              storedSnapshot(worker.id)) void unload(worker);
             evictHistory(); sweepStorage(); setImmediate(() => void recoverAbandoned());
           });
         } catch (error) {

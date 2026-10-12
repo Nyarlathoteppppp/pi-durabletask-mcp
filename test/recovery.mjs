@@ -165,10 +165,12 @@ try {
   const racers = await Promise.all([connect(), connect()]);
   // The recovering process releases the task once it settles; wait reads it from either one.
   let unknownState;
-  do unknownState = await racers[0].call("wait", { sessionId: "unknown", until: "settled", timeoutMs: 15000 });
-  while (["starting", "running"].includes(unknownState.state));
+  for (let i = 0; i < 4; i++) {
+    unknownState = await racers[0].call("wait", { sessionId: "unknown", until: "settled", timeoutMs: 15000 });
+    if (!["starting", "running"].includes(unknownState.state)) break;
+  }
   assert.equal(unknownState.state, "done");
-  assert.equal(recoveries() - recoveredBefore, 1, "a dead worker is recovered by exactly one process");
+  assert.equal(recoveries() - recoveredBefore, 1, "the interrupted run is resumed once, by one process");
   host = racers[0];
   await racers[1].client.close(); clients.delete(racers[1]);
   assert.equal(await readFile(join(directory, "effects.txt"), "utf8"), "effect\n", "interrupted effect was not replayed");

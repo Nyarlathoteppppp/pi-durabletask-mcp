@@ -362,8 +362,17 @@ export interface WaitOptions {
 /** `remote`: another MCP process runs it; only its recorded finish is visible here. */
 type Watched = { id: string; worker?: PiWorker; finished?: Snapshot; remote?: true; turns: number; calls: number };
 
-const finishedNow = (w: Watched): boolean =>
-  w.finished !== undefined || (w.remote ? (w.finished = stored(w.id, true)) !== undefined : hasFinished(w.worker!));
+const finishedNow = (w: Watched): boolean => {
+  if (w.finished !== undefined) return true;
+  if (w.remote) {
+    // Recovery can bring a remote session into this process while we wait; follow it here then.
+    const local = loaded(w.id);
+    if (!local) return (w.finished = stored(w.id, true)) !== undefined;
+    w.worker = local;
+    delete w.remote;
+  }
+  return hasFinished(w.worker!);
+};
 const settledNow = (w: Watched): boolean => finishedNow(w) || (!w.remote && w.worker!.questions.size > 0);
 const progressed = (w: Watched): boolean =>
   settledNow(w) || (!w.remote && (w.worker!.turns > w.turns || w.worker!.toolCalls.length > w.calls));
@@ -418,6 +427,7 @@ export async function waitForState(
   const [watched] = await watch([sessionId], afterTurns, afterToolCalls);
   if (watched!.finished) return verbose ? watched!.finished : compactSnapshot(watched!.finished);
   await until([watched!], mode, timeoutMs, signal);
+  if (watched!.remote) finishedNow(watched!);
   if (watched!.finished) return verbose ? watched!.finished : compactSnapshot(watched!.finished);
   if (watched!.remote) return remoteSnapshot(sessionId);
   return waitingSnapshot(watched!.worker!, verbose);
@@ -462,6 +472,8 @@ export async function waitForMany(
   const ids = [...new Set(sessionIds)];
   const watched = await watch(ids);
   await until(watched, mode, timeoutMs, signal);
+  // The wait may end on another session; a remote one may have finished meanwhile without being read.
+  for (const w of watched) if (w.remote) finishedNow(w);
   const sessions = watched.map((w): WaitSummary => {
     const s = w.finished ? compactSnapshot(w.finished) : w.remote ? remoteSnapshot(w.id) : waitingSnapshot(w.worker!);
     const done = TERMINAL.has(s.state);

@@ -24,6 +24,7 @@ const http = createServer(async (req, res) => {
   requests++;
   const encoded = JSON.stringify(JSON.parse(body).messages.findLast((m) => m.role === "user")?.content);
   prompts.push(encoded);
+  if (encoded.includes("STUCK") && !encoded.includes("again")) return; // never answers, even on recovery
   // The first HOLD request never answers, so the server can be killed mid-run; later ones answer.
   if (encoded.includes("HOLD") && !held.has(encoded)) { held.add(encoded); return; }
   if (encoded.includes("SLOW")) await new Promise((resolve) => setTimeout(resolve, 1500));
@@ -185,6 +186,56 @@ try {
   assert.equal(waited.lastText, "ANSWERED");
   await close(watcher);
   await close(runner);
+  // 7. The same release when recovery only records an already committed result (death after the
+  //    terminal commit, before the catalog row was finished): no run starts, yet it is released.
+  host = await connect({ TEST_CRASH_BEFORE_FINAL: "1" });
+  await host.call("spawn", { cwd: directory, id: "committed", prompt: "plain", tools: [], durable: true }).catch(() => {});
+  await waitUntil(() => { try { process.kill(host.transport.pid, 0); return false; } catch { return true; } }, "the crash before final");
+  await host.client.close().catch(() => {}); clients.delete(host);
+  assert.equal(catalogRow("committed").finished_at, null);
+  const recorder = await connect();
+  await waitUntil(() => catalogRow("committed")?.finished_at > 0, "the recorded result");
+  const later = await connect({ PI_DELEGATE_RECOVERY_INTERVAL_MS: "600000" });
+  await waitUntil(async () => !(await later.raw("follow_up", { sessionId: "committed", prompt: "again" })).isError, "follow_up after a recorded recovery");
+  await close(later);
+  await close(recorder);
+
+  // 8. A batch wait that times out on a local run still reports a remote session that finished meanwhile.
+  const far = await connect();
+  await far.call("spawn", { cwd: directory, id: "far", prompt: "SLOW far", tools: [], durable: true });
+  const near = await connect({ PI_DELEGATE_RECOVERY_INTERVAL_MS: "600000" });
+  await near.call("spawn", { cwd: directory, id: "near", prompt: "HOLD near", tools: [] });
+  const mixed = await near.call("wait", { sessionIds: ["near", "far"], until: "all_settled", timeoutMs: 4000 });
+  assert.deepEqual(mixed.settled, ["far"]);
+  assert.equal(mixed.sessions.find((s) => s.sessionId === "far").lastText, "ANSWERED");
+  await close(near);
+  await close(far);
+  // 9. A background recovery that ends by abort (here its deadline) is released after the abort drains.
+  host = await connect();
+  await host.call("spawn", { cwd: directory, id: "stuck", prompt: "STUCK", tools: [], durable: true, maxDurationMs: 4000 });
+  await waitUntil(() => prompts.some((p) => p.includes("STUCK")), "the stuck model request");
+  await kill(host);
+  const aborter = await connect();
+  await waitUntil(() => catalogRow("stuck")?.finished_at > 0, "the deadline abort");
+  const next = await connect({ PI_DELEGATE_RECOVERY_INTERVAL_MS: "600000" });
+  await waitUntil(async () => !(await next.raw("follow_up", { sessionId: "stuck", prompt: "again", maxTurns: 3 })).isError, "follow_up after an aborted recovery");
+  await close(next);
+  await close(aborter);
+  // 10. A recovery whose final catalog write fails stays loaded with its error, holding the job,
+  //     instead of being released and reclaimed while the row still reads unfinished.
+  host = await connect();
+  await host.call("spawn", { cwd: directory, id: "unwritten", prompt: "HOLD unwritten", tools: [], durable: true });
+  await waitUntil(() => prompts.some((p) => p.includes("HOLD unwritten")), "the unwritten model request");
+  await kill(host);
+  const failing = await connect({ TEST_FAIL_FINAL: "unwritten" });
+  await waitUntil(async () => {
+    const r = await failing.raw("status", { sessionId: "unwritten" });
+    return !r.isError && JSON.parse(r.content[0].text).state === "error";
+  }, "the failed final write");
+  await new Promise((resolve) => setTimeout(resolve, 1500)); // several recovery ticks
+  assert.equal(catalogRow("unwritten").attempts, 1, "held after the failed write, not reclaimed");
+  assert.match(JSON.parse((await failing.raw("status", { sessionId: "unwritten" })).content[0].text).error, /persistence failed/);
+  await close(failing);
   console.log("  OK -> crashes before the store exists or after a renewing follow_up commits recover correctly; refused or spent recoveries are held, not retried every tick; recovered tasks are released for other windows, which can also wait on them");
 } finally {
   for (const host of clients) await host.client.close().catch(() => {});

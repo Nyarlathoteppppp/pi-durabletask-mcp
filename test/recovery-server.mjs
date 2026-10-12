@@ -71,6 +71,8 @@ DurableJob.prototype.recordFinal = function (snapshot) {
   if (process.env.TEST_CRASH_BEFORE_FINAL && snapshot.turns >= Number(process.env.TEST_CRASH_BEFORE_FINAL)) {
     process.kill(process.pid, "SIGKILL");
   }
+  // A catalog that refuses the final write for one session, as a full disk would.
+  if (process.env.TEST_FAIL_FINAL === snapshot.sessionId) throw new Error("catalog write failed: simulated");
   return recordFinal.call(this, snapshot);
 };
 
