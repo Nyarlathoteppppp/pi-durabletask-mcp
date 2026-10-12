@@ -37,6 +37,19 @@ const FALLBACK_HELP =
   "PI_DELEGATE_FALLBACK_MODELS; [] for none.";
 const fallbackModels = z.array(z.string()).optional();
 
+// Built-in tools by name; MCP tools only counted, since init lists them and a refused request names them.
+const mcpPermitted = [...PERMITTED].filter((name) => name.startsWith("mcp__")).length;
+const PERMITTED_SUMMARY = ALLOW_ALL ? "any" : [...[...PERMITTED].filter((name) => !name.startsWith("mcp__")),
+  ...(mcpPermitted ? [`${mcpPermitted} MCP tools (init lists them)`] : [])].join(", ");
+
+/**
+ * run and spawn_batch take the same coordinator plan as spawn, but point to it instead of repeating
+ * its schema: a caller pays for every tool definition it loads. The handlers parse it the same way.
+ */
+const coordinatorRef = z.unknown().optional()
+  .describe("A coordinator plan, exactly as spawn's `coordinator` (see spawn for its fields); checked the same way.");
+const plan = (value: unknown) => value === undefined ? undefined : coordinatorSchema.parse(value);
+
 const spawnShape = {
   resources: resourcesSchema.optional().describe("Explicit instruction/skill files; omitted loads none. Forks inherit the selection; {} clears it. Does not grant tools."),
   coordinator: coordinatorSchema.optional().describe("Opt-in memory-only orchestration of caller-planned read-only children. Omitted prompt gives a concise synthesis with disagreements, failed coverage and original report references; omitted tools selects codemode, subject to server permissions. Children have independent budgets and count toward concurrency. Cancelling the coordinator leaves children running."),
@@ -64,7 +77,7 @@ const spawnShape = {
     .optional()
     .describe(
       `Tool allowlist for this delegate. Omit for ${(DEFAULT_TOOLS.length ? DEFAULT_TOOLS : READ_ONLY_TOOLS).join(", ")}; [] disables all tools. ` +
-        `With coordinator, omit for codemode instead. Permitted on this server: ${ALLOW_ALL ? "any" : [...PERMITTED].join(", ")}.`,
+        `With coordinator, omit for codemode instead. Permitted on this server: ${PERMITTED_SUMMARY}.`,
     ),
   nativeMcp: z.boolean().optional().describe("Enable Pi native MCP independently of third-party extensions. Requires explicit mcpServers and authorized exact tool names, including codemode/tool_search if used."),
   mcpServers: z.array(z.string()).optional().describe("Names from Pi mcp.json to connect. Required with nativeMcp; other servers are not loaded."),
@@ -97,7 +110,7 @@ const spawnShape = {
 
 const taskShape = z.object({
   resources: spawnShape.resources,
-  coordinator: spawnShape.coordinator,
+  coordinator: coordinatorRef,
   prompt: z.string().optional().describe("Overrides the batch `prompt` for this task alone. Required for ordinary delegates when the batch has none; omit with coordinator for the default dispatch/wait/synthesis workflow."),
   forkFrom: z.string().optional().describe("Overrides the batch forkFrom for this task"),
   attachments: attachments.describe("Overrides the batch `attachments` for this task alone; [] attaches nothing"),
@@ -149,7 +162,7 @@ export function registerSpawn(server: McpServer): void {
         tasks: z.array(taskShape).min(1).max(BATCH_MAX).describe(`1 to ${BATCH_MAX} delegates to start`),
         prompt: z.string().optional().describe("Default prompt for tasks without their own, e.g. one review sent to several models. Coordinator tasks keep their default synthesis."),
         resources: spawnShape.resources.describe("Default resource selection for batch tasks; each task can replace it, including {} to clear."),
-        coordinator: spawnShape.coordinator,
+        coordinator: coordinatorRef,
         forkFrom: z.string().optional().describe("Default settled parent session for this batch"),
         attachments: attachments.describe(`Default for every task in this batch. ${ATTACHMENTS_HELP}`),
         saveDir: z.string().optional().describe("Absolute directory: each finished task's final text is written to <sessionId>.md there"),
@@ -187,7 +200,9 @@ export function registerSpawn(server: McpServer): void {
           .describe('Names the tasks `<prefix>-01`, `<prefix>-02`, ... e.g. "audit" gives "audit-01"'),
       },
     },
-    async (args) => {
+    async ({ coordinator, tasks, ...rest }) => {
+      const args = { ...rest, coordinator: plan(coordinator),
+        tasks: tasks.map(({ coordinator: member, ...task }) => ({ ...task, coordinator: plan(member) })) };
       const result = await startBatch(args);
       const sessions = result.sessions.map((s) => ({ ...s, nextAction: "wait" }));
       return json({
@@ -207,10 +222,12 @@ export function registerSpawn(server: McpServer): void {
         "this is for quick questions. Returns a compact result; use verbose: true for the full snapshot.",
       inputSchema: {
         ...spawnShape,
+        coordinator: coordinatorRef,
         verbose: z.boolean().optional().describe("Include configuration and the full tool trace with ids and results"),
       },
     },
-    async ({ verbose, ...args }, extra) => {
+    async ({ verbose, coordinator, ...rest }, extra) => {
+      const args = { ...rest, coordinator: plan(coordinator) };
       // Progress notifications reset the MCP request timeout, which defaults to 60s.
       const token = extra?._meta?.progressToken;
       const snapshot = await runExecution(args, {

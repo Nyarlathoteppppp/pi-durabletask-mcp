@@ -83,7 +83,21 @@ try {
   assert.equal(summary.state, "done");
   assert.equal(summary.preview, preview);
   assert.ok(!("pendingQuestions" in summary), "no zero question count");
-  console.log("  OK -> compact JSON; running waits drop fixed fields and earlier notices; saved texts keep a preview");
+  // 4. Tool definitions are loaded into the caller's context too: the coordinator plan is defined once,
+  //    on spawn; run and spawn_batch refer to it and still check it the same way.
+  const { tools } = await client.listTools();
+  const schemaOf = (name) => tools.find((t) => t.name === name).inputSchema;
+  assert.ok(schemaOf("spawn").properties.coordinator.properties, "spawn defines the plan");
+  for (const [name, schema] of [["run", schemaOf("run")], ["spawn_batch", schemaOf("spawn_batch")],
+    ["spawn_batch task", schemaOf("spawn_batch").properties.tasks.items]])
+    assert.equal(schema.properties.coordinator.properties, undefined, `${name} refers to it`);
+  for (const [name, args] of [["run", { cwd: dir, coordinator: { tasks: [{}] } }],
+    ["spawn_batch", { cwd: dir, tasks: [{ coordinator: { tasks: [{}] } }] }]]) {
+    const refused = await client.callTool({ name, arguments: args });
+    assert.equal(refused.isError, true, `${name} still checks the plan`);
+    assert.match(refused.content[0].text, /prompt/);
+  }
+  console.log("  OK -> compact JSON; running waits drop fixed fields and earlier notices; saved texts keep a preview; the coordinator plan is defined once");
 } finally {
   await client.close().catch(() => {});
   await new Promise((resolve) => http.close(resolve));
