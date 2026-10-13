@@ -237,14 +237,15 @@ export const storedIdInUse = (id: string): boolean => byId(id) !== undefined;
  * Claim a finished job by session id so it can be read or followed up. "held" means another live
  * process has it loaded. Unfinished jobs are left to recovery, which counts attempts.
  */
-export function claimStored(id: string): JobRecord | "held" | "pending" | undefined {
+export function claimStored(id: string, { unfinished = false } = {}): JobRecord | "held" | "pending" | undefined {
   const row = byId(id);
   if (!row || owns(row.key)) return undefined;
   if (!tryAcquire(row.key)) return "held";
   const fresh = db().prepare("SELECT finished_at FROM jobs WHERE key = ?").get(row.key) as { finished_at: number | null } | undefined;
   if (!fresh) { releaseOwnership(row.key); return undefined; }
-  // Unfinished and unowned: abandoned, waiting for a recovery slot.
-  if (fresh.finished_at === null) { releaseOwnership(row.key); return "pending"; }
+  // Unfinished and unowned: abandoned, waiting for a recovery slot. Only deletion may take it as is:
+  // holding its lock, nobody else is running it.
+  if (fresh.finished_at === null && !unfinished) { releaseOwnership(row.key); return "pending"; }
   db().prepare("UPDATE jobs SET pid = ? WHERE key = ?").run(process.pid, row.key);
   return { key: row.key, options: JSON.parse(row.options) as WorkerOptions, prompt: row.prompt };
 }
@@ -253,6 +254,18 @@ export function claimStored(id: string): JobRecord | "held" | "pending" | undefi
 export function unclaim(key: string): void {
   if (!owns(key)) return;
   db().prepare("UPDATE jobs SET pid = 0, attempts = max(attempts - 1, 0) WHERE key = ?").run(key);
+  releaseOwnership(key);
+}
+
+/**
+ * A job whose recovery stopped for good (attempts spent, refused by this server's policy): record it as
+ * finished with its error and let it go, so every window reads the error and can forget it, and no
+ * recovery tick claims it again.
+ */
+export function finishStopped(key: string, snapshot: Snapshot): void {
+  if (!owns(key)) return;
+  const at = Date.parse(snapshot.finishedAt ?? "") || Date.now();
+  db().prepare("UPDATE jobs SET pid = 0, finished_at = ?, snapshot = ? WHERE key = ?").run(at, JSON.stringify(snapshot), key);
   releaseOwnership(key);
 }
 

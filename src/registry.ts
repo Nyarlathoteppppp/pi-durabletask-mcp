@@ -16,7 +16,7 @@ import { resolveDelegateCwd } from "./workspace.js";
 import type { PiThinkingLevel, TerminationReason, Usage } from "./types.js";
 import type { FileEntry } from "@earendil-works/pi-coding-agent";
 import { publish } from "./statusline/state.js";
-import { claimAbandonedSettled, claimStored, jitter, unclaim, forgetOwnedJob, RecoveryStopped, storageBytes, storedIdInUse, storedSnapshot, sweep } from "./durable.js";
+import { claimAbandonedSettled, claimStored, finishStopped, jitter, unclaim, forgetOwnedJob, RecoveryStopped, storageBytes, storedIdInUse, storedSnapshot, sweep } from "./durable.js";
 import { message } from "./errors.js";
 import { validateNativeMcp, type NativeMcpOptions } from "./pi/native-mcp.js";
 import { checkSavePath, saveDirPath } from "./save.js";
@@ -172,10 +172,13 @@ export async function forget(id: string): Promise<void> {
   const unloadingNow = unloading.get(id);
   if (unloadingNow) await unloadingNow;
   const inFlight = loading.get(id);
-  const worker = sessions.get(id) ?? (inFlight && await inFlight);
+  // A load that fails leaves the job stored; deleting it does not depend on that load.
+  // Await the load itself, not a .catch() chain: an extra hop lets a concurrent follow_up use the worker first.
+  let worker = sessions.get(id);
+  if (!worker && inFlight) { try { worker = await inFlight; } catch { worker = undefined; } }
   if (!worker) {
-    // Deleting a stored job does not need its conversation loaded.
-    const record = claimStored(id);
+    // Deleting a stored job does not need its conversation loaded, nor the job to be finished.
+    const record = claimStored(id, { unfinished: true });
     if (typeof record !== "object") throw unavailable(id, record);
     forgetOwnedJob(record.key);
     return;
@@ -213,7 +216,7 @@ export function sweepStorage(force = false): void {
   // Over the size limit, every finished durable session here is unloaded too, so the sweep can
   // delete the oldest; unloaded ones stay readable and reload on follow_up if they survive.
   const over = storageBytes() > STORAGE_LIMIT_BYTES;
-  const expired = all().filter((w) => !w.recoveryCleanupFailed && !w.recoveryStopped && w.retentionDays !== undefined && !w.isActive && w.finishedAt &&
+  const expired = all().filter((w) => !w.recoveryCleanupFailed && w.retentionDays !== undefined && !w.isActive && w.finishedAt &&
     (over || Date.parse(w.finishedAt) + w.retentionDays * DAY_MS < now));
   void Promise.all(expired.map(unload))
     .then(() => sweep(now))
@@ -252,6 +255,9 @@ export async function recoverAbandoned(): Promise<void> {
           await PiWorker.recover({ ...record.options, durable: true }, record.prompt, record.key, worker);
           // A recovery that only recorded an already committed result starts no run; it is settled now.
           void (worker.run ?? Promise.resolve()).then(async () => {
+            // Aborted before its store opened: record the cancellation, or the next tick would run it again.
+            if (worker.state === "aborted" && worker.recoveryKey && !storedSnapshot(worker.id))
+              finishStopped(worker.recoveryKey, worker.snapshot({ verbose: true }));
             // An aborted run can settle before its SDK abort drains; wait for that, not for a new run.
             for (let i = 0; i < 150 && worker.isActive && ["done", "error", "aborted"].includes(worker.state); i++)
               await new Promise((resolve) => setTimeout(resolve, 200));
@@ -265,11 +271,13 @@ export async function recoverAbandoned(): Promise<void> {
         } catch (error) {
           process.stderr.write(`[pi-delegate] recovery failed for ${record.options.id}: ${String(error)}\n`);
           if (error instanceof RecoveryStopped) {
-            // Past its attempts: keep the lock and show the error, so no process retries it forever.
-            worker.recoveryStopped = true;
+            // Past its attempts or refused here: record it finished with the error and let it go, so
+            // every window reads and can forget it, and no recovery tick claims it again.
             worker.state = "error";
             worker.error = `Recovery failed: ${String(error)}`;
             worker.finishedAt = new Date().toISOString();
+            finishStopped(record.key, worker.snapshot({ verbose: true }));
+            sessions.delete(worker.id);
           } else {
             // Possibly passing (auth, runtime start): clean up the executor while keeping the
             // counted attempt. A cleanup failure keeps the lock and the worker for diagnosis.
@@ -322,7 +330,7 @@ export async function abortAll(reason: TerminationReason = "server_shutdown"): P
  */
 export function evictHistory(keep?: PiWorker): void {
   const used = (w: PiWorker): number => lastUsed.get(w.id) ?? Date.parse(w.startedAt);
-  const done = all().filter((w) => !w.recoveryCleanupFailed && !w.recoveryStopped && !w.isActive && w !== keep).sort((a, b) => used(a) - used(b));
+  const done = all().filter((w) => !w.recoveryCleanupFailed && !w.isActive && w !== keep).sort((a, b) => used(a) - used(b));
   while (sessions.size > HISTORY_LIMIT && done.length) {
     const oldest = done.shift();
     if (!oldest) break;

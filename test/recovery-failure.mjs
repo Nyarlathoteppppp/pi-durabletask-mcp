@@ -43,7 +43,7 @@ const KEY = "00000000-0000-4000-8000-0000000fa11e";
 const catalog = () => new DatabaseSync(join(dir, "state", "durable", "v2", "catalog.sqlite"));
 const row = (key = KEY) => {
   const db = catalog();
-  try { return db.prepare("SELECT pid, attempts FROM jobs WHERE key = ?").get(key); }
+  try { return db.prepare("SELECT pid, attempts, finished_at FROM jobs WHERE key = ?").get(key); }
   finally { db.close(); }
 };
 const options = (id) => ({ id, cwd: dir, tools: [], maxTurns: 5, maxDurationMs: 60000 });
@@ -176,15 +176,19 @@ try {
   assert.equal(row(nativeKey).pid, 0);
   forgetReleased(nativeKey, "native");
 
-  // A job past its attempts is kept here and reported, so no cleanup path retries it.
+  // A job past its attempts is recorded as finished with its error and released: every window reads
+  // it, any can forget it, and no recovery claims it again.
   const spentKey = "00000000-0000-4000-8000-00000000057e";
   await prepareUnfinished(spentKey, "spent");
   patchClose = undefined;
   attachJob = false;
   failWith = "stopped";
   await registry.recoverAbandoned();
-  assert.match(registry.loaded("spent")?.error ?? "", /Recovery stopped/);
-  assert.equal(durable.claimAbandoned(new Set(), 1).records.length, 0, "still held, not retried");
+  assert.equal(registry.loaded("spent"), undefined);
+  assert.match(durable.storedSnapshot("spent")?.error ?? "", /Recovery stopped/);
+  assert.equal(row(spentKey).pid, 0);
+  assert.ok(row(spentKey).finished_at > 0);
+  assert.equal(durable.claimAbandoned(new Set(), 1).records.length, 0, "finished, not retried");
   console.log("  OK -> recovery cleanup closes real jobs, preserves attempts, releases only on success, and keeps cleanup failures diagnostic");
 } finally {
   PiWorker.recover = recover;

@@ -55,6 +55,13 @@ DurableJob.prototype.begin = async function (prompt, checkpoint, execute, recove
   }
   return begin.call(this, prompt, checkpoint, execute, recover);
 };
+// Stretch the moment after a new job's store opened (its catalog row exists) and before it starts.
+const open = DurableJob.open;
+DurableJob.open = async function (...args) {
+  const job = await open.apply(this, args);
+  if (process.env.TEST_OPEN_DELAY_MS && !args[2]) await new Promise((resolve) => setTimeout(resolve, Number(process.env.TEST_OPEN_DELAY_MS)));
+  return job;
+};
 // Hold a recovery between reading its checkpoint and reopening the store as executor.
 const close = DurableJob.prototype.close;
 DurableJob.prototype.close = async function (release = true) {

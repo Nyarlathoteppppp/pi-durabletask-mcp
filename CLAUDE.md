@@ -48,6 +48,7 @@
   - follow_up 已提交：`retention.mjs`（CRASH_AFTER_FOLLOWUP_COMMIT），续预算的情况见 `crash-windows.mjs` 用例 2；
   - 恢复中再崩溃、超过次数上限：`ownership.mjs`、`recovery-failure.mjs`；关闭到释放之间：`ownership.mjs`（CLOSE_BARRIER）；
   - 认领竞争：`claim-race.mjs`；没有 catalog 行的存储：`orphan-gc.mjs`；
+  - 打开存储期间取消、恢复被策略拒绝或超过次数：`crash-windows.mjs` 用例 3、4、12 与 `recovery-failure.mjs`，记为终态（finished_at、pid 0）并释放，不再重跑；无人持有的未完成任务可以 `forget`（用例 11）；
   - `saveTo` 用临时文件加 rename，崩溃不会留下写了一半的目标文件。
 
   已知且接受：Jev 判断期间崩溃，恢复后不再重新判断 `narration`（opt-in 的提示性字段）；`saveTo` 只保存在内存，恢复后的结果直接返回。故障钩子都在 `test/recovery-server.mjs`，新窗口优先加在那里。

@@ -131,8 +131,9 @@ try {
   assert.equal(renewed.turns, 2);
   assert.equal(renewed.remainingTurns, 2, "the renewed quota of 3 applies from the follow_up");
   await close(host);
-  // 3. A stored job this server's policy now refuses (its cwd is gone) is reported once and held,
-  //    not released and claimed again on every recovery tick; forget removes it.
+  // 3. A stored job this server's policy now refuses (its cwd is gone) is recorded as finished with
+  //    its error, not claimed again on every tick nor held by the process that met it: any window
+  //    reads the error and can forget it.
   const gone = join(directory, "gone");
   await mkdir(gone);
   host = await connect();
@@ -146,11 +147,15 @@ try {
   assert.match(blocked.error, /policy/);
   await new Promise((resolve) => setTimeout(resolve, 1500)); // several recovery ticks
   assert.equal(catalogRow("blocked").attempts, 1, "claimed once, not on every tick");
-  await host.call("forget", { sessionId: "blocked" });
+  const elsewhere = await connect({ PI_DELEGATE_RECOVERY_INTERVAL_MS: "600000" });
+  assert.match((await elsewhere.call("status", { sessionId: "blocked" })).error, /policy/, "readable in another window");
+  await elsewhere.call("forget", { sessionId: "blocked" });
   assert.equal(catalogRow("blocked"), undefined);
+  await close(elsewhere);
   await close(host);
 
-  // 4. A job past its recovery attempts keeps its lock even when history eviction runs.
+  // 4. A job past its recovery attempts is recorded the same way: not reclaimed even when history
+  //    eviction runs, and forgettable from another window.
   host = await connect();
   await host.call("spawn", { cwd: directory, id: "spent", prompt: "HOLD spent", tools: [], durable: true });
   await waitUntil(() => prompts.some((p) => p.includes("HOLD spent")), "the spent model request");
@@ -161,7 +166,12 @@ try {
   assert.equal((await settled(host, "spent")).state, "error");
   await host.call("run", { cwd: directory, prompt: "plain", tools: [] }); // a finished session pushes history over 1
   await new Promise((resolve) => setTimeout(resolve, 1500));
-  assert.equal(catalogRow("spent").attempts, 6, "not released and claimed again after eviction");
+  assert.equal(catalogRow("spent").attempts, 6, "not claimed again after eviction");
+  const other = await connect({ PI_DELEGATE_RECOVERY_INTERVAL_MS: "600000" });
+  assert.match((await other.call("status", { sessionId: "spent" })).error, /Recovery stopped/);
+  await other.call("forget", { sessionId: "spent" });
+  assert.equal(catalogRow("spent"), undefined);
+  await close(other);
   await close(host);
   // 5. A task another process recovered in the background is released once it settles, so the window
   //    that continues the work can follow it up instead of finding it held elsewhere.
@@ -238,7 +248,36 @@ try {
   assert.equal(catalogRow("unwritten").attempts, 1, "held after the failed write, not reclaimed");
   assert.match(JSON.parse((await failing.raw("status", { sessionId: "unwritten" })).content[0].text).error, /persistence failed/);
   await close(failing);
-  console.log("  OK -> crashes before the store exists or after a renewing follow_up commits recover correctly; refused or spent recoveries are held, not retried every tick; recovered tasks are released for other windows, which can also wait on them");
+  // 11. forget removes an unfinished job no process holds (here its recovery failed on auth and was
+  //     handed back): holding the lock is all deletion needs, and nobody is running it.
+  host = await connect();
+  await host.call("spawn", { cwd: directory, id: "abandoned", prompt: "HOLD abandoned", tools: [], durable: true });
+  await waitUntil(() => prompts.some((p) => p.includes("HOLD abandoned")), "the abandoned model request");
+  await kill(host);
+  const brokenAuth = await connect({ TEST_BROKEN_PROVIDER: "test", PI_DELEGATE_RECOVERY_INTERVAL_MS: "600000" });
+  assert.equal(catalogRow("abandoned").finished_at, null, "still unfinished after the failed recovery");
+  await brokenAuth.call("forget", { sessionId: "abandoned" });
+  assert.equal(catalogRow("abandoned"), undefined);
+  await close(brokenAuth);
+  // 12. A durable run cancelled while its store is opening ends aborted, recorded as such: no recovery
+  //     tick runs the cancelled work later, and forget removes it.
+  const slow = await connect({ TEST_OPEN_DELAY_MS: "1500" });
+  const cancel = new AbortController();
+  const cancelled = slow.client.callTool({ name: "run", arguments: { cwd: directory, id: "cancelled", prompt: "CANCELLED work",
+    tools: [], durable: true } }, undefined, { signal: cancel.signal }).catch(() => "cancelled");
+  await waitUntil(() => catalogRow("cancelled") !== undefined, "the inserted row");
+  cancel.abort();
+  assert.equal(await cancelled, "cancelled");
+  await waitUntil(() => catalogRow("cancelled")?.finished_at > 0, "the cancelled run recorded as finished");
+  const ticker = await connect();
+  await new Promise((resolve) => setTimeout(resolve, 1500)); // several recovery ticks
+  assert.ok(!prompts.some((p) => p.includes("CANCELLED work")), "cancelled work never reached the model");
+  assert.equal((await ticker.call("status", { sessionId: "cancelled" })).state, "aborted");
+  await ticker.call("forget", { sessionId: "cancelled" });
+  assert.equal(catalogRow("cancelled"), undefined);
+  await close(ticker);
+  await close(slow);
+  console.log("  OK -> crashes before the store exists or after a renewing follow_up commits recover correctly; refused or spent recoveries are recorded with their error for every window, not retried every tick; recovered tasks are released for other windows, which can also wait on them; forget removes unheld unfinished jobs; a run cancelled while opening stays cancelled");
 } finally {
   for (const host of clients) await host.client.close().catch(() => {});
   for (const socket of sockets) socket.destroy();

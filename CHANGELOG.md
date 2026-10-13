@@ -8,8 +8,10 @@
 - Smaller tool definitions (about a quarter less): `run` and `spawn_batch` take the coordinator plan by reference to `spawn`'s schema instead of repeating it (still checked the same way), and tool descriptions count permitted MCP tools instead of naming each one (`init` and refusals list them).
 - A durable task recovered in the background by another MCP process (for example after its window closed) is released once it settles, so the window that continues the work can `follow_up` or `forget` it instead of finding it held elsewhere.
 - `wait` on a session that another MCP process is running now waits for its recorded result instead of failing at once.
-- A durable task this server's policy now refuses on recovery (its cwd is gone, a tool no longer permitted) is held and reported as an error that `forget` can remove, instead of being released and claimed again on every recovery tick with its row stuck as pending.
-- A task past its recovery attempts keeps its lock and diagnostic worker through history eviction and storage sweeps, so it is no longer released and reclaimed on the next tick.
+- A durable task whose recovery stops (this server's policy now refuses it, such as a missing cwd or a tool no longer permitted, or it is past its recovery attempts) is recorded as finished with that error, so every window sees the error through `status`/`wait` and can `forget` it, instead of the task being held by whichever process claimed it or claimed again on every recovery tick.
+- A durable run cancelled while its store is still opening is recorded as aborted and is not run again on recovery.
+- `forget` deletes a stored durable task no process holds, finished or not, including after a load of it failed.
+- A `wait` that was following a background recovery switches to the recorded result when that process hands the task back, instead of timing out on the discarded worker.
 - `label` descriptions state that labels are never sent to the delegate.
 - Fallback entries can name the thinking level their model runs at (`xai/*:high`); without one, the run's level carries over as before.
 - A turn Pi begins after an abort was decided is no longer counted, so an aborted run reports the turns it actually used.

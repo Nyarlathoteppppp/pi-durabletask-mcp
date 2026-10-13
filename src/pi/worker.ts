@@ -129,8 +129,6 @@ export class PiWorker {
   recoveryKey: string | undefined;
   /** A failed executor close retains ownership and its diagnostic worker until cleanup succeeds. */
   recoveryCleanupFailed = false;
-  /** Recovery stopped for good (attempts spent, policy refused): held, with its lock, until forgotten. */
-  recoveryStopped = false;
   private journalUnsubscribe: (() => void) | undefined;
   private suspended = false;
   /** File the next finished run's text goes to, set by whoever starts the run; kept in memory only. */
@@ -319,6 +317,9 @@ export class PiWorker {
     this.job = this.options.durable === false ? new MemoryJob()
       : await DurableJob.open(this.options, prompt, key, seedEntries ? this.checkpoint() : undefined);
     if (this.isStopped()) {
+      // Aborted while the store opened: record it, or the next recovery tick would run the cancelled
+      // work. A suspension (shutdown) records nothing and stays recoverable.
+      this.recordFinal();
       await this.job.close();
       this.dispose();
       await this.nativeClose;

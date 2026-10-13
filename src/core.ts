@@ -373,7 +373,15 @@ const finishedNow = (w: Watched): boolean => {
     w.worker = local;
     delete w.remote;
   }
-  return hasFinished(w.worker!);
+  if (hasFinished(w.worker!)) return true;
+  // The worker this wait holds was handed back (a recovery that failed) or unloaded: follow the
+  // session through the registry and catalog from now on, not the discarded object.
+  if (loaded(w.id) !== w.worker) {
+    delete w.worker;
+    w.remote = true;
+    return (w.finished = stored(w.id, true)) !== undefined;
+  }
+  return false;
 };
 const settledNow = (w: Watched): boolean => finishedNow(w) || (!w.remote && w.worker!.questions.size > 0);
 const progressed = (w: Watched): boolean =>
