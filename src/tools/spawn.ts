@@ -111,7 +111,7 @@ const spawnShape = {
 const taskShape = z.object({
   resources: spawnShape.resources,
   coordinator: coordinatorRef,
-  prompt: z.string().optional().describe("Overrides the batch `prompt` for this task alone. Required for ordinary delegates when the batch has none; omit with coordinator for the default dispatch/wait/synthesis workflow."),
+  prompt: z.string().optional().describe("This task's own part, added after the batch `prompt` (or the whole prompt when the batch has none). Omit with coordinator for the default dispatch/wait/synthesis workflow."),
   forkFrom: z.string().optional().describe("Overrides the batch forkFrom for this task"),
   attachments: attachments.describe("Overrides the batch `attachments` for this task alone; [] attaches nothing"),
   id: z.string().optional().describe("Session id for this task. Defaults to `idPrefix`-NN, or a UUID."),
@@ -160,7 +160,7 @@ export function registerSpawn(server: McpServer): void {
         "polling `sessions` or one `status` per delegate.",
       inputSchema: {
         tasks: z.array(taskShape).min(1).max(BATCH_MAX).describe(`1 to ${BATCH_MAX} delegates to start`),
-        prompt: z.string().optional().describe("Default prompt for tasks without their own, e.g. one review sent to several models. Coordinator tasks keep their default synthesis."),
+        prompt: z.string().optional().describe("Shared instructions for every task, e.g. one review sent to several models; a task's own `prompt` is added after it. Coordinator tasks keep their default synthesis."),
         resources: spawnShape.resources.describe("Default resource selection for batch tasks; each task can replace it, including {} to clear."),
         coordinator: coordinatorRef,
         forkFrom: z.string().optional().describe("Default settled parent session for this batch"),

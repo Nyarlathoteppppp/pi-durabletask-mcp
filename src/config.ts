@@ -122,6 +122,11 @@ export const SPAWN_DEFAULT_DURATION_MS = bounded(
 export const LIST_CAP = num(process.env.PI_DELEGATE_LIST_CAP, 60);
 
 /** Progress notification interval during `run`, which resets the host's request timeout. */
+/**
+ * Longest single wait. 55 s fits clients whose tool calls time out at 60 s; a client allowed longer
+ * calls (Codex: tool_timeout_sec) can raise it, so one wait covers a run instead of many polls.
+ */
+export const WAIT_MAX_MS = bounded(process.env.PI_DELEGATE_WAIT_MAX_MS, 55_000, MAX_DURATION_MS);
 export const PROGRESS_MS = num(process.env.PI_DELEGATE_PROGRESS_MS, 15_000);
 
 /** Tool arguments and results are clipped before entering the trace. */

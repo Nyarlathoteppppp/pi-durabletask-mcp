@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { HISTORY_LIMIT, MAX_TURNS } from "../config.js";
+import { HISTORY_LIMIT, MAX_TURNS, PROGRESS_MS, WAIT_MAX_MS } from "../config.js";
 import {
   cancelExecution, followUp, forgetSession, getState, listSessions, resolveInteraction,
   steerExecution, waitForMany, waitForState,
@@ -65,7 +65,7 @@ export function registerControl(server: McpServer): void {
         sessionIds: z.array(z.string()).min(1).max(50).optional().describe("Several sessions; returns a summary of each"),
         until: z.enum(["progress", "settled", "all_settled"]).optional()
           .describe("Default progress for sessionId, settled for sessionIds"),
-        timeoutMs: z.number().int().min(250).max(55_000).optional().describe("Default 30000; max 55000"),
+        timeoutMs: z.number().int().min(250).max(WAIT_MAX_MS).optional().describe(`Default 30000; max ${WAIT_MAX_MS}`),
         afterTurns: z.number().int().min(0).optional().describe("Prior snapshot's turn count"),
         afterToolCalls: z.number().int().min(0).optional().describe("Prior snapshot's `toolCallCount`"),
         verbose: z.boolean().optional().describe("Single session: include the full snapshot, tool results and call ids"),
@@ -76,14 +76,23 @@ export function registerControl(server: McpServer): void {
         throw new Error("Pass exactly one of sessionId or sessionIds.");
       // Notices raised before this wait were shown by an earlier one, or are in status.
       const since = new Date().toISOString();
-      if (sessionIds) {
-        if (options.until === "progress") throw new Error('With sessionIds, until is "settled" or "all_settled".');
-        const { timeoutMs, until } = options;
-        const result = await waitForMany(sessionIds, { timeoutMs, until, signal: extra.signal });
-        const sessions = result.sessions.map((s) => withNextAction(s));
-        return json({ ...result, sessions: sessions.map((s) => pollSummary(s, since)), nextAction: batchNextAction(sessions) });
-      }
-      return json(waitResult(await waitForState(sessionId!, { ...options, signal: extra.signal }), options.verbose, since));
+      // A long wait reports progress, so clients that reset their timeout on progress keep it open.
+      const token = extra?._meta?.progressToken;
+      let ticks = 0;
+      const ticker = token === undefined ? undefined : setInterval(() => {
+        void extra.sendNotification({ method: "notifications/progress",
+          params: { progressToken: token, progress: ++ticks, message: "waiting" } }).catch(() => {});
+      }, PROGRESS_MS);
+      try {
+        if (sessionIds) {
+          if (options.until === "progress") throw new Error('With sessionIds, until is "settled" or "all_settled".');
+          const { timeoutMs, until } = options;
+          const result = await waitForMany(sessionIds, { timeoutMs, until, signal: extra.signal });
+          const sessions = result.sessions.map((s) => withNextAction(s));
+          return json({ ...result, sessions: sessions.map((s) => pollSummary(s, since)), nextAction: batchNextAction(sessions) });
+        }
+        return json(waitResult(await waitForState(sessionId!, { ...options, signal: extra.signal }), options.verbose, since));
+      } finally { if (ticker) clearInterval(ticker); }
     },
   );
 

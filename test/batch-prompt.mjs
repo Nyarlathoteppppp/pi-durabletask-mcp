@@ -47,10 +47,11 @@ try {
     return Object.fromEntries(result.sessions.map((s) => [s.label, s.lastText]));
   };
 
-  // One prompt sent to several tasks, e.g. one review across models; a task's own prompt wins.
+  // One prompt sent to several tasks, e.g. one review across models; a task's own prompt is added after it,
+  // so shared instructions and each task's part combine.
   const shared = await call("spawn_batch", { cwd: dir, tools: [], prompt: "BATCH-PROMPT",
     tasks: [{ label: "inherits" }, { label: "own", prompt: "OWN-PROMPT" }] });
-  assert.deepEqual(await texts(shared), { inherits: "BATCH-PROMPT", own: "OWN-PROMPT" });
+  assert.deepEqual(await texts(shared), { inherits: "BATCH-PROMPT", own: "BATCH-PROMPT\n\nOWN-PROMPT" });
 
   // A coordinator task keeps its default synthesis prompt rather than the batch prompt.
   const team = await call("spawn_batch", { cwd: dir, prompt: "BATCH-PROMPT",
@@ -63,7 +64,7 @@ try {
   const refused = await raw("spawn_batch", { cwd: dir, tools: [], tasks: [{ label: "a", prompt: "x" }, { label: "b" }] });
   assert.equal(refused.isError, true);
   assert.match(refused.content[0].text, /prompt is required/);
-  console.log("  OK -> spawn_batch prompt is the default for ordinary tasks; task prompts and coordinator defaults win");
+  console.log("  OK -> spawn_batch prompt is shared by ordinary tasks, with each task's own prompt added after it; coordinator defaults win");
 } finally {
   await client.close().catch(() => {});
   await new Promise((resolve) => http.close(resolve));

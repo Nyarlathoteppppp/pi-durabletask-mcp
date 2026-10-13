@@ -415,8 +415,9 @@ batch-level `retentionDays` applies to the tasks that end up durable; a task can
 That names them `audit-01`, `audit-02`, `audit-03` and returns in a few milliseconds, since
 launching a delegate does not wait for it to think.
 
-A batch-level `prompt` is the default for tasks that omit their own, so one review can go to
-several models with one instruction. Coordinator tasks keep their default synthesis.
+A batch-level `prompt` holds shared instructions: a task without its own prompt runs it as is, and a
+task's own `prompt` is added after it (for instance the area that reviewer covers). One review can go
+to several models with one instruction. Coordinator tasks keep their default synthesis.
 
 ```json
 {
@@ -841,7 +842,8 @@ Recipes: [web research](research.md) · [parallel review and synthesis](workflow
 | `PI_DELEGATE_STORAGE_LIMIT_MB` | `1024`          | Soft limit on job stores; above it the oldest finished are deleted early |
 | `PI_DELEGATE_STATUSLINE_WRAP` | unset            | Status line command to wrap and append to                                |
 | `PI_DELEGATE_STATUSLINE_LOG`  | unset            | File to append a timestamp to on every status line render, for debugging |
-| `PI_DELEGATE_PROGRESS_MS`     | `15000`          | Progress notification interval during `run`                              |
+| `PI_DELEGATE_PROGRESS_MS`     | `15000`          | Progress notification interval during `run` and `wait`                   |
+| `PI_DELEGATE_WAIT_MAX_MS`     | `55000`          | Longest `wait`; raise it for clients allowed longer tool calls (Codex: `tool_timeout_sec`) |
 | `PI_DELEGATE_IGNORE_SCOPE`    | unset            | `1` ignores pi's `enabledModels` scope, allowing any configured model    |
 | `PI_DELEGATE_STRICT_SCOPE`    | unset            | `1` honours `enabledModels` exactly, dropping the custom-provider bypass |
 | `PI_CODING_AGENT_DIR`         | `~/.pi/agent`    | Where pi's `auth.json` and config are read from                          |

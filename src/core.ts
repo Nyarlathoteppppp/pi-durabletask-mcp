@@ -196,8 +196,10 @@ export async function startBatch({
   const seeds = new Map<string, ReturnType<PiWorker["forkSeed"]>>();
   const merged: PreparedRequest[] = [];
   for (const [i, t] of tasks.entries()) merged.push(await withFork({
-    // A coordinator keeps its default synthesis unless the task itself names a prompt.
-    prompt: t.prompt ?? ((t.coordinator ?? coordinator) ? undefined : prompt),
+    // Shared instructions first, then the task's own part. A coordinator keeps its default synthesis
+    // unless the task itself names a prompt.
+    prompt: (t.coordinator ?? coordinator) ? t.prompt
+      : prompt !== undefined && t.prompt !== undefined ? `${prompt}\n\n${t.prompt}` : t.prompt ?? prompt,
     attachments: t.attachments ?? attachments,
     saveDir,
     label: t.label,

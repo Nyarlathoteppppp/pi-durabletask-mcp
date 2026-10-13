@@ -97,7 +97,26 @@ try {
     assert.equal(refused.isError, true, `${name} still checks the plan`);
     assert.match(refused.content[0].text, /prompt/);
   }
-  console.log("  OK -> compact JSON; running waits drop fixed fields and earlier notices; saved texts keep a preview; the coordinator plan is defined once");
+  // 5. Fewer polls: a server may allow long waits (default 55 s, for clients with a 60 s tool timeout),
+  //    and a wait reports progress so clients that reset their timeout on progress keep it open.
+  assert.equal(schemaOf("wait").properties.timeoutMs.maximum, 55000);
+  const patient = new Client({ name: "compact-results-patient", version: "1" });
+  await patient.connect(new StdioClientTransport({ command: process.execPath, args: ["dist/index.js"], stderr: "ignore",
+    env: { ...process.env, PI_OFFLINE: "1", PI_CODING_AGENT_DIR: agentDir, PI_DELEGATE_STATE_DIR: join(dir, "state-patient"),
+      PI_DELEGATE_MODEL: "test/one", PI_DELEGATE_IGNORE_SCOPE: "1", PI_DELEGATE_STALL_MS: "0",
+      PI_DELEGATE_WAIT_MAX_MS: "600000", PI_DELEGATE_PROGRESS_MS: "200" } }));
+  try {
+    const waitSchema = (await patient.listTools()).tools.find((t) => t.name === "wait").inputSchema;
+    assert.equal(waitSchema.properties.timeoutMs.maximum, 600000);
+    slowRequests = 1; // the next SLOW request takes 2.5 s without failing first
+    await patient.callTool({ name: "spawn", arguments: { cwd: dir, id: "patient", prompt: "SLOW", tools: [] } });
+    const progress = [];
+    const long = await patient.callTool({ name: "wait", arguments: { sessionId: "patient", until: "settled", timeoutMs: 120000 } },
+      undefined, { onprogress: (p) => progress.push(p) });
+    assert.equal(JSON.parse(long.content[0].text).state, "done", "one wait covers the whole run");
+    assert.ok(progress.length >= 2, `progress while waiting: ${progress.length}`);
+  } finally { await patient.close().catch(() => {}); }
+  console.log("  OK -> compact JSON; running waits drop fixed fields and earlier notices; saved texts keep a preview; the coordinator plan is defined once; long waits with progress");
 } finally {
   await client.close().catch(() => {});
   await new Promise((resolve) => http.close(resolve));
