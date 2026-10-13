@@ -39,11 +39,15 @@ export const COORDINATOR_PROMPT =
   "Refer to findings by child label. List each child's label/session ID and returned savedTo once in compact references, " +
   "plus reportIndex once when returned. Keep detailed reasoning in the originals. Agreement is not proof; distinguish evidence from inference. " +
   "Use the language of the task plan.";
+/** Added to the default when the plan asks every member one question. */
+export const COMPARE_PROMPT =
+  " The members answered the same question independently: compare their answers, say where they agree and where they differ, " +
+  "and for each difference which evidence decides it, or that none does.";
 
 export const coordinatorSchema = z.object({
   tasks: z.array(z.object({
     resources: resourcesSchema.optional(),
-    prompt: z.string(),
+    prompt: z.string().optional().describe("This member's own part, added after the plan's prompt; required when the plan has none."),
     attachments: z.array(z.string()).optional().describe("Absolute text files appended to this member's prompt; replaces the plan's attachments, [] for none."),
     label: z.string().optional(),
     model: z.string().optional(),
@@ -56,12 +60,15 @@ export const coordinatorSchema = z.object({
     maxToolCalls: z.number().int().min(1).max(1000).default(12),
     maxDurationMs: z.number().int().min(1000).max(MAX_DURATION_MS).default(Math.min(240_000, MAX_DURATION_MS)),
   }).strict()).min(1).max(BATCH_MAX),
+  prompt: z.string().optional().describe("One question for every member, e.g. the same question to several models whose answers the coordinator compares; a member's own prompt is added after it."),
   saveDir: z.string().optional(),
   attachments: z.array(z.string()).optional().describe("Absolute text files appended to every member's prompt unless a member sets its own; each member receives a copy."),
   forkFrom: z.string().optional(),
   research: z.boolean().optional().describe("Enable configured Exa search/fetch for children; requires the two exact tools in PI_DELEGATE_ALLOW_TOOLS. Off when omitted."),
 }).strict().superRefine((plan, ctx) => {
   plan.tasks.forEach((task, i) => {
+    if (plan.prompt === undefined && task.prompt === undefined)
+      ctx.addIssue({ code: "custom", path: ["tasks", i, "prompt"], message: "prompt is required unless the plan has a prompt." });
     const servers = new Set([...(task.mcpServers ?? []), ...((task.research ?? plan.research) ? ["exa"] : [])]);
     task.tools?.forEach((tool, j) => {
       const server = toolServers.get(tool);
@@ -115,8 +122,9 @@ export function createCoordinatorTools(options: z.output<typeof coordinatorSchem
       description: "Launch caller-approved tasks by zero-based taskIndexes (omit for all unlaunched). Started tasks run once; startup failures can be retried. " +
         (report ? "With saveDir, reportIndex is a best-effort team snapshot updated by these tools, possibly stale; not recovery or an automatic final refresh. " : "") +
         "Failed scripts leave children running but discard that script's store writes. Recover their IDs/state with delegate_wait({timeoutMs:0}), without launching more work. " +
-        "The coordinator also occupies a concurrency slot; start smaller batches if capacity is full. Plans: " +
-        JSON.stringify(options.tasks.map((t, index) => ({ index, label: t.label, prompt: t.prompt, model: t.model }))),
+        "The coordinator also occupies a concurrency slot; start smaller batches if capacity is full. " +
+        (options.prompt === undefined ? "" : `Every member is asked ${JSON.stringify(options.prompt)}, followed by its own prompt if any. `) +
+        "Plans: " + JSON.stringify(options.tasks.map((t, index) => ({ index, label: t.label, prompt: t.prompt, model: t.model }))),
       parameters: params(start), outputSchema: schema(coordinatorOutputs.delegate_start_batch),
       async execute(_id, params, signal) {
         signal?.throwIfAborted();
@@ -128,7 +136,7 @@ export function createCoordinatorTools(options: z.output<typeof coordinatorSchem
         indexes.forEach((i) => dispatched.add(i));
         let batch: Awaited<ReturnType<Operations["startBatch"]>>;
         try {
-          const launched = core.startBatch({ cwd, saveDir: options.saveDir, forkFrom: options.forkFrom, attachments: options.attachments, tasks: indexes.map((i) => {
+          const launched = core.startBatch({ cwd, prompt: options.prompt, saveDir: options.saveDir, forkFrom: options.forkFrom, attachments: options.attachments, tasks: indexes.map((i) => {
             const { research = options.research ?? false, mcpServers = [], ...task } = options.tasks[i]!;
             const servers = [...new Set([...mcpServers, ...(research ? ["exa"] : [])])];
             return { ...task, resources: task.resources ?? {}, tools: [...new Set([...(task.tools ?? READ_ONLY_TOOLS), ...(research ? RESEARCH_TOOLS : [])])],

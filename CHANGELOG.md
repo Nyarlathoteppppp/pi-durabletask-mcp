@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Coordinator plans accept a `prompt` sent to every member, so one question can go to several models with each member naming only its model; a member's own `prompt` is added after it. With a shared question, the default synthesis compares the independent answers (agreements, differences, and the evidence that decides each).
 - `spawn_batch`: a task's own `prompt` is added after the batch `prompt` instead of replacing it, so shared instructions and each task's part combine.
 - `PI_DELEGATE_WAIT_MAX_MS` raises the longest `wait` (default 55 s) for clients allowed longer tool calls, and `wait` sends progress notifications, so one wait can cover a run instead of many polls.
 - Leaner results for the calling agent: compact JSON instead of indented; polls of running work show only notices raised during that wait and drop follow-up fields that only restate that it is running, and batch summaries drop a zero `pendingQuestions`; a long text written to `saveTo` comes back with a 160-character `preview` (also in coordinator `delegate_wait`); a session another process runs is marked `runningElsewhere`.

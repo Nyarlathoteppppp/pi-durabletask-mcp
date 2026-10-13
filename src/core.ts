@@ -18,7 +18,7 @@ import { pickTools } from "./permissions.js";
 import { assertProviderReady, assertThinkingSupported, defaultModelRef, resolveModel } from "./pi/models.js";
 import { resolveDelegateCwd } from "./workspace.js";
 import { validateNativeMcp } from "./pi/native-mcp.js";
-import { COORDINATOR_PROMPT, coordinatorSchema, createCoordinatorTools, type CoordinatorOptions } from "./coordinator.js";
+import { COMPARE_PROMPT, COORDINATOR_PROMPT, coordinatorSchema, createCoordinatorTools, type CoordinatorOptions } from "./coordinator.js";
 
 const TERMINAL = new Set(["done", "aborted", "error"]);
 const hasFinished = (worker: PiWorker): boolean => TERMINAL.has(worker.state) && !worker.isActive;
@@ -106,7 +106,8 @@ type PreparedRequest = AttachedRequest & { prompt: string };
 
 /** Resolve team defaults before fork inheritance, for every entry point into the core. */
 function launchDefaults(request: AttachedRequest): PreparedRequest {
-  const prompt = request.prompt ?? (request.coordinator ? COORDINATOR_PROMPT : undefined);
+  const prompt = request.prompt ?? (request.coordinator
+    ? COORDINATOR_PROMPT + (request.coordinator.prompt === undefined ? "" : COMPARE_PROMPT) : undefined);
   if (prompt === undefined) throw new Error("prompt is required unless coordinator supplies a task plan.");
   return { ...request, prompt, tools: request.tools ?? (request.coordinator ? ["codemode"] : undefined) };
 }

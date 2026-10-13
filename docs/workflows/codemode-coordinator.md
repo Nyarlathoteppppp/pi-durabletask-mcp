@@ -32,6 +32,28 @@ explicit tools (including batch defaults) are preserved and must contain `codemo
 Ordinary delegates still require `prompt`. For parallel reports without a synthesis,
 use `spawn_batch` and `wait` directly; no coordinator is needed.
 
+## One question, several models
+
+To compare models on the same question, put it once in the plan's `prompt`; members then
+only name their model. A member's own `prompt`, if any, is added after the shared one
+(for a stance, say). Members answer independently in fresh sessions, and the default
+synthesis compares the answers: where they agree, where they differ, and which evidence
+decides each difference. Agreement is still not proof.
+
+```json
+{
+  "cwd": "/absolute/repo",
+  "coordinator": {
+    "prompt": "Is the retry in src/fetch.ts safe for non-idempotent requests? Cite file:line.",
+    "tasks": [
+      { "model": "xai/grok-4.7", "thinking": "high" },
+      { "model": "antigravity/gemini-3.8-flash" },
+      { "model": "openai-codex/gpt-6.1-sol" }
+    ]
+  }
+}
+```
+
 Omit `forkFrom` without a settled fact session. It can also be specified per child.
 Branches reuse that history, with fresh budgets; independent reviews may instead start
 without a shared opinionated transcript. Choose actual model IDs with `models`; each
