@@ -72,6 +72,26 @@ Fork when changing model/tools or needing an independent branch. This step is op
 not a required debate round. A [codemode coordinator](codemode-coordinator.md) can do
 this itself with `delegate_follow_up` on its own children.
 
+## Weighing a decision with stances
+
+For a design choice rather than a diff, give the models opposing briefs so that agreement has to
+survive an argument. The batch `prompt` states the proposal and the question; each task's own
+`prompt` is added after it and sets the stance:
+
+```json
+{
+  "cwd": "/absolute/repo",
+  "prompt": "Proposal: <the change>. Judge whether we should do it, citing the code. At most 200 words.",
+  "tasks": [
+    { "model": "xai/grok-4.7", "prompt": "Argue for it; concede only what the code proves wrong." },
+    { "model": "antigravity/gemini-3.8-flash", "prompt": "Argue against it; name the concrete cost or risk." },
+    { "model": "openai-codex/gpt-6.1-sol", "prompt": "Stay neutral; say what evidence would settle it." }
+  ]
+}
+```
+
+The main agent decides from the arguments and the code, not from a vote.
+
 ## 4. Falsify candidate findings before acting
 
 Agreement between reviewers is not evidence: models share blind spots and can repeat the
