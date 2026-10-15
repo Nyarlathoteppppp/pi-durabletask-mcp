@@ -41,6 +41,8 @@ export class WorkerRun {
   /** This run's prompt and its last assistant message's stop reason, for answerState. */
   prompt = "";
   stopReason: string | undefined;
+  /** lastTurn removed this run's tools; it answers without them. */
+  toolsRemoved = false;
   /** The latest substantial text this run wrote, returned if it ends without an answer. */
   salvage: string | undefined;
   /** Successful edit/write events in this run; paths are the original tool arguments. */

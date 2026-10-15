@@ -49,6 +49,15 @@ export const FALLBACK_MODELS = (process.env.PI_DELEGATE_FALLBACK_MODELS || "")
   .split(",")
   .map((model) => model.trim())
   .filter(Boolean);
+/**
+ * Opt-in, per model pattern: once a run's tools are removed for its last turn, also send the provider
+ * toolChoice "none", for models that call tools anyway. Some OpenAI-compatible endpoints reject
+ * tool_choice without tools, so enable it only for models it was checked on.
+ */
+export const TOOL_CHOICE_NONE = (process.env.PI_DELEGATE_TOOL_CHOICE_NONE || "")
+  .split(",")
+  .map((model) => model.trim())
+  .filter(Boolean);
 
 /** Opt-in: a call made after the tools were removed earns one more tool-free turn to answer. */
 export const ANSWER_GRACE = process.env.PI_DELEGATE_ANSWER_GRACE === "1";

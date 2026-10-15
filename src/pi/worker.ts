@@ -8,7 +8,7 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { DurableJob, forgetOwnedJob, MemoryJob, releaseJob, type Checkpoint, type JobStore } from "../durable.js";
-import { ANSWER_GRACE, FALLBACK_MODELS, MAX_TURNS, RETENTION_DAYS, STALL_MS } from "../config.js";
+import { ANSWER_GRACE, FALLBACK_MODELS, MAX_TURNS, RETENTION_DAYS, STALL_MS, TOOL_CHOICE_NONE } from "../config.js";
 import { JUDGE_ENABLED, judgeAnswer } from "../judge.js";
 import { saveText } from "../save.js";
 import { briefError, message } from "../errors.js";
@@ -278,6 +278,7 @@ export class PiWorker {
 
     const session = await createSession(spec, resourceLoader, { model, thinking: this.thinkingSpec, saved, seedEntries });
     this.session = session;
+    if (TOOL_CHOICE_NONE.length) this.forbidToolsWhenRemoved(session);
     if (this.isStopped()) {
       session.dispose();
       return this;
@@ -1082,8 +1083,17 @@ export class PiWorker {
   /**
    * Take tools away for the final answer. Explicitly renewed follow-ups can restore the grants.
    */
+  /** Checked per request, so a fallback model is matched by its own name. */
+  private forbidToolsWhenRemoved(session: AgentSession): void {
+    const stream = session.agent.streamFunction;
+    session.agent.streamFunction = (model, context, options) => stream(model, context,
+      this.currentRun.toolsRemoved && TOOL_CHOICE_NONE.some((p) => matchesModelPattern(p, `${model.provider}/${model.id}`))
+        ? { ...options, toolChoice: "none" } : options);
+  }
+
   private lastTurn(session = this.session): void {
     if (!session) return;
+    this.currentRun.toolsRemoved = true;
     const hadTools = session.getActiveToolNames().length > 0;
     session.setActiveToolsByName([]);
     this.activeTools = [];

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Opt-in `PI_DELEGATE_TOOL_CHOICE_NONE` (model patterns): once a run's tools are removed for its last turn, matching models are also sent `toolChoice: "none"`, so providers such as Antigravity refuse the tool calls some models make anyway. Off by default; some OpenAI-compatible endpoints reject `tool_choice` without tools.
 - A run that ends without an answer (`aborted` or `error`, for example a model that keeps calling tools after they were removed at its turn limit) returns the latest substantial text it wrote along the way as `salvagedText`, instead of losing that work.
 - `wait` for a result (`until: "settled"`/`"all_settled"`) without `timeoutMs` now lasts as long as `PI_DELEGATE_WAIT_MAX_MS` allows instead of 30 s, so callers on hosts that allow long tool calls stop polling; progress waits keep the 30 s default (capped at that limit). The review recipe no longer hard-codes 55 s.
 - Coordinator plans accept a `prompt` sent to every member, so one question can go to several models with each member naming only its model; a member's own `prompt` is added after it. With a shared question, the default synthesis compares the independent answers (agreements, differences, and the evidence that decides each).

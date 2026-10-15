@@ -10,6 +10,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 // without effect; the run gets one more tool-free turn to answer instead of ending with nothing.
 const dir = await mkdtemp(join(tmpdir(), "pi-delegate-answer-grace-"));
 const requests = {};
+const choices = [];
 const PARTIAL = "Findings so far: the retry loop in fetch.ts resends POST bodies after a timeout, so a slow server can " +
   "apply the same order twice. The idempotency key is generated per attempt rather than per request, which defeats it.";
 const http = createServer(async (req, res) => {
@@ -20,6 +21,7 @@ const http = createServer(async (req, res) => {
   const results = request.messages.filter((m) => m.role === "tool").length;
   const kind = prompt.includes("HOPELESS") ? "hopeless" : "stubborn";
   requests[kind] = (requests[kind] ?? 0) + 1;
+  choices.push([results, request.tool_choice]);
   res.writeHead(200, { "Content-Type": "text/event-stream" });
   const emit = (delta, finish_reason = null) => res.write(`data: ${JSON.stringify({ id: "g", object: "chat.completion.chunk",
     created: 1, model: request.model, choices: [{ index: 0, delta, finish_reason }] })}\n\n`);
@@ -88,7 +90,18 @@ try {
   const batch = JSON.parse((await client.callTool({ name: "wait", arguments: { sessionIds: [hopeless.sessionId] } })).content[0].text);
   assert.equal(batch.sessions[0].salvagedText, PARTIAL);
   assert.equal(stubborn.salvagedText, undefined, "a run that answered has nothing to salvage");
+  assert.ok(choices.every(([, choice]) => choice === undefined), "no tool_choice unless the server opts in");
   console.log("  OK -> a tool call after the tools were removed gets one answer-only grace turn, once per run, when the server opts in; a run that still ends without an answer returns the findings it wrote along the way");
+
+  // Opt-in per model: a turn whose tools were removed also tells the provider not to call any.
+  for (const [pattern, expected] of [["test/*", "none"], ["other/*", undefined]]) {
+    client = await connect({ PI_DELEGATE_ANSWER_GRACE: "1", PI_DELEGATE_TOOL_CHOICE_NONE: pattern });
+    choices.length = 0;
+    const forbidden = await run("STUBBORN");
+    assert.equal(forbidden.lastText, "FINAL ANSWER");
+    assert.deepEqual(choices, [[0, undefined], [1, expected], [2, expected]], pattern);
+  }
+  console.log("  OK -> with PI_DELEGATE_TOOL_CHOICE_NONE, matching models are sent tool_choice none once their tools are removed");
 } finally {
   for (const c of clients) await c.close().catch(() => {});
   await new Promise((resolve) => http.close(resolve));
