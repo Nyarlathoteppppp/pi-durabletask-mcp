@@ -54,6 +54,15 @@ export const FALLBACK_MODELS = (process.env.PI_DELEGATE_FALLBACK_MODELS || "")
  * toolChoice "none", for models that call tools anyway. Some OpenAI-compatible endpoints reject
  * tool_choice without tools, so enable it only for models it was checked on.
  */
+/**
+ * Opt-in: once a run is asked to wrap up (or its tools are removed), it continues at a lower thinking
+ * level, so a slow model's closing request does not use up the deadline. Entries are "pattern:level"
+ * ("xai/*:medium") or a bare level for every model; the first match applies.
+ */
+export const FINISH_THINKING = (process.env.PI_DELEGATE_FINISH_THINKING || "")
+  .split(",")
+  .map((entry) => entry.trim())
+  .filter(Boolean);
 export const TOOL_CHOICE_NONE = (process.env.PI_DELEGATE_TOOL_CHOICE_NONE || "")
   .split(",")
   .map((model) => model.trim())

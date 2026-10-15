@@ -8,7 +8,7 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { DurableJob, forgetOwnedJob, MemoryJob, releaseJob, type Checkpoint, type JobStore } from "../durable.js";
-import { ANSWER_GRACE, FALLBACK_MODELS, MAX_TURNS, RETENTION_DAYS, STALL_MS, TOOL_CHOICE_NONE } from "../config.js";
+import { ANSWER_GRACE, FALLBACK_MODELS, FINISH_THINKING, MAX_TURNS, RETENTION_DAYS, STALL_MS, TOOL_CHOICE_NONE } from "../config.js";
 import { JUDGE_ENABLED, judgeAnswer } from "../judge.js";
 import { saveText } from "../save.js";
 import { briefError, message } from "../errors.js";
@@ -24,7 +24,7 @@ import type {
   ToolCall,
   Usage,
 } from "../types.js";
-import { assertProviderReady, assertThinkingSupported, fallbackModel, matchesModelPattern, parseFallback, resolveModel, scopedModels } from "./models.js";
+import { assertProviderReady, assertThinkingSupported, fallbackModel, finishThinkingFor, matchesModelPattern, parseFallback, resolveModel, scopedModels, THINKING_LEVELS } from "./models.js";
 import { clipArgs, flatten } from "./trace.js";
 import { createUiContext, Question } from "./ui.js";
 import { prepareResources, type ResourceSelection, type PreparedResources } from "./resources.js";
@@ -691,6 +691,8 @@ export class PiWorker {
     this.clearResult();
     run.prompt = prompt;
     run.lastActivityAt = Date.now();
+    // A previous run may have finished at FINISH_THINKING; each run starts at the session's own level.
+    if (this.thinking && session.thinkingLevel !== this.thinking) session.setThinkingLevel(this.thinking);
     if (run.restoreTools) {
       session.setActiveToolsByName(this.toolNames);
       this.activeTools = session.getActiveToolNames();
@@ -1094,6 +1096,7 @@ export class PiWorker {
   private lastTurn(session = this.session): void {
     if (!session) return;
     this.currentRun.toolsRemoved = true;
+    this.finishThinking(session);
     const hadTools = session.getActiveToolNames().length > 0;
     session.setActiveToolsByName([]);
     this.activeTools = [];
@@ -1106,11 +1109,24 @@ export class PiWorker {
   }
 
   /** Steer once per run toward a final answer, whichever budget gets close first. */
+  /** Opt-in: lower, never raise, the thinking level for the rest of a run that is wrapping up. */
+  private finishThinking(session = this.session): void {
+    if (!FINISH_THINKING.length || !session?.model) return;
+    const level = finishThinkingFor(FINISH_THINKING, `${session.model.provider}/${session.model.id}`);
+    const from = session.thinkingLevel;
+    if (!level || THINKING_LEVELS.indexOf(from) <= THINKING_LEVELS.indexOf(level)) return;
+    // Pi clamps to the nearest level this model supports.
+    session.setThinkingLevel(level);
+    if (session.thinkingLevel !== from) this.notices.push({ type: "info", at: new Date().toISOString(),
+      message: `thinking ${from} -> ${session.thinkingLevel} to finish` });
+  }
+
   private requestFinish(budget: string, remaining: string): void {
     const run = this.currentRun;
     if (run.finishSteerSent) return;
     run.finishSteerSent = true;
     this.notices.push({ type: "warning", message: `${budget}: requested wrap-up with only essential checks`, at: new Date().toISOString() });
+    this.finishThinking();
     void this.session?.steer(`${remaining} ${FINALIZE_PROMPT}`).catch((e: unknown) => {
       if (this.currentRun !== run) return;
       this.notices.push({ type: "warning", message: `automatic finalization steer failed: ${message(e)}`, at: new Date().toISOString() });

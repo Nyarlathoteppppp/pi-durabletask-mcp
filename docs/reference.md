@@ -823,6 +823,7 @@ Recipes: [web research](research.md) · [parallel review and synthesis](workflow
 | `PI_DELEGATE_ANSWER_GRACE`    | off              | `1` gives one more tool-free turn when a model calls a tool after its tools were removed |
 | `PI_DELEGATE_FALLBACK_MODELS` | unset            | Comma-separated models or `*` patterns a run continues on after a provider error |
 | `PI_DELEGATE_TOOL_CHOICE_NONE` | unset           | Model patterns sent `toolChoice: "none"` once a run's tools are removed for its last turn |
+| `PI_DELEGATE_FINISH_THINKING` | unset            | `pattern:level` entries (or a bare level): thinking for the rest of a run asked to wrap up |
 | `PI_DELEGATE_ALLOW_TOOLS`     | unset            | Comma list of extra tools to permit, e.g. `bash`                         |
 | `PI_DELEGATE_ALLOW_WRITE`     | unset            | `1` permits every tool                                                   |
 | `PI_DELEGATE_HISTORY`         | `50`             | Finished sessions kept for review                                        |
@@ -881,7 +882,12 @@ fails without effect. With `PI_DELEGATE_ANSWER_GRACE=1`, once per run the delega
 more tool-free turn to answer before `max_turns` applies, with a warning notice.
 `PI_DELEGATE_TOOL_CHOICE_NONE` (model patterns such as `antigravity/*`) additionally sends matching
 models `toolChoice: "none"` on turns whose tools were removed, so the provider refuses tool calls.
-Some OpenAI-compatible endpoints reject `tool_choice` without tools; list only models you checked. Timeouts, provider/auth errors or cancellation can still interrupt it. Reaching the
+Some OpenAI-compatible endpoints reject `tool_choice` without tools; list only models you checked.
+`PI_DELEGATE_FINISH_THINKING` lowers the thinking level once a run is asked to wrap up (turn, tool-call
+or time budget) or its tools are removed, for models whose closing request is slow enough to reach
+the deadline. Entries are `pattern:level` (`xai/*:medium`) or a bare level for every model; the first
+match applies, a level is never raised, and Pi clamps to what the model supports. The run's reported
+`thinking` stays its own, an info notice records the change, and the next run starts at its own level. Timeouts, provider/auth errors or cancellation can still interrupt it. Reaching the
 turn or time ceiling aborts the underlying pi session and records `termination.reason`, while keeping
 the trace and any partial text. Finished results carry `usage`: input, output and cache tokens and
 the cost by pi's model prices, summed over the whole session including follow-ups. Cancelling a blocking `run` also aborts its underlying worker.

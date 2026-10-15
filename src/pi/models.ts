@@ -88,7 +88,7 @@ export interface ScopedModel {
 }
 
 type ThinkingModel = Pick<PiModel, "provider" | "id" | "reasoning" | "thinkingLevelMap">;
-const THINKING_LEVELS: PiThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+export const THINKING_LEVELS: PiThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 /**
  * The levels pi accepts for a model, by pi-ai's getSupportedThinkingLevels (copied: pi-ai is not
@@ -280,6 +280,16 @@ export function parseFallback(entry: string): { pattern: string; thinking?: PiTh
   const level = entry.slice(colon + 1) as PiThinkingLevel;
   // Only a known level counts, so model ids that contain a colon ("…:free") stay whole.
   return colon > 0 && THINKING_LEVELS.includes(level) ? { pattern: entry.slice(0, colon), thinking: level } : { pattern: entry };
+}
+
+/** The PI_DELEGATE_FINISH_THINKING level for this model: the first entry that matches it. */
+export function finishThinkingFor(entries: string[], ref: string): PiThinkingLevel | undefined {
+  for (const entry of entries) {
+    if (THINKING_LEVELS.includes(entry as PiThinkingLevel)) return entry as PiThinkingLevel;
+    const { pattern, thinking } = parseFallback(entry);
+    if (thinking && matchesModelPattern(pattern, ref)) return thinking;
+  }
+  return undefined;
 }
 
 /**
