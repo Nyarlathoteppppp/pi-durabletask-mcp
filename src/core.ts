@@ -460,6 +460,7 @@ export interface WaitSummary extends FollowUpInfo {
   /** Present while it waits for an answer, so answer needs no extra status call. */
   questions?: Snapshot["questions"];
   lastText?: string;
+  salvagedText?: string;
   preview?: string;
   runningElsewhere?: true;
   error?: string;
@@ -502,6 +503,7 @@ export async function waitForMany(
       ...(done && s.savedTo ? { savedTo: s.savedTo, savedChars: s.savedChars } : {}),
       ...(done && !omitsSavedText(s) ? { lastText: s.lastText } : {}),
       ...(done && s.preview ? { preview: s.preview } : {}),
+      ...(s.salvagedText ? { salvagedText: s.salvagedText } : {}),
       ...(s.runningElsewhere ? { runningElsewhere: true as const } : {}),
       ...(s.saveError ? { saveError: s.saveError } : {}),
       ...(s.reportIndex ? { reportIndex: s.reportIndex } : {}),

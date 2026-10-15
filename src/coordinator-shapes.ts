@@ -22,6 +22,7 @@ const report = {
   sessionId: z.string(), label: z.string().optional(), state,
   error: z.string().optional(), termination: termination.optional(), usage: usage.optional(),
   answerState: z.enum(["missing", "partial", "narration"]).optional(),
+  salvagedText: z.string().optional(),
   savedTo: z.string().optional(), savedChars: z.number().optional(), saveError: z.string().optional(),
   ...continuation, nextAction,
 };

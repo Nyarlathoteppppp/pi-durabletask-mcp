@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- A run that ends without an answer (`aborted` or `error`, for example a model that keeps calling tools after they were removed at its turn limit) returns the latest substantial text it wrote along the way as `salvagedText`, instead of losing that work.
 - `wait` for a result (`until: "settled"`/`"all_settled"`) without `timeoutMs` now lasts as long as `PI_DELEGATE_WAIT_MAX_MS` allows instead of 30 s, so callers on hosts that allow long tool calls stop polling; progress waits keep the 30 s default (capped at that limit). The review recipe no longer hard-codes 55 s.
 - Coordinator plans accept a `prompt` sent to every member, so one question can go to several models with each member naming only its model; a member's own `prompt` is added after it. With a shared question, the default synthesis compares the independent answers (agreements, differences, and the evidence that decides each).
 - `spawn_batch`: a task's own `prompt` is added after the batch `prompt` instead of replacing it, so shared instructions and each task's part combine.

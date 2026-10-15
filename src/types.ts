@@ -74,6 +74,8 @@ export interface Snapshot extends FollowUpInfo {
   touchedFiles?: string[];
   editWriteCount?: number;
   lastText: string;
+  /** An aborted or failed run's latest substantial text, written before it ended without an answer. */
+  salvagedText?: string | undefined;
   questions: QuestionJson[];
   notices: Notice[];
   error: string | undefined;

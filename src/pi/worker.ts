@@ -71,6 +71,9 @@ export interface WorkerOptions extends NativeMcpOptions {
  * checkpoints retain the conversation and task progress across process restarts.
  * Event ordering and completion rules: docs/worker-lifecycle.md.
  */
+/** Shorter texts beside tool calls are remarks such as "Checking one more file", not findings. */
+const SALVAGE_MIN_CHARS = 200;
+
 export class PiWorker {
   /** Runtime protocol adapters. Deliberately separate from persisted task options. */
   customTools: ToolDefinition[] = [];
@@ -438,6 +441,7 @@ export class PiWorker {
     this.state = snapshot.state;
     this.turns = snapshot.turns;
     this.lastText = snapshot.lastText;
+    this.currentRun.salvage = snapshot.salvagedText;
     this.error = snapshot.error;
     this.finishedAt = snapshot.finishedAt;
     this.termination = snapshot.termination;
@@ -981,6 +985,7 @@ export class PiWorker {
             .filter((part) => part.type === "text")
             .map((part) => part.text)
             .join("\n");
+          if (this.lastText.trim().length >= SALVAGE_MIN_CHARS) this.currentRun.salvage = this.lastText;
         }
         break;
 
@@ -1139,6 +1144,7 @@ export class PiWorker {
         touchedFiles: [...this.currentRun.touchedFiles], editWriteCount: this.currentRun.editWriteCount,
       } : {}),
       lastText: this.lastText,
+      ...this.salvaged(),
       questions: this.pendingQuestions(),
       notices: this.notices,
       error: this.error,
@@ -1174,6 +1180,16 @@ export class PiWorker {
     if (this.state !== "running" || !this.isActive || this.questions.size > 0) return {};
     return { idleMs: Math.max(0, Date.now() - this.currentRun.lastActivityAt),
       phase: this.currentRun.compacting ? "compaction" : this.openCalls.size > 0 ? "tool" : this.currentRun.awaitingModel ? "model" : "agent" };
+  }
+
+  /**
+   * A run cut off or failed before answering may have written findings along the way, beside its tool
+   * calls; they are returned rather than lost with the run. Not for a run that finished.
+   */
+  private salvaged(): { salvagedText?: string } {
+    const salvage = this.currentRun.salvage;
+    if ((this.state !== "aborted" && this.state !== "error") || salvage === undefined || salvage === this.lastText) return {};
+    return { salvagedText: salvage };
   }
 
   /** Only for a finished run, and only when its final text is not a usable conclusion. */

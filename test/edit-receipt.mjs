@@ -80,4 +80,21 @@ try {
   await w.followUp("read-only follow-up"); await w.run;
   assert.deepEqual(receipt(w), [undefined, undefined], "follow-up does not inherit prior writes");
   console.log("  OK -> per-run successful edit/write receipt, raw paths, nested calls, durable restoration and follow-up reset");
+
+  // Findings written before a run ended without an answer survive a reload from its checkpoint.
+  const cut = make("salvage");
+  const findings = "F".repeat(240);
+  try {
+    cut.onEvent({ type: "message_end", message: { role: "assistant", stopReason: "toolUse", content: [{ type: "text", text: findings }] } });
+    cut.onEvent({ type: "message_end", message: { role: "assistant", stopReason: "toolUse", content: [] } });
+    assert.equal(cut.snapshot().salvagedText, undefined, "nothing is salvaged while the run can still answer");
+    cut.state = "aborted";
+    assert.equal(cut.snapshot().salvagedText, findings);
+    const reloaded = make("salvage-reloaded");
+    try {
+      reloaded.restoreSnapshot(JSON.parse(JSON.stringify(cut.checkpoint())));
+      assert.equal(reloaded.snapshot().salvagedText, findings);
+    } finally { reloaded.dispose(); }
+  } finally { cut.dispose(); }
+  console.log("  OK -> text salvaged from a run that ended without an answer survives a reload");
 } finally { w.dispose(); await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }

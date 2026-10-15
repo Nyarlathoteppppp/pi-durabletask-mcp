@@ -33,13 +33,13 @@ export function waitResult(snapshot: Snapshot, verbose?: boolean, since?: string
   if (verbose) return withNextAction(snapshot);
   const { sessionId, forkedFrom, label, state, turns, toolCallCount, lastText, questions, notices, error, termination, usage,
     remainingTurns, canFollowUp, followUpBlockedReason, idleMs, phase, answerState, savedTo, savedChars, saveError,
-    touchedFiles, editWriteCount, reportIndex, reportIndexError, preview, runningElsewhere } = snapshot;
+    touchedFiles, editWriteCount, reportIndex, reportIndexError, preview, runningElsewhere, salvagedText } = snapshot;
   const finished = FINISHED.has(state);
   const visibleNotices = finished ? notices : notices.filter((n) => n.type !== "info" && (since === undefined || n.at >= since));
   return withNextAction({ sessionId, ...(forkedFrom ? { forkedFrom } : {}), label, state, turns, toolCallCount,
     // A long text the caller asked to have saved is not returned again; it is in savedTo, and preview shows its start.
     ...(savedTo ? { savedTo, savedChars } : {}), ...(finished && !omitsSavedText(snapshot) ? { lastText } : {}),
-    ...(finished && preview ? { preview } : {}), ...(saveError ? { saveError } : {}),
+    ...(finished && preview ? { preview } : {}), ...(salvagedText ? { salvagedText } : {}), ...(saveError ? { saveError } : {}),
     ...(answerState ? { answerState } : {}), questions, notices: visibleNotices, error, termination,
     ...(editWriteCount ? { touchedFiles, editWriteCount } : {}),
     ...(reportIndex ? { reportIndex } : {}), ...(reportIndexError ? { reportIndexError } : {}),

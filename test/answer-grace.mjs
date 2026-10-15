@@ -10,6 +10,8 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 // without effect; the run gets one more tool-free turn to answer instead of ending with nothing.
 const dir = await mkdtemp(join(tmpdir(), "pi-delegate-answer-grace-"));
 const requests = {};
+const PARTIAL = "Findings so far: the retry loop in fetch.ts resends POST bodies after a timeout, so a slow server can " +
+  "apply the same order twice. The idempotency key is generated per attempt rather than per request, which defeats it.";
 const http = createServer(async (req, res) => {
   let body = "";
   for await (const chunk of req) body += chunk;
@@ -21,9 +23,11 @@ const http = createServer(async (req, res) => {
   res.writeHead(200, { "Content-Type": "text/event-stream" });
   const emit = (delta, finish_reason = null) => res.write(`data: ${JSON.stringify({ id: "g", object: "chat.completion.chunk",
     created: 1, model: request.model, choices: [{ index: 0, delta, finish_reason }] })}\n\n`);
-  // Calls ls whether or not it is offered: twice when STUBBORN, always when HOPELESS.
+  // Calls ls whether or not it is offered: twice when STUBBORN, always when HOPELESS. HOPELESS writes
+  // its findings so far beside the first call and only a short remark beside the second.
   if (prompt.includes("HOPELESS") || results < 2) {
-    emit({ role: "assistant", tool_calls: [{ index: 0, id: `call_${results}`, type: "function",
+    const text = !prompt.includes("HOPELESS") ? undefined : results === 0 ? PARTIAL : results === 1 ? "Checking one more file." : undefined;
+    emit({ role: "assistant", ...(text ? { content: text } : {}), tool_calls: [{ index: 0, id: `call_${results}`, type: "function",
       function: { name: "ls", arguments: JSON.stringify({ path: dir }) } }] });
     emit({}, "tool_calls");
   } else {
@@ -51,8 +55,8 @@ try {
     return client;
   };
   let client = await connect({});
-  const run = async (prompt) => {
-    const result = await client.callTool({ name: "run", arguments: { cwd: dir, prompt, tools: ["ls"], maxTurns: 2, verbose: true } });
+  const run = async (prompt, verbose = true) => {
+    const result = await client.callTool({ name: "run", arguments: { cwd: dir, prompt, tools: ["ls"], maxTurns: 2, verbose } });
     assert.ok(!result.isError, result.content?.[0]?.text);
     return JSON.parse(result.content[0].text);
   };
@@ -72,13 +76,19 @@ try {
   assert.equal(requests.stubborn, 3, "one model request past the budget, no more");
   assert.equal(grace(stubborn).length, 1);
 
-  const hopeless = await run("HOPELESS");
+  const hopeless = await run("HOPELESS", false);
   assert.equal(hopeless.state, "aborted");
   assert.equal(hopeless.termination.reason, "max_turns");
   assert.equal(requests.hopeless, 3, "the grace turn is given once");
   assert.equal(hopeless.turns, 3);
   assert.equal(grace(hopeless).length, 1);
-  console.log("  OK -> a tool call after the tools were removed gets one answer-only grace turn, once per run, when the server opts in");
+  // The run ended without an answer, but the findings it wrote along the way are returned, not a later short remark.
+  assert.equal(hopeless.lastText ?? "", "");
+  assert.equal(hopeless.salvagedText, PARTIAL);
+  const batch = JSON.parse((await client.callTool({ name: "wait", arguments: { sessionIds: [hopeless.sessionId] } })).content[0].text);
+  assert.equal(batch.sessions[0].salvagedText, PARTIAL);
+  assert.equal(stubborn.salvagedText, undefined, "a run that answered has nothing to salvage");
+  console.log("  OK -> a tool call after the tools were removed gets one answer-only grace turn, once per run, when the server opts in; a run that still ends without an answer returns the findings it wrote along the way");
 } finally {
   for (const c of clients) await c.close().catch(() => {});
   await new Promise((resolve) => http.close(resolve));

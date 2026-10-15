@@ -340,6 +340,11 @@ probability 0.95 or more. On the project's benchmark that gave no false alarms b
 thirds of narration on the development set and one in three on a small held-out set; see
 `bench/answer-state/README.md`. The task and final text are sent to TypeSafe.
 
+An `aborted` or `error` run (turn limit, deadline, provider failure) has no conclusion, but it may
+have written findings along the way beside its tool calls. Its latest such text of at least 200
+characters comes back as `salvagedText` when it differs from `lastText`. Treat it as partial work,
+not an answer.
+
 ## Giving a delegate another turn
 
 A finished delegate can continue with `follow_up`, keeping what it already read in context.
