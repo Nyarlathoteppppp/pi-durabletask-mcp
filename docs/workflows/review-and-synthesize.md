@@ -35,7 +35,8 @@ reviews independent. Forking does not guarantee cache hits or lower total input 
 
 ## 2. Wait and retain the reports
 
-Call `wait` with returned `sessionIds`, `until: "all_settled"`, `timeoutMs: 55000`.
+Call `wait` with returned `sessionIds` and `until: "all_settled"`; omit `timeoutMs` to wait as long as
+the server allows (`PI_DELEGATE_WAIT_MAX_MS`, 55 s unless raised).
 Keep the returned snapshots; repeat with `continueIds` while work remains.
 Answer pending questions with their real IDs before waiting again.
 

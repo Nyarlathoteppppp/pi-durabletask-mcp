@@ -65,7 +65,7 @@ export function registerControl(server: McpServer): void {
         sessionIds: z.array(z.string()).min(1).max(50).optional().describe("Several sessions; returns a summary of each"),
         until: z.enum(["progress", "settled", "all_settled"]).optional()
           .describe("Default progress for sessionId, settled for sessionIds"),
-        timeoutMs: z.number().int().min(250).max(WAIT_MAX_MS).optional().describe(`Default 30000; max ${WAIT_MAX_MS}`),
+        timeoutMs: z.number().int().min(250).max(WAIT_MAX_MS).optional().describe(`Default ${WAIT_MAX_MS} for settled/all_settled, ${Math.min(30_000, WAIT_MAX_MS)} for progress; max ${WAIT_MAX_MS}`),
         afterTurns: z.number().int().min(0).optional().describe("Prior snapshot's turn count"),
         afterToolCalls: z.number().int().min(0).optional().describe("Prior snapshot's `toolCallCount`"),
         verbose: z.boolean().optional().describe("Single session: include the full snapshot, tool results and call ids"),

@@ -1,5 +1,5 @@
 /** Execution operations shared by protocol adapters. Registry and PiWorker own lifecycle/state. */
-import { PROGRESS_MS, RUN_DEFAULT_DURATION_MS, RUN_DEFAULT_TURNS } from "./config.js";
+import { PROGRESS_MS, RUN_DEFAULT_DURATION_MS, RUN_DEFAULT_TURNS, WAIT_MAX_MS } from "./config.js";
 import {
   all, assertCapacity, claimId, evictHistory, forget, launch, launchBatch, loaded, resolve, SessionElsewhere,
 } from "./registry.js";
@@ -430,13 +430,16 @@ function until(watched: Watched[], mode: WaitUntil, timeoutMs: number, signal?: 
   });
 }
 
+/** A wait for the result lasts as long as this host allows, so callers need not poll; a progress wait stays short. */
+const defaultWait = (mode: WaitUntil): number => mode === "progress" ? Math.min(30_000, WAIT_MAX_MS) : WAIT_MAX_MS;
+
 export async function waitForState(
   sessionId: string,
-  { timeoutMs = 30_000, afterTurns, afterToolCalls, verbose, until: mode = "progress", signal }: WaitOptions = {},
+  { timeoutMs, afterTurns, afterToolCalls, verbose, until: mode = "progress", signal }: WaitOptions = {},
 ): Promise<Snapshot> {
   const [watched] = await watch([sessionId], afterTurns, afterToolCalls);
   if (watched!.finished) return verbose ? watched!.finished : compactSnapshot(watched!.finished);
-  await until([watched!], mode, timeoutMs, signal);
+  await until([watched!], mode, timeoutMs ?? defaultWait(mode), signal);
   if (watched!.remote) finishedNow(watched!);
   if (watched!.finished) return verbose ? watched!.finished : compactSnapshot(watched!.finished);
   if (watched!.remote) return remoteSnapshot(sessionId);
@@ -479,11 +482,11 @@ export interface WaitSummary extends FollowUpInfo {
  */
 export async function waitForMany(
   sessionIds: string[],
-  { timeoutMs = 30_000, until: mode = "settled", signal }: Omit<WaitOptions, "afterTurns" | "afterToolCalls" | "verbose"> = {},
+  { timeoutMs, until: mode = "settled", signal }: Omit<WaitOptions, "afterTurns" | "afterToolCalls" | "verbose"> = {},
 ): Promise<{ settled: string[]; pending: string[]; continueIds: string[]; sessions: WaitSummary[] }> {
   const ids = [...new Set(sessionIds)];
   const watched = await watch(ids);
-  await until(watched, mode, timeoutMs, signal);
+  await until(watched, mode, timeoutMs ?? defaultWait(mode), signal);
   // The wait may end on another session; a remote one may have finished meanwhile without being read.
   for (const w of watched) if (w.remote) finishedNow(w);
   const sessions = watched.map((w): WaitSummary => {

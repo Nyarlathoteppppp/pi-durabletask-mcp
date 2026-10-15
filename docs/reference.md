@@ -843,7 +843,7 @@ Recipes: [web research](research.md) · [parallel review and synthesis](workflow
 | `PI_DELEGATE_STATUSLINE_WRAP` | unset            | Status line command to wrap and append to                                |
 | `PI_DELEGATE_STATUSLINE_LOG`  | unset            | File to append a timestamp to on every status line render, for debugging |
 | `PI_DELEGATE_PROGRESS_MS`     | `15000`          | Progress notification interval during `run` and `wait`                   |
-| `PI_DELEGATE_WAIT_MAX_MS`     | `55000`          | Longest `wait`; raise it for clients allowed longer tool calls (Codex: `tool_timeout_sec`) |
+| `PI_DELEGATE_WAIT_MAX_MS`     | `55000`          | Longest `wait`, and the default for `until: "settled"`/`"all_settled"`; raise it for clients allowed longer tool calls (Codex: `tool_timeout_sec`) |
 | `PI_DELEGATE_IGNORE_SCOPE`    | unset            | `1` ignores pi's `enabledModels` scope, allowing any configured model    |
 | `PI_DELEGATE_STRICT_SCOPE`    | unset            | `1` honours `enabledModels` exactly, dropping the custom-provider bypass |
 | `PI_CODING_AGENT_DIR`         | `~/.pi/agent`    | Where pi's `auth.json` and config are read from                          |
