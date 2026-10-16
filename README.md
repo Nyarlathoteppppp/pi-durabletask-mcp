@@ -40,7 +40,7 @@ It calls `spawn_batch` with one prompt and three models, waits with `wait`, and 
 
 ## Quick start
 
-**Requires macOS or Linux, Node.js 22.19+ and Pi.** CI covers Pi 1.0.0, 1.0.4 and 1.1.0. Model calls use your own provider credentials.
+**Requires macOS or Linux, Node.js 22.19+ and Pi.** CI covers Pi 1.0.0, 1.0.4, 1.1.0 and 1.3.0. Model calls use your own provider credentials.
 
 **1 · Install Pi** (skip if you have it) and configure a provider:
 

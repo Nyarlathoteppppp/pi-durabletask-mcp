@@ -15,9 +15,8 @@ jobs:
       fail-fast: false
       matrix:
         node: ["22", "24"]
-        # The bridge links the globally installed Pi SDK; cover the pinned version and the latest
-        # one known to work, whose pi-ai types differ from the pi-ai Pi Durable pins.
-        pi: ["1.0.0", "1.0.4", "1.1.0"]
+        # Cover legacy SDKs as well as the current release; the bridge links this global install.
+        pi: ["1.0.0", "1.0.4", "1.1.0", "1.3.0"]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -26,6 +25,28 @@ jobs:
       - name: Install ripgrep
         run: sudo apt-get update && sudo apt-get install -y ripgrep
       - name: Install shared Pi SDK
-        run: npm install -g @earendil-works/pi-coding-agent@${{ matrix.pi }}
+        env:
+          PI_VERSION: ${{ matrix.pi }}
+        run: |
+          npm install -g @earendil-works/pi-coding-agent@"$PI_VERSION"
+          sdk_dir="$(npm root -g)/@earendil-works/pi-coding-agent"
+          if [[ "$PI_VERSION" == 1.0.* || "$PI_VERSION" == 1.1.* ]]; then
+            # These releases used ^ ranges and now pull incompatible newer Pi packages.
+            # Reconstruct their matching internal release set, only in the CI installation.
+            (
+              cd "$sdk_dir"
+              node --input-type=module <<'JS'
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const manifest = JSON.parse(readFileSync('package.json', 'utf8'));
+          for (const name of Object.keys(manifest.dependencies)) {
+            if (name.startsWith('@earendil-works/')) manifest.dependencies[name] = process.env.PI_VERSION;
+          }
+          writeFileSync('package.json', JSON.stringify(manifest, null, 2));
+          JS
+              npm install --omit=dev --ignore-scripts --no-audit --no-fund
+            )
+          fi
+          # Fail at setup, rather than reporting a test failure for a broken SDK import.
+          node --input-type=module -e 'await import(process.argv[1])' "$sdk_dir/dist/index.js"
       - run: npm ci
       - run: npm run test:ci

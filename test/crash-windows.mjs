@@ -18,6 +18,12 @@ const sockets = new Set();
 let requests = 0;
 const held = new Set();
 const prompts = [];
+const responseGates = new Map();
+const holdResponse = (prompt) => {
+  const gate = Promise.withResolvers();
+  responseGates.set(prompt, gate);
+  return gate.resolve;
+};
 const http = createServer(async (req, res) => {
   let body = "";
   for await (const chunk of req) body += chunk;
@@ -27,7 +33,9 @@ const http = createServer(async (req, res) => {
   if (encoded.includes("STUCK") && !encoded.includes("again")) return; // never answers, even on recovery
   // The first HOLD request never answers, so the server can be killed mid-run; later ones answer.
   if (encoded.includes("HOLD") && !held.has(encoded)) { held.add(encoded); return; }
-  if (encoded.includes("SLOW")) await new Promise((resolve) => setTimeout(resolve, 1500));
+  for (const [prompt, gate] of responseGates) {
+    if (encoded.includes(prompt)) await gate.promise;
+  }
   res.writeHead(200, { "Content-Type": "text/event-stream" });
   const emit = (delta, finish_reason = null) => res.write(`data: ${JSON.stringify({ id: "crash", object: "chat.completion.chunk",
     created: 1, model: "one", choices: [{ index: 0, delta, finish_reason }] })}\n\n`);
@@ -57,9 +65,9 @@ const connect = async (hooks = {}) => {
   const host = { client, transport };
   clients.add(host);
   await client.connect(transport);
-  host.raw = (name, args = {}) => client.callTool({ name, arguments: args });
-  host.call = async (name, args = {}) => {
-    const result = await host.raw(name, args);
+  host.raw = (name, args = {}, options) => client.callTool({ name, arguments: args }, undefined, options);
+  host.call = async (name, args = {}, options) => {
+    const result = await host.raw(name, args, options);
     assert.ok(!result.isError, result.content?.[0]?.text);
     return JSON.parse(result.content[0].text);
   };
@@ -189,11 +197,16 @@ try {
 
   // 6. wait on a session running in another process waits for it there, instead of failing at once.
   const runner = await connect();
-  await runner.call("spawn", { cwd: directory, id: "elsewhere", prompt: "SLOW elsewhere", tools: [], durable: true });
-  const watcher = await connect({ PI_DELEGATE_RECOVERY_INTERVAL_MS: "600000" });
+  const releaseElsewhere = holdResponse("GATED elsewhere");
+  await runner.call("spawn", { cwd: directory, id: "elsewhere", prompt: "GATED elsewhere", tools: [], durable: true });
+  await waitUntil(() => prompts.some((p) => p.includes("GATED elsewhere")), "the gated model request");
+  const watcher = await connect({ PI_DELEGATE_RECOVERY_INTERVAL_MS: "600000", PI_DELEGATE_PROGRESS_MS: "50" });
   const meanwhile = await watcher.call("wait", { sessionId: "elsewhere", until: "settled", timeoutMs: 250 });
   assert.deepEqual([meanwhile.state, meanwhile.runningElsewhere], ["running", true]);
-  const waited = await watcher.call("wait", { sessionId: "elsewhere", until: "settled", timeoutMs: 15000 });
+  // Keep the response blocked across process startup; release only after the long wait reports
+  // progress. An immediate status lookup cannot pass the done assertion below.
+  const waited = await watcher.call("wait", { sessionId: "elsewhere", until: "settled", timeoutMs: 15000 },
+    { onprogress: () => releaseElsewhere() });
   assert.equal(waited.state, "done");
   assert.equal(waited.lastText, "ANSWERED");
   await close(watcher);
@@ -214,10 +227,13 @@ try {
 
   // 8. A batch wait that times out on a local run still reports a remote session that finished meanwhile.
   const far = await connect();
-  await far.call("spawn", { cwd: directory, id: "far", prompt: "SLOW far", tools: [], durable: true });
-  const near = await connect({ PI_DELEGATE_RECOVERY_INTERVAL_MS: "600000" });
+  const releaseFar = holdResponse("GATED far");
+  await far.call("spawn", { cwd: directory, id: "far", prompt: "GATED far", tools: [], durable: true });
+  await waitUntil(() => prompts.some((p) => p.includes("GATED far")), "the gated remote request");
+  const near = await connect({ PI_DELEGATE_RECOVERY_INTERVAL_MS: "600000", PI_DELEGATE_PROGRESS_MS: "50" });
   await near.call("spawn", { cwd: directory, id: "near", prompt: "HOLD near", tools: [] });
-  const mixed = await near.call("wait", { sessionIds: ["near", "far"], until: "all_settled", timeoutMs: 4000 });
+  const mixed = await near.call("wait", { sessionIds: ["near", "far"], until: "all_settled", timeoutMs: 4000 },
+    { onprogress: () => releaseFar() });
   assert.deepEqual(mixed.settled, ["far"]);
   assert.equal(mixed.sessions.find((s) => s.sessionId === "far").lastText, "ANSWERED");
   await close(near);
@@ -279,6 +295,7 @@ try {
   await close(slow);
   console.log("  OK -> crashes before the store exists or after a renewing follow_up commits recover correctly; refused or spent recoveries are recorded with their error for every window, not retried every tick; recovered tasks are released for other windows, which can also wait on them; forget removes unheld unfinished jobs; a run cancelled while opening stays cancelled");
 } finally {
+  for (const gate of responseGates.values()) gate.resolve();
   for (const host of clients) await host.client.close().catch(() => {});
   for (const socket of sockets) socket.destroy();
   await new Promise((resolve) => http.close(resolve));
