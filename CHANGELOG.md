@@ -3,6 +3,7 @@
 ## Unreleased
 
 - CI covers Pi 1.3.0 alongside legacy SDKs. Legacy npm installs pin their internal Pi packages to the matching release before tests, preventing incompatible newer Codemode dependencies; setup also verifies the SDK imports.
+- Legacy CI SDK setup skips the SDK's development dependency graph, which npm 10 still resolves with `--omit=dev` and crashes on with `edgesOut`. Runtime dependencies and user installs are unchanged.
 - Cross-process wait tests gate model replies until the wait reports progress, replacing fixed model delays that could expire during slow CI startup.
 - Opt-in `PI_DELEGATE_FINISH_THINKING` (`xai/*:medium`, or a bare level for every model): once a run is asked to wrap up or its tools are removed, it continues at that lower thinking level, so a slow model's closing request does not run into the deadline with no answer. The next run starts at its own level.
 - Opt-in `PI_DELEGATE_TOOL_CHOICE_NONE` (model patterns): once a run's tools are removed for its last turn, matching models are also sent `toolChoice: "none"`, so providers such as Antigravity refuse the tool calls some models make anyway. Off by default; some OpenAI-compatible endpoints reject `tool_choice` without tools.

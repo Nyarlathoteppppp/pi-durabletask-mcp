@@ -41,6 +41,9 @@ jobs:
           for (const name of Object.keys(manifest.dependencies)) {
             if (name.startsWith('@earendil-works/')) manifest.dependencies[name] = process.env.PI_VERSION;
           }
+          // --omit=dev still resolves dev peers; npm 10 crashes on the SDK's dev graph.
+          // This CI copy only runs the SDK, so do not resolve its development dependencies.
+          delete manifest.devDependencies;
           writeFileSync('package.json', JSON.stringify(manifest, null, 2));
           JS
               npm install --omit=dev --ignore-scripts --no-audit --no-fund
