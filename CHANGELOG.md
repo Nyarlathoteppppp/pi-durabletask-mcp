@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.7.12 (2026-10-19)
+
 - CI covers Pi 1.3.0 alongside legacy SDKs. Legacy npm installs pin their internal Pi packages to the matching release before tests, preventing incompatible newer Codemode dependencies; setup also verifies the SDK imports.
 - Legacy CI SDK setup skips the SDK's development dependency graph, which npm 10 still resolves with `--omit=dev` and crashes on with `edgesOut`. Runtime dependencies and user installs are unchanged.
 - Cross-process wait tests gate model replies until the wait reports progress, replacing fixed model delays that could expire during slow CI startup.

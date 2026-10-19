@@ -49,36 +49,35 @@ curl -fsSL https://pi.dev/install.sh | sh
 pi  # 然后 /login 或配置一个 provider
 ```
 
-**2 · 安装桥接。** npm 版本（0.7.8）落后于 `main`，要用到下面的全部功能请从源码安装：
+**2 · 安装桥接：**
+
+```bash
+npm install -g pi-durabletask-mcp@latest
+```
+
+<details>
+<summary>或者从源码安装</summary>
 
 ```bash
 git clone https://github.com/Nyarlathoteppppp/pi-durabletask-mcp.git
 cd pi-durabletask-mcp && npm ci && npm run build
 ```
 
-<details>
-<summary>或者用 npm 版本</summary>
-
-```bash
-npm install -g pi-durabletask-mcp
-```
-
-之后把下面命令里的 `node …/dist/index.js` 换成 `pi-durabletask-mcp`。
+连接时使用 `node /absolute/path/pi-durabletask-mcp/dist/index.js`，代替下面的 `pi-durabletask-mcp`。
 
 </details>
 
 **3 · 连接。** Claude Code：
 
 ```bash
-claude mcp add --scope user pi -- node /absolute/path/pi-durabletask-mcp/dist/index.js
+claude mcp add --scope user pi -- pi-durabletask-mcp
 ```
 
 Codex（`~/.codex/config.toml`）：
 
 ```toml
 [mcp_servers.pi]
-command = "node"
-args = ["/absolute/path/pi-durabletask-mcp/dist/index.js"]
+command = "pi-durabletask-mcp"
 ```
 
 更新桥接或 Pi 之后要重连 MCP。[其他客户端 →](docs/reference.md#other-mcp-clients)

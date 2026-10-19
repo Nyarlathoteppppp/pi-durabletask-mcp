@@ -49,36 +49,35 @@ curl -fsSL https://pi.dev/install.sh | sh
 pi  # then /login or configure a provider
 ```
 
-**2 · Install the bridge.** The npm release (0.7.8) lags behind `main`; for everything below, install from source:
+**2 · Install the bridge:**
+
+```bash
+npm install -g pi-durabletask-mcp@latest
+```
+
+<details>
+<summary>Or install from source</summary>
 
 ```bash
 git clone https://github.com/Nyarlathoteppppp/pi-durabletask-mcp.git
 cd pi-durabletask-mcp && npm ci && npm run build
 ```
 
-<details>
-<summary>Or the npm release</summary>
-
-```bash
-npm install -g pi-durabletask-mcp
-```
-
-Then use `pi-durabletask-mcp` as the command below instead of `node …/dist/index.js`.
+Connect with `node /absolute/path/pi-durabletask-mcp/dist/index.js` instead of `pi-durabletask-mcp` below.
 
 </details>
 
 **3 · Connect.** Claude Code:
 
 ```bash
-claude mcp add --scope user pi -- node /absolute/path/pi-durabletask-mcp/dist/index.js
+claude mcp add --scope user pi -- pi-durabletask-mcp
 ```
 
 Codex (`~/.codex/config.toml`):
 
 ```toml
 [mcp_servers.pi]
-command = "node"
-args = ["/absolute/path/pi-durabletask-mcp/dist/index.js"]
+command = "pi-durabletask-mcp"
 ```
 
 Reconnect the MCP after updating the bridge or Pi. [Other clients →](docs/reference.md#other-mcp-clients)
