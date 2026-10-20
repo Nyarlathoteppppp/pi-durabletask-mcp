@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Docs: the Codex setup shows an absolute-path config for the Codex desktop app, whose MCP servers start without Homebrew or nvm on `PATH`; a bare `pi-durabletask-mcp` or `node` command never starts there and the session just has no Pi tools.
+
 ## 0.7.12 (2026-10-19)
 
 - CI covers Pi 1.3.0 alongside legacy SDKs. Legacy npm installs pin their internal Pi packages to the matching release before tests, preventing incompatible newer Codemode dependencies; setup also verifies the SDK imports.

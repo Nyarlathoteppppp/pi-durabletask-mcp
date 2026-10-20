@@ -80,6 +80,17 @@ Codex (`~/.codex/config.toml`):
 command = "pi-durabletask-mcp"
 ```
 
+The Codex desktop app starts MCP servers with a minimal `PATH` (no Homebrew or nvm directories), so it may find neither `pi-durabletask-mcp` nor the `node` it runs on. The server then never starts, and the session simply has no Pi tools. Use absolute paths there:
+
+```toml
+[mcp_servers.pi]
+command = "/opt/homebrew/bin/node" # output of `which node`
+args = ["/opt/homebrew/lib/node_modules/pi-durabletask-mcp/dist/index.js"] # under `npm root -g`
+
+[mcp_servers.pi.env]
+PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" # inherited by what the server starts
+```
+
 Reconnect the MCP after updating the bridge or Pi. [Other clients →](docs/reference.md#other-mcp-clients)
 
 **4 · Try it:** "Use Pi to check the auth module for missing permission checks. Read only." `init` shows your models and settings; `models` lists what each delegate may use.

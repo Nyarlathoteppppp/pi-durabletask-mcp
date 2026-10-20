@@ -136,7 +136,10 @@ startup recovery explicitly; `init` does not start or recover tasks.
 
 The server uses Pi's configured default model unless `PI_DELEGATE_MODEL` or the call's
 `model` selects another one. If your client launches without a Node.js `PATH`, use the
-absolute path to `node` in its `command`. Keep the server key short because it prefixes
+absolute path to `node` in its `command`, and set `PATH` in the server's `env` so programs it
+starts find the same tools. The Codex desktop app is one such client: its MCP servers get only
+the system directories, so a bare `node`, or an npm-installed launcher whose `#!/usr/bin/env node`
+needs `node` on `PATH`, fails to start without an error in the session. Keep the server key short because it prefixes
 tool names, for example `mcp__pi__spawn`.
 
 ## Traceability

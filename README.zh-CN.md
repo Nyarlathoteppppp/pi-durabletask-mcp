@@ -80,6 +80,17 @@ Codex（`~/.codex/config.toml`）：
 command = "pi-durabletask-mcp"
 ```
 
+Codex 桌面版启动 MCP 服务器时的 `PATH` 很精简（不含 Homebrew 和 nvm 的目录），可能既找不到 `pi-durabletask-mcp`，也找不到它依赖的 `node`。这时服务器根本没启动，会话里只是没有 Pi 工具。这种情况改用绝对路径：
+
+```toml
+[mcp_servers.pi]
+command = "/opt/homebrew/bin/node" # `which node` 的输出
+args = ["/opt/homebrew/lib/node_modules/pi-durabletask-mcp/dist/index.js"] # 位于 `npm root -g` 下
+
+[mcp_servers.pi.env]
+PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" # 服务器启动的程序会继承它
+```
+
 更新桥接或 Pi 之后要重连 MCP。[其他客户端 →](docs/reference.md#other-mcp-clients)
 
 **4 · 试一下：** "用 Pi 检查认证模块有没有漏掉权限检查，只读。" `init` 会显示可用模型和当前设置，`models` 列出委托能用哪些模型。
