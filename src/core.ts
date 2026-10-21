@@ -452,6 +452,9 @@ export interface WaitSummary extends FollowUpInfo {
   forkedFrom?: string;
   label: string | undefined;
   state: string;
+  /** Once finished: the model and level that answered, which a provider-error fallback may have changed. */
+  model?: string;
+  thinking?: Snapshot["thinking"];
   turns: number;
   toolCallCount: number;
   touchedFiles?: Snapshot["touchedFiles"];
@@ -495,7 +498,9 @@ export async function waitForMany(
     const done = TERMINAL.has(s.state);
     const notices = done ? s.notices : s.notices.filter((n) => n.type !== "info");
     return {
-      sessionId: s.sessionId, label: s.label, state: s.state, turns: s.turns, toolCallCount: s.toolCallCount,
+      sessionId: s.sessionId, label: s.label, state: s.state,
+      ...(done ? { model: s.model, thinking: s.thinking } : {}),
+      turns: s.turns, toolCallCount: s.toolCallCount,
       ...(s.forkedFrom ? { forkedFrom: s.forkedFrom } : {}),
       ...(s.editWriteCount ? { touchedFiles: s.touchedFiles, editWriteCount: s.editWriteCount } : {}),
       pendingQuestions: s.questions.length,

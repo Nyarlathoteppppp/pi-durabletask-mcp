@@ -4,7 +4,7 @@ import { checkSavePath, saveText } from "./save.js";
 import type { Snapshot } from "./types.js";
 
 type Observation = Pick<Snapshot, "sessionId"> & Partial<Pick<Snapshot,
-  "label" | "model" | "error" | "termination" | "savedTo" | "savedChars" | "saveError">> & { state?: string };
+  "label" | "model" | "error" | "termination" | "savedTo" | "savedChars" | "saveError">> & { state?: string; thinking?: string | undefined };
 type ReportRef = { version: number; savedTo: string; savedChars?: number; observedAt: string };
 type Entry = Omit<Observation, "sessionId" | "savedTo" | "savedChars"> & {
   taskIndex: number; sessionId?: string; followUpVersion: number; reports: ReportRef[]; observedAt?: string;
@@ -39,6 +39,7 @@ export function createCoordinatorReport(
       if (run === entry.followUpVersion) {
         if (s.label !== undefined) entry.label = s.label;
         if (s.model !== undefined) entry.model = s.model; // actual core model, never the plan's hint
+        if (s.thinking !== undefined) entry.thinking = s.thinking;
         if (s.state !== undefined) entry.state = s.state;
         entry.error = s.error;
         entry.termination = s.termination;

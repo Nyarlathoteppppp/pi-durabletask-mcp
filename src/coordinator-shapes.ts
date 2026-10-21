@@ -20,6 +20,7 @@ const continuation = {
 };
 const report = {
   sessionId: z.string(), label: z.string().optional(), state,
+  model: z.string().optional(), thinking: z.string().optional(),
   error: z.string().optional(), termination: termination.optional(), usage: usage.optional(),
   answerState: z.enum(["missing", "partial", "narration"]).optional(),
   salvagedText: z.string().optional(),

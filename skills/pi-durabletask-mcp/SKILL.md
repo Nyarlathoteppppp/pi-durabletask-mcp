@@ -10,6 +10,7 @@ Use the connected server's tools; names below omit client-specific prefixes.
 ## Delegate and collect
 
 - Call `spawn` with an absolute project `cwd`; put the goal, context, constraints, allowed scope, and required evidence in `prompt`.
+- Ask for evidence, not a verdict: an implementation reports the verification commands it ran with their outcome and what remains unverified (changed paths already come back as `touchedFiles`); a review reports findings with `file:line` evidence, or exactly `No findings`.
 - Omit `model` and `tools` for the configured model and read-only defaults; `init` is optional diagnostics.
 - To review a diff or share long notes, write them to a file and pass its absolute path in `attachments` rather than pasting them into `prompt`. When you will process or keep a long result rather than read it, pass `saveTo` (or `saveDir` on `spawn_batch`); results then show `savedTo`.
 - `answerState` on a finished result (`missing`, `partial`, `narration`) means the text is not a usable conclusion; `follow_up` for one. Its absence is not a guarantee.

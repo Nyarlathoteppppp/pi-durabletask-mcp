@@ -31,12 +31,14 @@ const FINISHED = new Set(["done", "aborted", "error"]);
  */
 export function waitResult(snapshot: Snapshot, verbose?: boolean, since?: string) {
   if (verbose) return withNextAction(snapshot);
-  const { sessionId, forkedFrom, label, state, turns, toolCallCount, lastText, questions, notices, error, termination, usage,
+  const { sessionId, forkedFrom, label, state, model, thinking, turns, toolCallCount, lastText, questions, notices, error, termination, usage,
     remainingTurns, canFollowUp, followUpBlockedReason, idleMs, phase, answerState, savedTo, savedChars, saveError,
     touchedFiles, editWriteCount, reportIndex, reportIndexError, preview, runningElsewhere, salvagedText } = snapshot;
   const finished = FINISHED.has(state);
   const visibleNotices = finished ? notices : notices.filter((n) => n.type !== "info" && (since === undefined || n.at >= since));
-  return withNextAction({ sessionId, ...(forkedFrom ? { forkedFrom } : {}), label, state, turns, toolCallCount,
+  return withNextAction({ sessionId, ...(forkedFrom ? { forkedFrom } : {}), label, state,
+    // The model that answered: a provider-error fallback can differ from the start receipt.
+    ...(finished ? { model, thinking } : {}), turns, toolCallCount,
     // A long text the caller asked to have saved is not returned again; it is in savedTo, and preview shows its start.
     ...(savedTo ? { savedTo, savedChars } : {}), ...(finished && !omitsSavedText(snapshot) ? { lastText } : {}),
     ...(finished && preview ? { preview } : {}), ...(salvagedText ? { salvagedText } : {}), ...(saveError ? { saveError } : {}),

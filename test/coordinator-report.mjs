@@ -232,6 +232,21 @@ try {
     assert.equal("reportIndexError" in value, false);
   }
   assert.deepEqual(await readdir(noSaveDir), [], "no saveDir means no index/report IO");
+  // A child that fell back to another model: get and the index name the model and level that answered.
+  const fellBack = snapshot("fell-back", { model: "up/m1", thinking: "low" });
+  const switched = createCoordinatorTools(plan(join(dir, "fallback-reports"), 1), dir, {
+    startBatch: async () => batch([{ index: 0, sessionId: "fell-back", state: "running", model: "down/m1", thinking: "medium" }]),
+    getState: async () => fellBack,
+    waitForMany: async () => summary([fellBack]),
+    followUp: async () => ({ sessionId: "fell-back", state: "running" }),
+  });
+  const started = await call(switched, "delegate_start_batch");
+  assert.deepEqual(((await index(started)).tasks[0]).thinking, "medium", "the index keeps the start receipt's level");
+  const waitedSwitch = await call(switched, "delegate_wait", { timeoutMs: 0 });
+  const entry = (await index(waitedSwitch)).tasks[0];
+  assert.deepEqual([entry.model, entry.thinking], ["up/m1", "low"], "a wait observation moves the index to the fallback");
+  const report = await call(switched, "delegate_get", { sessionId: "fell-back" });
+  assert.deepEqual([report.model, report.thinking], ["up/m1", "low"], "delegate_get names the model that answered");
   console.log("  OK -> coordinator report snapshots: partial failures, observed report versions, parallel merge, team isolation, nonfatal IO, opt-in only");
 } finally {
   await rm(dir, { recursive: true, force: true });

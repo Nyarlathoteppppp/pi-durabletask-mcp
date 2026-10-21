@@ -111,8 +111,9 @@ try {
   assert.equal(waited.lastText, "OK");
   assert.equal(waited.nextAction, "finish");
   assert.equal(compact.nextAction, "finish");
-  for (const key of ["toolCalls", "model", "thinking", "cwd", "activeTools", "limits", "startedAt", "elapsedMs"])
+  for (const key of ["toolCalls", "cwd", "activeTools", "limits", "startedAt", "elapsedMs"])
     assert.equal(key in waited, false, `default wait omits ${key}`);
+  assert.deepEqual([waited.model, waited.thinking], [started.model, started.thinking], "a finished wait names the model that answered");
   const verboseWait = await host.call("wait", { sessionId: "many", verbose: true, timeoutMs: 250 });
   assert.deepEqual(verboseWait.toolCalls, full.toolCalls, "verbose wait retains ids, arguments and results");
   assert.equal(verboseWait.cwd, full.cwd);

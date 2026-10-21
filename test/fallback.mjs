@@ -110,7 +110,21 @@ try {
     fallbackModels: ["up/*"], verbose: true });
   assert.deepEqual([carried.model, carried.thinking], ["up/m1", "medium"]);
 
-  // 8. init shows what each default entry resolves to now, so a stale one is visible after a model update.
+  // 8. Compact finished results name the model that actually answered, not only the start receipt's.
+  const compact = await call("run", { cwd: dir, model: "down/m1", thinking: "medium", prompt: "hello", tools: [],
+    fallbackModels: ["up/*:low"] });
+  assert.equal(compact.state, "done", compact.error);
+  assert.deepEqual([compact.model, compact.thinking], ["up/m1", "low"], "run without verbose");
+  const spawned = await call("spawn_batch", { cwd: dir, model: "down/m1", thinking: "medium", prompt: "hello", tools: [],
+    fallbackModels: ["up/*:low"], tasks: [{ id: "batch-fallback" }] });
+  assert.equal(spawned.sessions[0].model, "down/m1", "the start receipt still shows the requested model");
+  const batchWait = await call("wait", { sessionIds: ["batch-fallback"], until: "all_settled" });
+  assert.equal(batchWait.sessions[0].state, "done", batchWait.sessions[0].error);
+  assert.deepEqual([batchWait.sessions[0].model, batchWait.sessions[0].thinking], ["up/m1", "low"], "batch wait");
+  const single = await call("wait", { sessionId: "batch-fallback", until: "settled" });
+  assert.deepEqual([single.model, single.thinking], ["up/m1", "low"], "single wait");
+
+  // 9. init shows what each default entry resolves to now, so a stale one is visible after a model update.
   const init = await call("init", { cwd: dir });
   assert.deepEqual(init.models.fallbackOnProviderError, [{ pattern: "down/m2", now: "down/m2" },
     { pattern: "alsodown/*", now: "alsodown/m1" }, { pattern: "up/*", now: "up/m1" }]);

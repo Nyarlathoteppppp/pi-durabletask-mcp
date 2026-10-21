@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Finished results name the model that answered: `wait` (single and batch), coordinator `delegate_wait` and `delegate_get` now carry `model` and `thinking`, and the team `reportIndex` records `thinking` and follows a provider-error fallback instead of keeping the start receipt's model. `run` already did; polls of running work are unchanged.
+- Skill: ask delegates for evidence rather than a verdict (verification commands and outcome, unverified items; reviews give `file:line` findings or `No findings`).
+
 - Docs: the Codex setup shows an absolute-path config for the Codex desktop app, whose MCP servers start without Homebrew or nvm on `PATH`; a bare `pi-durabletask-mcp` or `node` command never starts there and the session just has no Pi tools.
 
 ## 0.7.12 (2026-10-19)

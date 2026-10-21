@@ -205,9 +205,9 @@ export function createCoordinatorTools(options: z.output<typeof coordinatorSchem
         const versions = report && new Map([[sessionId, report.version(sessionId)]]);
         const snapshot = await core.getState(sessionId, true);
         report?.observe([snapshot], versions);
-        const { label, state, lastText, questions, error, termination, answerState, usage, savedTo, savedChars, saveError,
+        const { label, state, model, thinking, lastText, questions, error, termination, answerState, usage, savedTo, savedChars, saveError,
           remainingTurns, canFollowUp, followUpBlockedReason } = snapshot;
-        return result({ ...withNextAction({ sessionId, label, state, lastText, questions, error, termination, answerState, usage,
+        return result({ ...withNextAction({ sessionId, label, state, model, thinking, lastText, questions, error, termination, answerState, usage,
           savedTo, savedChars, saveError, remainingTurns, canFollowUp, followUpBlockedReason }), ...await reportFields() });
       },
     }),

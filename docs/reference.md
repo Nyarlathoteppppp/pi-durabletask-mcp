@@ -302,7 +302,10 @@ if the model supports it, else the model's default is used. The first entry with
 credentials resolving) wins, skipping every provider that already failed in this run, since an
 outage or quota usually takes the whole provider. The session keeps its id, history and budgets:
 the new model receives the conversation so far and a short instruction to continue, and a warning
-notice records the switch. The continuation is a turn of the run's budget, so with no turn left or
+notice records the switch. Finished results (`run`, `wait`, a batch `wait`, and a coordinator's
+`delegate_wait`/`delegate_get` and `reportIndex`) carry the session's `model` and `thinking` after
+any fallback, so a report is attributed to the model that wrote it, not the one in the start receipt.
+A last-turn reduction by `PI_DELEGATE_FINISH_THINKING` is reported as a notice, not in `thinking`. The continuation is a turn of the run's budget, so with no turn left or
 past the deadline the error stands; aborts, budgets, deadlines and stalls never trigger it. Entries
 that match no model in scope are reported as a warning when the delegate starts; `init` shows what each server
 entry resolves to now. A durable task recovered after a restart starts again on its original model.
