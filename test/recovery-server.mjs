@@ -97,4 +97,18 @@ if (process.env.TEST_BROKEN_PROVIDER || process.env.TEST_BROKEN_PROVIDER_FILE) {
     return getAuth(provider, options);
   };
 }
+
+// Give every OAuth refresh a token that lasts TEST_OAUTH_LIFETIME_MS, and refuse a demand it cannot
+// meet with Pi's own error, as Pi does for a provider whose tokens live an hour (Google's).
+if (process.env.TEST_OAUTH_LIFETIME_MS) {
+  const { getRuntime } = await import("../dist/pi/runtime.js");
+  const runtime = await getRuntime();
+  const getAuth = runtime.getAuth.bind(runtime);
+  const lifetime = Number(process.env.TEST_OAUTH_LIFETIME_MS);
+  runtime.getAuth = async (provider, options) => {
+    if (options?.minOAuthValidityMs !== undefined && Math.max(5 * 60_000, options.minOAuthValidityMs) >= lifetime)
+      throw new Error(`OAuth refresh returned a token that expires too soon for ${provider}`);
+    return getAuth(provider, options);
+  };
+}
 await import("../dist/index.js");

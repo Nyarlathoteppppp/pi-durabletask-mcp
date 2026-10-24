@@ -324,7 +324,15 @@ try {
   assert.equal((await host.call("models", { cwd: directory })).defaultUsable, false, "a default on a failing provider is not usable");
   await close(host);
 
-  console.log("  OK -> compact status/wait, failing provider reported and refused, retries visible, ripgrep from Pi's tool directory, batch prechecks every task, models agrees with spawn");
+  // An hour-long run limit does not refuse a provider whose fresh tokens last an hour: Pi refreshes
+  // before each request, so the up-front check must not demand more than one refresh gives.
+  host = await connect({ PI_DELEGATE_MAX_DURATION_MS: "3600000", TEST_OAUTH_LIFETIME_MS: "3600000" });
+  assert.equal(host.init.failingProviders?.test, undefined, "an hour-long token passes an hour-long run limit");
+  await host.call("spawn", { cwd: directory, id: "hour-token", prompt: "plain", tools: [] });
+  assert.equal((await settle(host, "hour-token")).state, "done");
+  await close(host);
+
+  console.log("  OK -> compact status/wait, failing provider reported and refused, retries visible, ripgrep from Pi's tool directory, batch prechecks every task, models agrees with spawn, hour-long OAuth tokens pass an hour-long run limit");
 } finally {
   for (const host of clients) await host.client.close().catch(() => {});
   for (const socket of sockets) socket.destroy();

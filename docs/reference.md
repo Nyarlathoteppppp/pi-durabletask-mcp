@@ -257,7 +257,8 @@ Pi retries transient provider failures itself (stream drops, 429/5xx, timeouts),
 Retrying the same provider by hand rarely helps after that; choose another.
 
 Optional `init` resolves the credentials of every provider a delegate may use, as a request would,
-refreshing OAuth tokens that would expire within the longest delegate run. Providers that fail
+refreshing OAuth tokens that would expire within the longest delegate run (capped at 30 minutes:
+Pi refreshes again before each request, and Google's tokens last only an hour). Providers that fail
 are listed under `failingProviders` with the reason and their models are not offered; `spawn`,
 `run` and `spawn_batch` refuse a model of such a provider before starting anything. API keys
 are checked for presence only, so a revoked key still surfaces on the first request.

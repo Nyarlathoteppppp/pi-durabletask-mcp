@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fix: with `PI_DELEGATE_MAX_DURATION_MS` at 55 minutes or more, every provider whose OAuth tokens last an hour (Antigravity/Google) was reported under `failingProviders` with "OAuth refresh returned a token that expires too soon", even right after a fresh login. The up-front credential check asked for a token valid for the whole run plus 5 minutes; it now asks for at most 30 minutes, since Pi refreshes the token again before each request.
 - Opt-in `PI_DELEGATE_DEADLINE_GRACE_MS`: a run that reaches its deadline loses its tools (no new tool call starts, pending questions are withdrawn) and is told to answer; it is aborted only if it has not answered when this grace period ends too. A run already writing its answer finishes it, and the next run gets its tools back. Off by default: the deadline aborts as before.
 - Coordinator members without `maxDurationMs` get the `spawn` default (`PI_DELEGATE_SPAWN_DURATION_MS`) instead of a fixed 4 minutes: their turn and tool-call budgets bound the work, and the deadline guards against a hung provider. The recipes in the docs no longer set deadlines.
 - Durable stores reclaim the free pages left by checkpoints, which rewrite the whole transcript (typically half of each store): a finished store is compacted when it is closed, and over `PI_DELEGATE_STORAGE_LIMIT_MB` finished stores are compacted before any history is deleted for size.

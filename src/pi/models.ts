@@ -136,8 +136,12 @@ export interface Health {
   failing: Record<string, string>;
 }
 
-/** An OAuth token that would expire during the longest delegate run is refreshed up front. */
-const AUTH_VALIDITY_MS = MAX_DURATION_MS + 5 * 60_000;
+/**
+ * An OAuth token that would expire during the longest delegate run is refreshed up front. Pi also
+ * refreshes before each request, so the demand stays under what one refresh gives: Google's tokens
+ * last an hour, and an hour-long PI_DELEGATE_MAX_DURATION_MS would otherwise refuse them.
+ */
+const AUTH_VALIDITY_MS = Math.min(MAX_DURATION_MS + 5 * 60_000, 30 * 60_000);
 const AUTH_TIMEOUT_MS = 15_000;
 
 /**
