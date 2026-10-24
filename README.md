@@ -113,22 +113,24 @@ curl -fsSL https://raw.githubusercontent.com/Nyarlathoteppppp/pi-durabletask-mcp
 ## What you can do
 
 **Delegate**
-- `spawn` one task, `spawn_batch` up to four at once (one shared `prompt` for a multi-model review), `run` for a quick blocking question.
+- `spawn` one task, `spawn_batch` up to four at once by default (`PI_DELEGATE_BATCH_MAX`; one shared `prompt` for a multi-model review), `run` for a quick blocking question.
 - `forkFrom` a finished session: read the code once, then ask several independent questions from the same context.
 - Pass material with `attachments` (a diff, notes); add [instruction files and skills](docs/reference.md#explicit-instructions-and-skills) or [web research and MCP tools](docs/optional-tools.md) per task.
 
 **Steer and follow up**
-- `wait` returns on progress, a question or the end (`until: "settled"`, or any/all of a batch); `status` for a snapshot with `idleMs` and `phase`, so you can tell slow reasoning from a hung request.
+- `wait` returns on progress, a question or the end (`until: "settled"`, or any/all of a batch); a wait for the result lasts as long as the server allows (`PI_DELEGATE_WAIT_MAX_MS`), so you do not poll. `status` gives a snapshot with `idleMs` and `phase`, so you can tell slow reasoning from a hung request.
 - `steer` a running agent, `answer` its questions, `follow_up` a finished one with renewed budgets, `abort` when needed.
 
 **Results**
 - Compact results by default; `saveTo` / `saveDir` write long reports to files and return the path.
-- `answerState` flags empty or cut-off answers; `usage` reports tokens and cost.
+- `answerState` flags empty or cut-off answers; `usage` reports tokens and cost; finished results name the model that answered, after a fallback too.
+- A run that ends without an answer returns the latest substantial text it wrote as `salvagedText`, instead of losing that work.
 
 **Reliability**
-- Budgets on turns, time and tool calls, with a wrap-up nudge at 75% and a tool-free last turn.
+- Budgets on turns, time and tool calls, with a wrap-up nudge at 75% (2/3 of the time) and a tool-free last turn. Opt-in for models that keep going: `toolChoice: "none"` on that turn (`PI_DELEGATE_TOOL_CHOICE_NONE`) and a lower thinking level once wrapping up (`PI_DELEGATE_FINISH_THINKING`).
+- [Soft deadline](docs/reference.md#long-running-work) (opt-in, `PI_DELEGATE_DEADLINE_GRACE_MS`): at the deadline the tools go, no new tool call starts and the delegate gets a grace period to answer; only a run still without an answer after it is aborted.
 - [Model fallback](docs/reference.md#continuing-on-another-model-after-a-provider-error) (opt-in): after a provider error that outlasts Pi's retries — gateway timeout, spent quota — the run continues on the next model you list, e.g. `PI_DELEGATE_FALLBACK_MODELS="xai/*:high,antigravity/gemini-*"`.
-- [Durable tasks](docs/reference.md#recovery-after-a-server-restart) (opt-in, `durable: true`): SQLite checkpoints, recovery after a restart, interrupted side effects never blindly replayed; `handoff` notes for another window.
+- [Durable tasks](docs/reference.md#recovery-after-a-server-restart) (opt-in, `durable: true`): SQLite checkpoints, recovery after a restart, interrupted side effects never blindly replayed, finished stores compacted; `handoff` notes for another window.
 
 **Teams (advanced)**
 - An opt-in [coordinator](docs/workflows/codemode-coordinator.md) that dispatches your planned read-only members, asks follow-ups on disagreements and writes one synthesis with links to the original reports. For most work, `spawn_batch` and your own judgment are simpler.
@@ -151,13 +153,14 @@ We build this project with it: reviews, design discussions and research for this
 - Across providers the prompt cache does not carry over, so a large fork can cost more than you expect.
 - Some models call a tool even after their tools are gone; the opt-in grace turn keeps that from ending a run with no answer.
 - Fast models are cheap but take more turns; strong reasoners can think past their deadline. Leave time and keep thinking levels moderate for long reviews.
+- A deadline guards against a hung provider; it is not a work budget. Turn and tool-call budgets bound the work, and tight deadlines cost us finished reviews, so we run with `PI_DELEGATE_MAX_DURATION_MS=3600000`, `PI_DELEGATE_SPAWN_DURATION_MS=1800000` and `PI_DELEGATE_DEADLINE_GRACE_MS=180000` (the defaults are 15 and 10 minutes, with no grace).
 - A task's `label` is never sent to the delegate; put what differs between tasks in their `prompt`.
 
 ## Safe defaults
 
 - Read-only tools (`read`, `grep`, `find`, `ls`) unless the server permits more with `PI_DELEGATE_ALLOW_TOOLS`. This is not a sandbox: a delegate given `bash` can do anything you can.
 - Secret paths (`.env`, `~/.ssh`, credentials) are refused for attachments, reads and searches.
-- Memory sessions by default; they end with the MCP process. Durable storage, fallback and the answer grace turn are off unless you turn them on.
+- Memory sessions by default; they end with the MCP process. Durable storage, fallback, the answer grace turn and the soft deadline are off unless you turn them on.
 - At most four delegates at once per server process (`PI_DELEGATE_MAX_CONCURRENT`).
 
 ## Documentation

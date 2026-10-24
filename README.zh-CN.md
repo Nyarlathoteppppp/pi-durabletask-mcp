@@ -113,22 +113,24 @@ curl -fsSL https://raw.githubusercontent.com/Nyarlathoteppppp/pi-durabletask-mcp
 ## 能做什么
 
 **委托**
-- `spawn` 派一个任务；`spawn_batch` 一次最多派四个，多模型审查时可以共用一个 `prompt`；`run` 用于快速的阻塞式提问。
+- `spawn` 派一个任务；`spawn_batch` 默认一次最多派四个（`PI_DELEGATE_BATCH_MAX` 可调），多模型审查时可以共用一个 `prompt`；`run` 用于快速的阻塞式提问。
 - `forkFrom` 从已结束的会话分叉：读一次代码，再从同一份上下文出发问几个独立的问题。
 - 用 `attachments` 传材料（diff、笔记）；每个任务可以单独加[指令文件和 skill](docs/reference.md#explicit-instructions-and-skills)，或者[联网研究和 MCP 工具](docs/optional-tools.md)。
 
 **控制与追问**
-- `wait` 在有进展、有提问或结束时返回（`until: "settled"`，批量时可以等任意一个或全部）；`status` 给出快照，带 `idleMs` 和 `phase`，能分清是在慢慢思考还是请求挂住了。
+- `wait` 在有进展、有提问或结束时返回（`until: "settled"`，批量时可以等任意一个或全部）；等结果的 `wait` 会一直等到服务端允许的上限（`PI_DELEGATE_WAIT_MAX_MS`），不用轮询。`status` 给出快照，带 `idleMs` 和 `phase`，能分清是在慢慢思考还是请求挂住了。
 - 运行中用 `steer` 改方向，用 `answer` 回答它的提问；结束后用 `follow_up` 继续，可以续预算；需要时 `abort`。
 
 **结果**
 - 默认返回精简结果；`saveTo` / `saveDir` 把长报告写进文件，只返回路径。
-- `answerState` 标出空答案或被截断的答案；`usage` 给出 token 用量和费用。
+- `answerState` 标出空答案或被截断的答案；`usage` 给出 token 用量和费用；结束的结果会写明实际作答的模型，换过备用模型也一样。
+- 没给出答案就结束的运行，会把它中途写过的最近一段较长文字作为 `salvagedText` 返回，不会白干。
 
 **可靠性**
-- 轮次、时间和工具调用三重预算；用到 75% 时提醒收尾，最后一轮去掉工具。
+- 轮次、时间和工具调用三重预算；用到 75%（时间是 2/3）时提醒收尾，最后一轮去掉工具。可选，给停不下来的模型用：那一轮同时发 `toolChoice: "none"`（`PI_DELEGATE_TOOL_CHOICE_NONE`），收尾时降低思考等级（`PI_DELEGATE_FINISH_THINKING`）。
+- [软时限](docs/reference.md#long-running-work)（可选，`PI_DELEGATE_DEADLINE_GRACE_MS`）：到点先去掉工具、不再启动新的工具调用，给一段宽限期作答；宽限期过了还没答的才中止。
 - [备用模型](docs/reference.md#continuing-on-another-model-after-a-provider-error)（可选）：Pi 自动重试后仍然是 provider 错误（网关超时、额度用完）时，换成你列出的下一个模型继续，例如 `PI_DELEGATE_FALLBACK_MODELS="xai/*:high,antigravity/gemini-*"`。
-- [Durable 任务](docs/reference.md#recovery-after-a-server-restart)（可选，`durable: true`）：SQLite 检查点、重启后恢复、结果未知的副作用不会被盲目重放；`handoff` 给另一个窗口留交接笔记。
+- [Durable 任务](docs/reference.md#recovery-after-a-server-restart)（可选，`durable: true`）：SQLite 检查点、重启后恢复、结果未知的副作用不会被盲目重放，已结束的存储会压缩；`handoff` 给另一个窗口留交接笔记。
 
 **团队（进阶）**
 - 可选的 [coordinator](docs/workflows/codemode-coordinator.md)：按你的计划派发只读成员，针对分歧追问，最后给出一份汇总，并附上原报告的链接。大多数情况下，`spawn_batch` 加上你自己的判断更简单。
@@ -151,13 +153,14 @@ curl -fsSL https://raw.githubusercontent.com/Nyarlathoteppppp/pi-durabletask-mcp
 - 跨 provider 时提示缓存不会延续，上下文很大的 fork 可能比预想的贵。
 - 有的模型在工具已经去掉后仍然会调用工具；可选的作答宽限能避免这种情况让运行以空结论结束。
 - 快模型便宜但轮次多，推理强的模型可能想到超时。长审查要留足时间，思考档位不要开到最高。
+- 时限是防 provider 挂住的保险，不是工作量预算；工作量靠轮次和工具调用预算来限。时限卡得太紧让我们丢过做完的审查，所以我们自己配置成 `PI_DELEGATE_MAX_DURATION_MS=3600000`、`PI_DELEGATE_SPAWN_DURATION_MS=1800000`、`PI_DELEGATE_DEADLINE_GRACE_MS=180000`（默认分别是 15 分钟、10 分钟、不宽限）。
 - 任务的 `label` 不会发给委托，每个任务不同的部分要写进 `prompt`。
 
 ## 默认是安全的
 
 - 默认只给只读工具（`read`、`grep`、`find`、`ls`），服务器用 `PI_DELEGATE_ALLOW_TOOLS` 放开才会有更多。这不是沙箱：拿到 `bash` 的委托能做你能做的任何事。
 - 敏感路径（`.env`、`~/.ssh`、各类凭据）在附件、读取和搜索里都会被拒绝。
-- 默认是内存会话，MCP 进程退出就结束。Durable 存储、备用模型和作答宽限都默认关闭，要自己打开。
+- 默认是内存会话，MCP 进程退出就结束。Durable 存储、备用模型、作答宽限和软时限都默认关闭，要自己打开。
 - 每个服务器进程最多同时运行四个委托（`PI_DELEGATE_MAX_CONCURRENT`）。
 
 ## 文档
