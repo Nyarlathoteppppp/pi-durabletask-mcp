@@ -18,18 +18,19 @@ const http = createServer(async (req, res) => {
   const request = JSON.parse(body);
   const prompt = JSON.stringify(request.messages.filter((m) => m.role === "user").map((m) => m.content));
   // A follow-up's conversation also holds the run before it, so FOLLOW is matched first.
-  const kind = ["FOLLOW", "LOOP", "SLOWANSWER", "HANG", "QUESTION"].find((k) => prompt.includes(k));
+  const kind = ["FOLLOW", "LOOP", "SLOWANSWER", "HANG", "QUESTION", "HOOKED"].find((k) => prompt.includes(k));
   requests[kind] = (requests[kind] ?? 0) + 1;
   const results = request.messages.filter((m) => m.role === "tool").length;
   if (kind === "HANG") return; // never answers
   if (kind === "FOLLOW") followTools.push((request.tools ?? []).map((t) => t.function.name));
-  await new Promise((resolve) => setTimeout(resolve, kind === "SLOWANSWER" ? 2500 : kind === "FOLLOW" ? 0 : 700));
+  // LOOP's deadline falls in the middle of a request, well clear of the tool turns between them.
+  await new Promise((resolve) => setTimeout(resolve, { SLOWANSWER: 2500, FOLLOW: 0, QUESTION: 700 }[kind] ?? 1000));
   res.writeHead(200, { "Content-Type": "text/event-stream" });
   const emit = (delta, finish_reason = null) => res.write(`data: ${JSON.stringify({ id: "d", object: "chat.completion.chunk",
     created: 1, model: request.model, choices: [{ index: 0, delta, finish_reason }] })}\n\n`);
-  // LOOP keeps calling ls while it has tools; QUESTION asks the caller once; SLOWANSWER answers in its
-  // first, slow request; FOLLOW answers at once.
-  const tool = kind === "LOOP" && request.tools?.length ? ["ls", { path: dir }]
+  // LOOP and HOOKED keep calling ls while they have tools; QUESTION asks the caller once; SLOWANSWER
+  // answers in its first, slow request; FOLLOW answers at once.
+  const tool = ["LOOP", "HOOKED"].includes(kind) && request.tools?.length ? ["ls", { path: dir }]
     : kind === "QUESTION" && request.tools?.length && !results ? ["ask_human", {}] : undefined;
   if (tool) {
     emit({ role: "assistant", tool_calls: [{ index: 0, id: `call_${results}`, type: "function",
@@ -58,6 +59,12 @@ try {
         return { content: [{ type: "text", text: reply ?? "no reply" }], details: {} };
       } }); }
   `);
+  // A hook that takes a while to admit a call, as one checking a policy service might.
+  await writeFile(join(agentDir, "extensions", "slow-hook.ts"), `
+    export default function(pi) { pi.on("tool_call", async (ev) => {
+      if (ev.toolName === "ls") await new Promise((resolve) => setTimeout(resolve, 1500));
+    }); }
+  `);
   await writeFile(join(agentDir, "settings.json"), JSON.stringify({ defaultProvider: "test", defaultModel: "one", enabledModels: ["test/*"] }));
   await writeFile(join(agentDir, "models.json"), JSON.stringify({ providers: { test: {
     baseUrl: `http://127.0.0.1:${http.address().port}/v1`, api: "openai-completions", apiKey: "fake-key",
@@ -83,6 +90,7 @@ try {
     for (;;) {
       const s = await call("wait", { sessionId, until: "settled", verbose: true });
       if (!["starting", "running"].includes(s.state)) return s;
+      await new Promise((resolve) => setTimeout(resolve, 100)); // a pending question returns at once
     }
   };
   const deadlineNotices = (r) => r.notices.filter((n) => /^deadline /.test(n.message));
@@ -118,6 +126,15 @@ try {
   const asked = await settle(asking);
   assert.equal(asked.state, "done", JSON.stringify(asked.termination ?? asked.error ?? null));
   assert.equal(asked.lastText, "QUESTION ANSWER");
+
+  // A call whose hooks were still deciding at the deadline does not start either.
+  const { sessionId: hookedId } = await call("spawn", { cwd: dir, prompt: "HOOKED", tools: ["ls"], extensions: true,
+    maxTurns: 40, maxDurationMs: 1500 });
+  const hooked = await settle(hookedId);
+  assert.equal(hooked.lastText, "HOOKED ANSWER", JSON.stringify(hooked.termination ?? hooked.error ?? null));
+  assert.equal(hooked.toolCalls.length, 1);
+  assert.equal(hooked.toolCalls[0].state, "error", JSON.stringify(hooked.toolCalls));
+  assert.match(String(hooked.toolCalls[0].result), /deadline/);
 
   // Already writing its answer at the deadline: that answer stands, without an extra turn.
   const slow = await run("SLOWANSWER");

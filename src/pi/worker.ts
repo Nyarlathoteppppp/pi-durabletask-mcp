@@ -1103,9 +1103,14 @@ export class PiWorker {
    */
   private blockToolsPastDeadline(session: AgentSession): void {
     const before = session.agent.beforeToolCall;
-    session.agent.beforeToolCall = async (context, signal) => this.currentRun.pastDeadline
-      ? { block: true, reason: "Not run: the deadline has passed and tools were removed. Answer from the evidence already collected." }
-      : before?.(context, signal);
+    const blocked = { block: true, reason: "Not run: the deadline has passed and tools were removed. Answer from the evidence already collected." };
+    session.agent.beforeToolCall = async (context, signal) => {
+      const run = this.currentRun;
+      if (run.pastDeadline) return blocked;
+      // Checked again afterwards: extension hooks may take until past the deadline to admit a call.
+      const result = await before?.(context, signal);
+      return run.pastDeadline && !result?.block ? blocked : result;
+    };
   }
 
   private deadlineReason(): string {
