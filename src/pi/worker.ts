@@ -794,10 +794,13 @@ export class PiWorker {
     if (session.model) run.failedProviders.add(session.model.provider);
     for (;;) {
       const found = await fallbackModel(this.fallbackModels, run.failedProviders, this.cwd).catch(() => undefined);
-      if (!found || this.currentRun !== run || this.isStopped()) return false;
+      // Authentication can take until past the deadline; a run in its grace period does not fall back either.
+      if (!found || this.currentRun !== run || this.isStopped() || run.pastDeadline) return false;
       const next = found.model;
       try { await session.setModel(next); }
       catch { run.failedProviders.add(next.provider); continue; }
+      // A switch made as the deadline passes continues, within the grace period: returning now would
+      // leave the session on a model this worker does not report.
       if (this.currentRun !== run || this.isStopped()) return false;
       // The entry's own level, else the run's; either only if this model supports it.
       const level = found.thinking ?? this.thinkingSpec;

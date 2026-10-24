@@ -905,7 +905,8 @@ already running, including those of a codemode script, finish), pending question
 the delegate is told to answer at the end of the tool turn under way. A run already writing its answer
 finishes it. Only a run that has not answered when the grace period ends too is aborted as `deadline`.
 The next run (`follow_up`) has its tools and its own deadline again. A provider error during the grace
-period stands (no fallback model), and a durable run recovered past its deadline is aborted, as
+period stands (no fallback model; a fallback that had already chosen its model when the deadline passed
+continues within the grace period), and a durable run recovered past its deadline is aborted, as
 without grace. Timeouts, provider/auth errors or cancellation can still interrupt it. Reaching the
 turn or time ceiling aborts the underlying pi session and records `termination.reason`, while keeping
 the trace and any partial text. Finished results carry `usage`: input, output and cache tokens and
