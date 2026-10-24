@@ -20,7 +20,6 @@ Omit `model` for the configured default, or choose actual IDs from `models` per 
   "mcpServers": [],
   "maxTurns": 10,
   "maxToolCalls": 12,
-  "maxDurationMs": 240000,
   "tasks": [
     { "label": "recovery", "prompt": "Review src/durable.ts and recovery paths in src/pi/worker.ts for concrete correctness bugs. Read only. Report each finding with file:line, trigger, violated invariant, impact and evidence; distinguish confirmed facts from uncertainty. Do not invent stress scenarios. Finish with a concise report, including no findings if appropriate." },
     { "label": "attachments", "prompt": "Review src/attachments.ts and its call sites for concrete correctness bugs. Read only. Report each finding with file:line, trigger, violated invariant, impact and evidence; distinguish confirmed facts from uncertainty. Do not invent stress scenarios. Finish with a concise report, including no findings if appropriate." }
@@ -57,7 +56,6 @@ Start a fresh `spawn` after reviewers finish. Populate `attachments` with the ac
   "tools": [],
   "maxTurns": 4,
   "maxToolCalls": 1,
-  "maxDurationMs": 180000,
   "prompt": "Synthesize the attached independent reviews. This is report synthesis, not independent source verification. Return: actionable findings with reviewer/session and file:line references; disagreements or findings raised by only one reviewer; missing evidence and failed coverage; a short recommendation. Do not treat agreement or vote count as proof. Preserve uncertainty. Keep it concise. Failed/aborted reviewers: [insert their IDs, scopes and reasons, or none]."
 }
 ```

@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 process.env.PI_DELEGATE_MAX_TURNS = "5";
 process.env.PI_DELEGATE_MAX_DURATION_MS = "60000";
+process.env.PI_DELEGATE_SPAWN_DURATION_MS = "45000";
 const { coordinatorSchema } = await import("../dist/coordinator.js");
 const { startExecution } = await import("../dist/core.js");
 const plan = coordinatorSchema.parse({ tasks: [{ prompt: "review" }] });
 assert.equal(plan.tasks[0].maxTurns, 5);
-assert.equal(plan.tasks[0].maxDurationMs, 60000);
+assert.equal(plan.tasks[0].maxDurationMs, 45000, "members default to the spawn deadline, not a shorter one of their own");
 assert.equal(plan.tasks[0].maxToolCalls, 12);
 await assert.rejects(startExecution({ prompt: "x", cwd: process.cwd(), tools: ["read"], coordinator: { tasks: [{ prompt: "child" }] } }), /codemode/);
 await assert.rejects(startExecution({ prompt: "x", cwd: process.cwd(), durable: true, coordinator: { tasks: [{ prompt: "child" }] } }), /memory-only/);

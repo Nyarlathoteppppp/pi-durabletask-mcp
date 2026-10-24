@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Opt-in `PI_DELEGATE_DEADLINE_GRACE_MS`: a run that reaches its deadline loses its tools (no new tool call starts, pending questions are withdrawn) and is told to answer; it is aborted only if it has not answered when this grace period ends too. A run already writing its answer finishes it, and the next run gets its tools back. Off by default: the deadline aborts as before.
+- Coordinator members without `maxDurationMs` get the `spawn` default (`PI_DELEGATE_SPAWN_DURATION_MS`) instead of a fixed 4 minutes: their turn and tool-call budgets bound the work, and the deadline guards against a hung provider. The recipes in the docs no longer set deadlines.
 - Durable stores reclaim the free pages left by checkpoints, which rewrite the whole transcript (typically half of each store): a finished store is compacted when it is closed, and over `PI_DELEGATE_STORAGE_LIMIT_MB` finished stores are compacted before any history is deleted for size.
 - Finished results name the model that answered: `wait` (single and batch), coordinator `delegate_wait` and `delegate_get` now carry `model` and `thinking`, and the team `reportIndex` records `thinking` and follows a provider-error fallback instead of keeping the start receipt's model. `run` already did; polls of running work are unchanged.
 - Skill: ask delegates for evidence rather than a verdict (verification commands and outcome, unverified items; reviews give `file:line` findings or `No findings`, or `No findings; unchecked: …` when a budget cut them short; a bare `No findings` after a forced wrap-up counts as incomplete coverage).

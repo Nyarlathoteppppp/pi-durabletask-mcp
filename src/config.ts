@@ -121,6 +121,11 @@ export const MAX_DURATION_MS = num(process.env.PI_DELEGATE_MAX_DURATION_MS, 15 *
  * the model. Some providers stream nothing while they reason, so a limit can end valid work.
  */
 export const STALL_MS = num(process.env.PI_DELEGATE_STALL_MS, 0);
+/**
+ * Opt-in: a run past its deadline loses its tools and gets this long to answer before it is
+ * aborted, so slow work is not thrown away. 0 keeps the deadline a hard abort.
+ */
+export const DEADLINE_GRACE_MS = num(process.env.PI_DELEGATE_DEADLINE_GRACE_MS, 0);
 
 /** `run` is deliberately short; background sessions get room for real implementation work. */
 export const RUN_DEFAULT_TURNS = bounded(process.env.PI_DELEGATE_RUN_TURNS, 12, MAX_TURNS);

@@ -4,7 +4,7 @@ import { previewOf } from "./pi/snapshot.js";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { BATCH_MAX, MAX_DURATION_MS, MAX_TURNS } from "./config.js";
+import { BATCH_MAX, MAX_DURATION_MS, MAX_TURNS, SPAWN_DEFAULT_DURATION_MS } from "./config.js";
 import { READ_ONLY_TOOLS } from "./permissions.js";
 import type { startBatch, waitForMany, getState, followUp } from "./core.js";
 import { withNextAction, batchNextAction } from "./tools/shared.js";
@@ -58,7 +58,8 @@ export const coordinatorSchema = z.object({
     forkFrom: z.string().optional(),
     maxTurns: z.number().int().min(1).max(MAX_TURNS).default(Math.min(10, MAX_TURNS)),
     maxToolCalls: z.number().int().min(1).max(1000).default(12),
-    maxDurationMs: z.number().int().min(1000).max(MAX_DURATION_MS).default(Math.min(240_000, MAX_DURATION_MS)),
+    // A deadline guards against a hung provider; maxTurns/maxToolCalls bound the work.
+    maxDurationMs: z.number().int().min(1000).max(MAX_DURATION_MS).default(SPAWN_DEFAULT_DURATION_MS),
   }).strict()).min(1).max(BATCH_MAX),
   prompt: z.string().optional().describe("One question for every member, e.g. the same question to several models whose answers the coordinator compares; a member's own prompt is added after it."),
   saveDir: z.string().optional(),

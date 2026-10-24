@@ -12,7 +12,6 @@ Enable `codemode` in `PI_DELEGATE_ALLOW_TOOLS`. Start the coordinator with `spaw
   "cwd": "/absolute/repo",
   "maxTurns": 10,
   "maxToolCalls": 6,
-  "maxDurationMs": 300000,
   "coordinator": {
     "saveDir": "/absolute/reports/review-01",
     "forkFrom": "settled-facts-session",
@@ -200,8 +199,9 @@ for no index IO. This is a report snapshot, not a runtime checkpoint.
   reports. A failed script must not be assumed to have committed its store writes.
   Errors/aborts may have no saved report.
 - `maxToolCalls` counts the coordinator's own calls, not each nested child-tool call.
-  Allow headroom in turns/calls for repeated waits; set slower members' `maxDurationMs`
-  explicitly when the default four minutes is insufficient. Follow-ups retain that time limit.
+  Allow headroom in turns/calls for repeated waits. A member without `maxDurationMs` gets the
+  `spawn` default (`PI_DELEGATE_SPAWN_DURATION_MS`); `maxTurns` and `maxToolCalls` bound the work.
+  Follow-ups retain that time limit.
   The fixed caller plan bounds dispatches; child budgets and registry admission still
   apply. Tool access is not an OS sandbox. Report saving is an authorized host write.
 

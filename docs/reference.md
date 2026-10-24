@@ -834,6 +834,7 @@ Recipes: [web research](research.md) · [parallel review and synthesis](workflow
 | `PI_DELEGATE_FALLBACK_MODELS` | unset            | Comma-separated models or `*` patterns a run continues on after a provider error |
 | `PI_DELEGATE_TOOL_CHOICE_NONE` | unset           | Model patterns sent `toolChoice: "none"` once a run's tools are removed for its last turn |
 | `PI_DELEGATE_FINISH_THINKING` | unset            | `pattern:level` entries (or a bare level): thinking for the rest of a run asked to wrap up |
+| `PI_DELEGATE_DEADLINE_GRACE_MS` | `0` (off)      | Past its deadline a run loses its tools and gets this long to answer before it is aborted |
 | `PI_DELEGATE_ALLOW_TOOLS`     | unset            | Comma list of extra tools to permit, e.g. `bash`                         |
 | `PI_DELEGATE_ALLOW_WRITE`     | unset            | `1` permits every tool                                                   |
 | `PI_DELEGATE_HISTORY`         | `50`             | Finished sessions kept for review                                        |
@@ -897,7 +898,15 @@ Some OpenAI-compatible endpoints reject `tool_choice` without tools; list only m
 or time budget) or its tools are removed, for models whose closing request is slow enough to reach
 the deadline. Entries are `pattern:level` (`xai/*:medium`) or a bare level for every model; the first
 match applies, a level is never raised, and Pi clamps to what the model supports. The run's reported
-`thinking` stays its own, an info notice records the change, and the next run starts at its own level. Timeouts, provider/auth errors or cancellation can still interrupt it. Reaching the
+`thinking` stays its own, an info notice records the change, and the next run starts at its own level.
+`PI_DELEGATE_DEADLINE_GRACE_MS` makes the deadline soft: once it passes, the run's tools are removed
+and no new tool call starts (a call returned by the request under way fails without effect; calls
+already running, including those of a codemode script, finish), pending questions are withdrawn, and
+the delegate is told to answer at the end of the tool turn under way. A run already writing its answer
+finishes it. Only a run that has not answered when the grace period ends too is aborted as `deadline`.
+The next run (`follow_up`) has its tools and its own deadline again. A provider error during the grace
+period stands (no fallback model), and a durable run recovered past its deadline is aborted, as
+without grace. Timeouts, provider/auth errors or cancellation can still interrupt it. Reaching the
 turn or time ceiling aborts the underlying pi session and records `termination.reason`, while keeping
 the trace and any partial text. Finished results carry `usage`: input, output and cache tokens and
 the cost by pi's model prices, summed over the whole session including follow-ups. Cancelling a blocking `run` also aborts its underlying worker.

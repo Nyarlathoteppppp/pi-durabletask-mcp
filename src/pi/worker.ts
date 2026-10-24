@@ -8,7 +8,7 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { DurableJob, forgetOwnedJob, MemoryJob, releaseJob, type Checkpoint, type JobStore } from "../durable.js";
-import { ANSWER_GRACE, FALLBACK_MODELS, FINISH_THINKING, MAX_TURNS, RETENTION_DAYS, STALL_MS, TOOL_CHOICE_NONE } from "../config.js";
+import { ANSWER_GRACE, DEADLINE_GRACE_MS, FALLBACK_MODELS, FINISH_THINKING, MAX_TURNS, RETENTION_DAYS, STALL_MS, TOOL_CHOICE_NONE } from "../config.js";
 import { JUDGE_ENABLED, judgeAnswer } from "../judge.js";
 import { saveText } from "../save.js";
 import { briefError, message } from "../errors.js";
@@ -140,6 +140,8 @@ export class PiWorker {
   /** Set when a run finishes: cut off, or judged narration. "missing" is derived from lastText. */
   private answerFlag: "partial" | "narration" | undefined;
   private recordingStopped = false;
+  /** A run's deadline grace removed the tools; the next run gets them back. */
+  private deadlineTookTools = false;
   private inputStarted = false;
   private readonly results: Checkpoint["results"] = {};
   private steering: string[] = [];
@@ -249,7 +251,8 @@ export class PiWorker {
   private uiContext(): ExtensionUIContext {
     return createUiContext({
       ask: (kind, title, detail, options) => {
-        if (this.isStopped()) return Promise.resolve(undefined);
+        // Past the deadline nobody is waited for: the grace period is for the answer.
+        if (this.isStopped() || this.currentRun.pastDeadline) return Promise.resolve(undefined);
         const q = new Question(kind, title, detail, options);
         this.questions.set(q.id, q);
         this.onChange?.();
@@ -279,6 +282,7 @@ export class PiWorker {
     const session = await createSession(spec, resourceLoader, { model, thinking: this.thinkingSpec, saved, seedEntries });
     this.session = session;
     if (TOOL_CHOICE_NONE.length) this.forbidToolsWhenRemoved(session);
+    if (DEADLINE_GRACE_MS > 0) this.blockToolsPastDeadline(session);
     if (this.isStopped()) {
       session.dispose();
       return this;
@@ -390,10 +394,10 @@ export class PiWorker {
         this.activeTools = pi.getActiveTools();
       });
       pi.on("context_with_system", (event) => {
-        if (this.budgetTurns < this.maxTurns && !this.toolCallsSpent()) return;
+        if (this.budgetTurns < this.maxTurns && !this.toolCallsSpent() && !this.currentRun.pastDeadline) return;
         // Native tools register asynchronously, including during the first prompt. Enforce
         // the answer-only turn after registration, on the actual request transcript.
-        this.lastTurn();
+        this.lastTurn(this.session, this.currentRun.pastDeadline ? this.deadlineReason() : undefined);
         return { messages: event.messages.map((message) => {
           if (message.role !== "system") return message;
           const { toolsAdded: _added, toolsRemoved: _removed, ...rest } = message;
@@ -693,16 +697,19 @@ export class PiWorker {
     run.lastActivityAt = Date.now();
     // A previous run may have finished at FINISH_THINKING; each run starts at the session's own level.
     if (this.thinking && session.thinkingLevel !== this.thinking) session.setThinkingLevel(this.thinking);
-    if (run.restoreTools) {
+    // Tools taken at a deadline belong to that run; the run's own budgets below still apply.
+    if (run.restoreTools || this.deadlineTookTools) {
       session.setActiveToolsByName(this.toolNames);
       this.activeTools = session.getActiveToolNames();
       run.restoreTools = false;
+      this.deadlineTookTools = false;
     }
     // A run with one turn left, or a session with maxTurns 1, has only its answer turn.
     if (this.budgetTurns >= this.maxTurns - 1 || this.toolCallsSpent()) this.lastTurn(session);
     const remainingMs = Math.max(1, this.maxDurationMs - this.elapsedMs());
     run.deadlineTimer = setTimeout(() => {
       if (this.currentRun !== run) return;
+      if (DEADLINE_GRACE_MS > 0 && !run.pastDeadline) return this.deadlineGrace(run);
       this.abortForBudget("deadline", { limit: this.maxDurationMs, observed: this.elapsedMs() });
     }, remainingMs);
     // Slow turns can reach the deadline long before the turn budget's reminder, so time counts too.
@@ -901,7 +908,7 @@ export class PiWorker {
         }
         // The last turn gets no tools, so the model answers instead of being cut off at the limit.
         // The same once the tool-call cap is reached; a turn's parallel calls may overshoot it.
-        if (this.budgetTurns === this.maxTurns - 1 || this.toolCallsSpent()) {
+        if (this.budgetTurns === this.maxTurns - 1 || this.toolCallsSpent() || this.currentRun.pastDeadline) {
           this.lastTurn();
           void this.session?.steer(LAST_TURN_PROMPT).catch((e: unknown) => {
             this.notices.push({ type: "warning", message: `last-turn steer failed: ${message(e)}`, at: new Date().toISOString() });
@@ -1082,9 +1089,6 @@ export class PiWorker {
     });
   }
 
-  /**
-   * Take tools away for the final answer. Explicitly renewed follow-ups can restore the grants.
-   */
   /** Checked per request, so a fallback model is matched by its own name. */
   private forbidToolsWhenRemoved(session: AgentSession): void {
     const stream = session.agent.streamFunction;
@@ -1093,7 +1097,43 @@ export class PiWorker {
         ? { ...options, toolChoice: "none" } : options);
   }
 
-  private lastTurn(session = this.session): void {
+  /**
+   * Past the deadline no new tool call starts, not even one the request under way returns after its
+   * tools went. Calls already running, including the calls a codemode script makes, end as they would.
+   */
+  private blockToolsPastDeadline(session: AgentSession): void {
+    const before = session.agent.beforeToolCall;
+    session.agent.beforeToolCall = async (context, signal) => this.currentRun.pastDeadline
+      ? { block: true, reason: "Not run: the deadline has passed and tools were removed. Answer from the evidence already collected." }
+      : before?.(context, signal);
+  }
+
+  private deadlineReason(): string {
+    return `deadline ${Math.round(this.maxDurationMs / 1000)}s (${Math.round(DEADLINE_GRACE_MS / 1000)}s grace to answer)`;
+  }
+
+  /**
+   * Past the deadline with a grace period: tools go now, so no further work starts. The answer is asked
+   * for at the end of a tool turn (turn_end); a model already writing its answer is not given another
+   * turn. Pending questions are withdrawn, so a tool waiting on one ends. The grace timer aborts as the
+   * deadline did.
+   */
+  private deadlineGrace(run: WorkerRun): void {
+    run.pastDeadline = true;
+    this.deadlineTookTools = true;
+    this.clearQuestions();
+    this.lastTurn(this.session, this.deadlineReason());
+    run.deadlineTimer = setTimeout(() => {
+      if (this.currentRun !== run) return;
+      this.abortForBudget("deadline", { limit: this.maxDurationMs, observed: this.elapsedMs() });
+    }, DEADLINE_GRACE_MS);
+    this.onChange?.();
+  }
+
+  /**
+   * Take tools away for the final answer. Explicitly renewed follow-ups can restore the grants.
+   */
+  private lastTurn(session = this.session, reason?: string): void {
     if (!session) return;
     this.currentRun.toolsRemoved = true;
     this.finishThinking(session);
@@ -1101,14 +1141,13 @@ export class PiWorker {
     session.setActiveToolsByName([]);
     this.activeTools = [];
     if (hadTools) {
-      const budget = this.toolCallsSpent()
+      const budget = reason ?? (this.toolCallsSpent()
         ? `tool-call cap ${this.budgetToolCalls()}/${this.maxToolCalls} (turn ${this.budgetTurns}/${this.maxTurns})`
-        : `turn ${this.budgetTurns}/${this.maxTurns}`;
+        : `turn ${this.budgetTurns}/${this.maxTurns}`);
       this.notices.push({ type: "warning", message: `${budget}: tools removed for the last turn`, at: new Date().toISOString() });
     }
   }
 
-  /** Steer once per run toward a final answer, whichever budget gets close first. */
   /** Opt-in: lower, never raise, the thinking level for the rest of a run that is wrapping up. */
   private finishThinking(session = this.session): void {
     if (!FINISH_THINKING.length || !session?.model) return;
@@ -1121,6 +1160,7 @@ export class PiWorker {
       message: `thinking ${from} -> ${session.thinkingLevel} to finish` });
   }
 
+  /** Steer once per run toward a final answer, whichever budget gets close first. */
   private requestFinish(budget: string, remaining: string): void {
     const run = this.currentRun;
     if (run.finishSteerSent) return;

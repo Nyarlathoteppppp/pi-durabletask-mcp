@@ -41,6 +41,8 @@ export class WorkerRun {
   /** This run's prompt and its last assistant message's stop reason, for answerState. */
   prompt = "";
   stopReason: string | undefined;
+  /** The deadline passed with PI_DELEGATE_DEADLINE_GRACE_MS: the run is answering in its grace period. */
+  pastDeadline = false;
   /** lastTurn removed this run's tools; it answers without them. */
   toolsRemoved = false;
   /** The latest substantial text this run wrote, returned if it ends without an answer. */
