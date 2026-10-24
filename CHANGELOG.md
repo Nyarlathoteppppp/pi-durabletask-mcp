@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Durable stores reclaim the free pages left by checkpoints, which rewrite the whole transcript (typically half of each store): a finished store is compacted when it is closed, and over `PI_DELEGATE_STORAGE_LIMIT_MB` finished stores are compacted before any history is deleted for size.
 - Finished results name the model that answered: `wait` (single and batch), coordinator `delegate_wait` and `delegate_get` now carry `model` and `thinking`, and the team `reportIndex` records `thinking` and follows a provider-error fallback instead of keeping the start receipt's model. `run` already did; polls of running work are unchanged.
 - Skill: ask delegates for evidence rather than a verdict (verification commands and outcome, unverified items; reviews give `file:line` findings or `No findings`, or `No findings; unchecked: …` when a budget cut them short; a bare `No findings` after a forced wrap-up counts as incomplete coverage).
 

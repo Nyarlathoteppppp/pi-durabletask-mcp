@@ -673,7 +673,11 @@ Durable delegates are kept on disk after they finish, then deleted automatically
 - A finished delegate is deleted `retentionDays` after it last finished, or
   `PI_DELEGATE_RETENTION_DAYS` (default 7) when its spawn named none; `follow_up` restarts
   the clock.
-- When job stores exceed `PI_DELEGATE_STORAGE_LIMIT_MB` (default 1024), the oldest finished
+- Each checkpoint rewrites the whole transcript, so a store accumulates free pages. A finished
+  delegate's store is compacted (SQLite `VACUUM`) when it is closed, if at least a quarter of it is
+  free.
+- When job stores exceed `PI_DELEGATE_STORAGE_LIMIT_MB` (default 1024), finished stores are first
+  compacted (up to 0.5 s per sweep; the rest continues on the next one). If that is not enough, the oldest finished
   delegates are unloaded and deleted early until the total is under the limit, whatever their
   `retentionDays`. This is a soft limit on the job stores only: the shared catalog, which holds
   each finished delegate's final state, is not counted.
@@ -852,7 +856,7 @@ Recipes: [web research](research.md) · [parallel review and synthesis](workflow
 | `PI_DELEGATE_MAX_RECOVERY_ATTEMPTS` | `3`        | Claims without progress before a delegate is reported instead of resumed |
 | `PI_DELEGATE_RECOVERY_INTERVAL_MS` | `30000`     | How often a server looks for abandoned durable delegates               |
 | `PI_DELEGATE_RETENTION_DAYS`  | `7`              | Days a finished durable delegate is kept when its spawn sets no `retentionDays` |
-| `PI_DELEGATE_STORAGE_LIMIT_MB` | `1024`          | Soft limit on job stores; above it the oldest finished are deleted early |
+| `PI_DELEGATE_STORAGE_LIMIT_MB` | `1024`          | Soft limit on job stores; above it finished stores are compacted, then the oldest finished deleted early |
 | `PI_DELEGATE_STATUSLINE_WRAP` | unset            | Status line command to wrap and append to                                |
 | `PI_DELEGATE_STATUSLINE_LOG`  | unset            | File to append a timestamp to on every status line render, for debugging |
 | `PI_DELEGATE_PROGRESS_MS`     | `15000`          | Progress notification interval during `run` and `wait`                   |

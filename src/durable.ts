@@ -310,9 +310,36 @@ const bytes = (dir: string): number => {
   catch { return 0; }
 };
 
+/** Checkpoints rewrite the whole transcript, so a finished store is often half free pages. */
+const COMPACT_FREE_SHARE = 0.25;
+/** One sweep's time for compaction; VACUUM blocks, and the rest waits for the next sweep. */
+const COMPACT_BUDGET_MS = 500;
+
+/**
+ * Rewrites a closed store without its free pages, returning the bytes reclaimed. The caller holds
+ * the job's lock. Best effort: a store that cannot be compacted keeps working as it is.
+ */
+function compact(key: string): number {
+  const dir = jobDir(key);
+  const before = bytes(dir);
+  try {
+    const store = new DatabaseSync(join(dir, "session.sqlite"));
+    try {
+      const { freelist_count: free } = store.prepare("PRAGMA freelist_count").get() as { freelist_count: number };
+      const { page_count: pages } = store.prepare("PRAGMA page_count").get() as { page_count: number };
+      if (free < pages * COMPACT_FREE_SHARE) return 0;
+      store.exec("VACUUM");
+    } finally { store.close(); }
+  } catch { return 0; }
+  return before - bytes(dir);
+}
+
+const isFinished = (key: string): boolean =>
+  (db().prepare("SELECT finished_at FROM jobs WHERE key = ?").get(key) as { finished_at: number | null } | undefined)?.finished_at != null;
+
 /**
  * Delete finished jobs past retention, then the oldest finished jobs while the store is over its
- * size limit. Unfinished jobs are never deleted, and neither are jobs a live process has loaded:
+ * size limit; before deleting for size, reclaim the free pages of the finished stores it keeps. Unfinished jobs are never deleted, and neither are jobs a live process has loaded:
  * the lock is taken before deleting, as forget does. Returns the deleted keys.
  */
 export function sweep(now = Date.now()): string[] {
@@ -337,8 +364,22 @@ export function sweep(now = Date.now()): string[] {
     "SELECT key, finished_at, coalesce(json_extract(options, '$.retentionDays'), ?) AS days FROM jobs " +
     "WHERE finished_at IS NOT NULL ORDER BY finished_at",
   ).all(RETENTION_DAYS) as { key: string; finished_at: number; days: number }[];
+  // Compaction often frees enough; one cut short by its time budget defers deleting for size.
+  let compactionPending = false;
+  if (total > STORAGE_LIMIT_BYTES) {
+    const deadline = Date.now() + COMPACT_BUDGET_MS;
+    for (const row of finished) {
+      if (total <= STORAGE_LIMIT_BYTES) break;
+      if (Date.now() > deadline) { compactionPending = true; break; }
+      if (row.finished_at + row.days * DAY_MS < now || owns(row.key) || !tryAcquire(row.key)) continue;
+      try {
+        const fresh = catalog.prepare("SELECT finished_at FROM jobs WHERE key = ?").get(row.key) as { finished_at: number | null } | undefined;
+        if (fresh?.finished_at === row.finished_at) total -= compact(row.key);
+      } finally { releaseOwnership(row.key); }
+    }
+  }
   for (const row of finished) {
-    if (row.finished_at + row.days * DAY_MS >= now && total <= STORAGE_LIMIT_BYTES) continue;
+    if (row.finished_at + row.days * DAY_MS >= now && (total <= STORAGE_LIMIT_BYTES || compactionPending)) continue;
     if (owns(row.key) || !tryAcquire(row.key)) continue;
     // Another process may have followed it up, or finished it again, since the scan.
     const fresh = catalog.prepare("SELECT finished_at FROM jobs WHERE key = ?").get(row.key) as { finished_at: number | null } | undefined;
@@ -551,6 +592,8 @@ export class DurableJob implements JobStore {
       await this.writes.catch(() => {});
       await this.harness.close(context);
       if (release && owns(this.key)) {
+        // Still locked, so no process opens the store meanwhile. An unfinished one will reopen.
+        if (isFinished(this.key)) compact(this.key);
         // A clean release is not a crash; the next claim starts counting again.
         db().prepare("UPDATE jobs SET pid = 0, attempts = 0 WHERE key = ?").run(this.key);
         releaseOwnership(this.key);
