@@ -159,7 +159,7 @@ curl -fsSL https://raw.githubusercontent.com/Nyarlathoteppppp/pi-durabletask-mcp
 ## 默认是安全的
 
 - 默认只给只读工具（`read`、`grep`、`find`、`ls`），服务器用 `PI_DELEGATE_ALLOW_TOOLS` 放开才会有更多。这不是沙箱：拿到 `bash` 的委托能做你能做的任何事。
-- 敏感路径（`.env`、`~/.ssh`、各类凭据）在附件、读取和搜索里都会被拒绝。
+- 敏感路径（`.env`、`~/.ssh`、各类凭据）在附件、读取和搜索里都会被拒绝；设 `PI_DELEGATE_SECRET_GUARD=0` 可以关掉。
 - 默认是内存会话，MCP 进程退出就结束。Durable 存储、备用模型、作答宽限和软时限都默认关闭，要自己打开。
 - 每个服务器进程最多同时运行四个委托（`PI_DELEGATE_MAX_CONCURRENT`）。
 

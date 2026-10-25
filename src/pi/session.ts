@@ -8,7 +8,7 @@ import {
   type InlineExtension,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { AGENT_DIR } from "../config.js";
+import { AGENT_DIR, SECRET_GUARD } from "../config.js";
 import type { Checkpoint } from "../durable.js";
 import { secretPathGuard } from "../secrets.js";
 import type { PiThinkingLevel } from "../types.js";
@@ -46,7 +46,7 @@ export async function loadResources(spec: SessionSpec): Promise<DefaultResourceL
       skillsOverride: () => ({ skills: resources.skills, diagnostics: [] }),
       agentsFilesOverride: () => ({ agentsFiles: resources.agentsFiles }),
     } : {}),
-    extensionFactories: [secretPathGuard(cwd),
+    extensionFactories: [...(SECRET_GUARD ? [secretPathGuard(cwd)] : []),
       ...(nativeMcp && tools.length ? nativeMcpFactories(cwd, spec.mcpServers) : []),
       // codemode over the built-in tools, opted into by naming it; its model API stays off.
       ...(!nativeMcp && tools.includes("codemode")

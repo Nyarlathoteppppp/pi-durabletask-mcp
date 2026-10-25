@@ -7,6 +7,7 @@ import {
   MAX_RETENTION_DAYS,
   MAX_TURNS,
   RETENTION_DAYS,
+  SECRET_GUARD,
 } from "../config.js";
 import { DEFAULT_TOOLS, PERMITTED, READ_ONLY_TOOLS } from "../permissions.js";
 import { runExecution, startBatch, startExecution } from "../core.js";
@@ -28,7 +29,7 @@ const retentionDays = z.number().int().min(1).max(MAX_RETENTION_DAYS).optional()
 
 const ATTACHMENTS_HELP =
   "Absolute paths of text files appended to the prompt, read by this server, e.g. a diff you wrote to your " +
-  "scratchpad; they may lie outside cwd. At most 20, 256 KiB each, 1 MiB in total; secret paths are refused.";
+  `scratchpad; they may lie outside cwd. At most 20, 256 KiB each, 1 MiB in total${SECRET_GUARD ? "; secret paths are refused" : ""}.`;
 const attachments = z.array(z.string()).optional();
 
 const FALLBACK_HELP =

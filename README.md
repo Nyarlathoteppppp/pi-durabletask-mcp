@@ -159,7 +159,7 @@ We build this project with it: reviews, design discussions and research for this
 ## Safe defaults
 
 - Read-only tools (`read`, `grep`, `find`, `ls`) unless the server permits more with `PI_DELEGATE_ALLOW_TOOLS`. This is not a sandbox: a delegate given `bash` can do anything you can.
-- Secret paths (`.env`, `~/.ssh`, credentials) are refused for attachments, reads and searches.
+- Secret paths (`.env`, `~/.ssh`, credentials) are refused for attachments, reads and searches; `PI_DELEGATE_SECRET_GUARD=0` turns this off.
 - Memory sessions by default; they end with the MCP process. Durable storage, fallback, the answer grace turn and the soft deadline are off unless you turn them on.
 - At most four delegates at once per server process (`PI_DELEGATE_MAX_CONCURRENT`).
 

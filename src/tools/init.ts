@@ -13,6 +13,7 @@ import {
   MODEL_DENYLIST,
   RUN_DEFAULT_DURATION_MS,
   RUN_DEFAULT_TURNS,
+  SECRET_GUARD,
   SPAWN_DEFAULT_DURATION_MS,
   SPAWN_DEFAULT_TURNS,
   TRACE_ARGS,
@@ -85,6 +86,7 @@ export function registerInit(server: McpServer): void {
         permissions: {
           toolsAllowedHere: ALLOW_ALL ? "any (PI_DELEGATE_ALLOW_WRITE=1)" : [...PERMITTED],
           defaultIfYouOmitTools: DEFAULT_TOOLS.length ? [...DEFAULT_TOOLS] : [...READ_ONLY_TOOLS],
+          secretPathGuard: SECRET_GUARD ? "on" : "off (PI_DELEGATE_SECRET_GUARD=0)",
           warning:
             "This is not a sandbox. pi has no permission system, so a delegate holding `bash` can " +
             "write and delete files whatever its tool list says. Your prompt is the only other guardrail.",
@@ -158,8 +160,9 @@ export function registerInit(server: McpServer): void {
             "Timeouts, provider/auth errors or cancellation can still interrupt it; check state, error and termination.",
           "The delegate cannot see your conversation. Put every fact it needs into `prompt`.",
           "cwd is required, absolute, and must not be `/` or `$HOME`. Relative paths are refused.",
-          "Delegates do not load skills or AGENTS.md/CLAUDE.md. Credential paths " +
-            "(~/.codex, ~/.ssh, ~/.aws, ~/.gnupg, ~/.claude, auth.json, **/.env) are blocked.",
+          "Delegates do not load skills or AGENTS.md/CLAUDE.md. " + (SECRET_GUARD
+            ? "Credential paths (~/.codex, ~/.ssh, ~/.aws, ~/.gnupg, ~/.claude, auth.json, **/.env) are blocked."
+            : "Credential paths are not blocked (PI_DELEGATE_SECRET_GUARD=0)."),
           "pi extensions are off by default because they add startup cost and can misbehave. " +
             "Pass `extensions: true` only if the delegate needs them.",
         ],

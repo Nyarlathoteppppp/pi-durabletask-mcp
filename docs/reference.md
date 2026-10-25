@@ -186,7 +186,7 @@ or project trust. Other AGENTS files and skills are not automatically selected. 
 Omitted resources are empty for ordinary spawns. Batch tasks replace the batch selection as a
 whole; `{}` clears it. Forks inherit unless overridden; old transcript contents remain in history.
 Team members do not inherit coordinator resources, including when forking: select them explicitly.
-Files use the existing attachment limits and secret-path rules, with invalid selections rejected
+Files use the existing attachment limits and secret-path rules (off with `PI_DELEGATE_SECRET_GUARD=0`), with invalid selections rejected
 before batch launch. Durable tasks retain the selection and re-read the current files on recovery;
 resource contents are not frozen snapshots.
 
@@ -281,7 +281,7 @@ lie outside `cwd`, for example in the caller's scratchpad:
 ```
 
 At most 20 files, 256 KiB each and 1 MiB in total; files must be UTF-8 text. Secret paths
-(`.env`, `.env.*`, `~/.ssh`, Pi's `auth.json` and the like) are refused, also through a symlink. The text is
+(`.env`, `.env.*`, `~/.ssh`, Pi's `auth.json` and the like) are refused, also through a symlink, unless `PI_DELEGATE_SECRET_GUARD=0`. The text is
 inlined once when the call is made: a durable session stores the expanded prompt, and recovery
 never reads the files again. Attaching a file sends it to the delegate's model provider.
 
@@ -326,7 +326,7 @@ When the run finishes as `done` with text, the server writes it before reporting
 finished, so the caller's final `wait` already shows `savedTo` and `savedChars` (characters, not
 bytes) instead of `lastText` (a text of 1500 characters or less is returned as well); `status` does the same, and `verbose: true` still includes the
 text. Parent directories are created and an existing file is overwritten; two sessions given the
-same path end with the later one. Bad or secret paths are refused before anything starts. A
+same path end with the later one. Bad paths, and secret ones unless `PI_DELEGATE_SECRET_GUARD=0`, are refused before anything starts. A
 failed write keeps `lastText` and adds `saveError`. Aborted or failed runs, and runs with no
 text, write nothing. Each run states its own file: a `follow_up` without `saveTo` returns its text
 inline. The destination is kept in memory only, so a durable run recovered after a restart
@@ -591,6 +591,11 @@ on its list. Refusing those two while allowing `bash` records your intent; it do
 anything. Claude Code's permission prompts and hooks never see what pi does. If you need a real
 boundary, run this server inside a container.
 
+`PI_DELEGATE_SECRET_GUARD=0` turns the secret-path guard off for the whole server: tool paths,
+`grep` exclusions, attachments, `resources` and `saveTo` are no longer checked, so a delegate
+reads `.env` or `~/.ssh` like any other file and may send it to its model provider. Unset or any
+other value keeps the guard on; `init` reports it under `permissions.secretPathGuard`.
+
 ## Recovery after a server restart
 
 ### SDK updates on this machine
@@ -838,6 +843,7 @@ Recipes: [web research](research.md) · [parallel review and synthesis](workflow
 | `PI_DELEGATE_DEADLINE_GRACE_MS` | `0` (off)      | Past its deadline a run loses its tools and gets this long to answer before it is aborted |
 | `PI_DELEGATE_ALLOW_TOOLS`     | unset            | Comma list of extra tools to permit, e.g. `bash`                         |
 | `PI_DELEGATE_ALLOW_WRITE`     | unset            | `1` permits every tool                                                   |
+| `PI_DELEGATE_SECRET_GUARD`    | on               | `0` turns off the secret-path guard for tools, `grep`, attachments, resources and `saveTo` |
 | `PI_DELEGATE_HISTORY`         | `50`             | Finished sessions kept for review                                        |
 | `PI_DELEGATE_TRACE_ARGS`      | `400`            | Max chars of tool arguments kept in the trace                            |
 | `PI_DELEGATE_TRACE_RESULT`    | `600`            | Max chars of tool results kept in the trace                              |

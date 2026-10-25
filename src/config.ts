@@ -42,6 +42,12 @@ export const ALLOW_EXTRA = (process.env.PI_DELEGATE_ALLOW_TOOLS || "")
   .filter(Boolean);
 
 /**
+ * On unless "0": credential paths (`.env*`, `~/.ssh`, Pi's auth.json, ...) are refused to delegate
+ * tools, grep, attachments, resources and saveTo. "0" turns every one of those checks off.
+ */
+export const SECRET_GUARD = process.env.PI_DELEGATE_SECRET_GUARD !== "0";
+
+/**
  * Models a run continues on after a provider error, in order: patterns in pi's scope syntax
  * ("xai/*"), resolved when the failure happens, so model updates need no change here.
  */

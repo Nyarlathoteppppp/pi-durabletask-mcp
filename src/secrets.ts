@@ -2,7 +2,7 @@ import { lstatSync, readlinkSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { ExtensionAPI, InlineExtension } from "@earendil-works/pi-coding-agent";
-import { AGENT_DIR } from "./config.js";
+import { AGENT_DIR, SECRET_GUARD } from "./config.js";
 
 const SENSITIVE_DIRS = [".codex", ".ssh", ".aws", ".gnupg", ".claude"] as const;
 const SENSITIVE_FILES = [
@@ -11,12 +11,12 @@ const SENSITIVE_FILES = [
   ["litellm-gateway", ".env"],
 ] as const;
 
-/** The same secret rules must apply to files visited inside a recursive search. */
-export const SECRET_SEARCH_EXCLUDES = [
+/** The same secret rules must apply to files visited inside a recursive search. Empty with the guard off. */
+export const SECRET_SEARCH_EXCLUDES = SECRET_GUARD ? [
   "**/.env", "**/.env/**", "**/.env.*", "**/.env.*/**",
   ...SENSITIVE_DIRS.flatMap((name) => [`**/${name}`, `**/${name}/**`]),
   ...SENSITIVE_FILES.map((segments) => `**/${segments.join("/")}`),
-];
+] : [];
 
 function isInside(parent: string, child: string): boolean {
   const rel = relative(parent, child);
@@ -53,7 +53,9 @@ function canonicalize(path: string, depth = 0): string | typeof LINK_LIMIT {
 /** Canonical form of a known location; a pathological link chain there falls back to the plain path. */
 const known = (path: string): string => { const c = canonicalize(path); return c === LINK_LIMIT ? resolve(path) : c; };
 
+/** The secret path `path` resolves to, if any. Every path check uses this; with the guard off nothing is secret. */
 export function blockedSecretPath(path: string, cwd: string, homeDir = homedir()): string | undefined {
+  if (!SECRET_GUARD) return undefined;
   const absolute = isAbsolute(path) ? resolve(path) : resolve(cwd, path);
   const canonical = canonicalize(absolute);
   if (canonical === LINK_LIMIT) return absolute;
