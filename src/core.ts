@@ -17,7 +17,7 @@ import type { FollowUpInfo } from "./continuation.js";
 import { pickTools } from "./permissions.js";
 import { assertProviderReady, assertThinkingSupported, defaultModelRef, resolveModel } from "./pi/models.js";
 import { resolveDelegateCwd } from "./workspace.js";
-import { validateNativeMcp } from "./pi/native-mcp.js";
+import { assertNativeMcpGrant, validateNativeMcp } from "./pi/native-mcp.js";
 import { COMPARE_PROMPT, COORDINATOR_PROMPT, coordinatorSchema, createCoordinatorTools, type CoordinatorOptions } from "./coordinator.js";
 
 const TERMINAL = new Set(["done", "aborted", "error"]);
@@ -238,12 +238,13 @@ export async function startBatch({
       claimId(t.id);
     }
     try {
-      pickTools(t.tools);
+      const taskTools = pickTools(t.tools);
       withCoordinator(t);
       await checkCoordinatorAttachments(t.coordinator);
       const taskCwd = await resolveDelegateCwd(t.cwd ?? cwd);
       validateNativeMcp(t, taskCwd);
-      t.preparedResources = await prepareResources(t.resources, taskCwd, pickTools(t.tools));
+      assertNativeMcpGrant(t, taskTools);
+      t.preparedResources = await prepareResources(t.resources, taskCwd, taskTools);
       // The model the task will really run on, including Pi's own default, and its credentials:
       // a task that would fail after its siblings started must stop the whole batch here.
       const modelRef = t.model || defaultModelRef(taskCwd);

@@ -18,7 +18,7 @@ import type { FileEntry } from "@earendil-works/pi-coding-agent";
 import { publish } from "./statusline/state.js";
 import { claimAbandonedSettled, claimStored, finishStopped, jitter, unclaim, forgetOwnedJob, RecoveryStopped, storageBytes, storedIdInUse, storedSnapshot, sweep } from "./durable.js";
 import { message } from "./errors.js";
-import { validateNativeMcp, type NativeMcpOptions } from "./pi/native-mcp.js";
+import { assertNativeMcpGrant, validateNativeMcp, type NativeMcpOptions } from "./pi/native-mcp.js";
 import { checkSavePath, saveDirPath } from "./save.js";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
@@ -376,6 +376,7 @@ async function prepare(req: LaunchRequest): Promise<LaunchRequest & { cwd: strin
   const cwd = await resolveDelegateCwd(req.cwd);
   validateNativeMcp(req, cwd);
   const tools = pickTools(req.tools);
+  assertNativeMcpGrant(req, tools);
   return { ...req, cwd, tools, preparedResources: req.preparedResources ?? await prepareResources(req.resources, cwd, tools) };
 }
 

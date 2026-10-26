@@ -156,6 +156,11 @@ export function createCoordinatorTools(options: z.output<typeof coordinatorSchem
         } catch (error) {
           // Core validation/admission failed before launch; the same plan may be retried later.
           indexes.forEach((i) => dispatched.delete(i));
+          // The core numbers tasks within this dispatch; the script knows the plan's taskIndex.
+          if (error instanceof Error) {
+            const task = /^tasks\[(\d+)\]/.exec(error.message);
+            if (task) throw new Error(`taskIndex ${indexes[Number(task[1])]}${error.message.slice(task[0].length)}`);
+          }
           throw error;
         }
         // Only genuine startup failures are retryable. Index IO is outside the launch catch:

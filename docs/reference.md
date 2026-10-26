@@ -812,6 +812,16 @@ shorten long names. For `direct` exposure, name the MCP tool in `tools`. For
 `codemode` exposure, also name `codemode`; for `deferred` exposure, name `tool_search`.
 The existing server permission list and SDK tool restriction apply to direct,
 searched, and nested calls. `tools: []` starts no native transports and remains tool-free.
+
+A call whose tools include no tool from the selected servers is refused before anything
+starts. The check uses the tools the delegate would get, so omitting `tools` means the
+read-only default or `PI_DELEGATE_DEFAULT_TOOLS`. `codemode` and `tool_search` reach only
+the MCP tools named in `tools`, so on their own they grant nothing; Pi's resource tools
+(`list_mcp_resources`, `list_mcp_resource_templates`, `read_mcp_resource`) count, since they
+read the selected servers' resources. This applies to `spawn`, `run`, every `spawn_batch`
+task (one such task refuses the whole batch) and coordinator members, whose dispatch then
+fails with the member's `taskIndex`. Stored durable jobs are not re-checked when they
+recover or load, and `follow_up` keeps the session's tools.
 MCP annotations do not grant permission. A permitted MCP tool may write or act outside
 `cwd`; select its capabilities deliberately. Codemode's separate model API is disabled
 so scripts cannot bypass the delegate's model selection policy.

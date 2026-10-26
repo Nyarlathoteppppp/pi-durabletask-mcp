@@ -287,6 +287,13 @@ if (process.argv[2] === "fixture") {
               TEST_EFFECTS_FILE: effectsFile,
             },
           },
+          // Pi sanitizes the server name in tool names: mcp__hy_phen__echo.
+          "hy-phen": {
+            command: process.execPath,
+            args: [testScriptPath, "fixture", "hy-phen"],
+            exposure: "direct",
+            description: "Hyphenated server name",
+          },
         },
       }),
     );
@@ -303,7 +310,7 @@ if (process.argv[2] === "fixture") {
           PI_DELEGATE_MODEL: "test/one",
           PI_DELEGATE_ALLOW_WRITE: "0",
           PI_DELEGATE_ALLOW_TOOLS:
-            "mcp__direct__echo,mcp__coded__echo,mcp__deferred__echo,codemode,tool_search,list_mcp_resources",
+            "mcp__direct__echo,mcp__coded__echo,mcp__deferred__echo,mcp__hy_phen__echo,codemode,tool_search,list_mcp_resources",
           PI_DELEGATE_IGNORE_SCOPE: "1",
         },
       }),
@@ -386,6 +393,31 @@ if (process.argv[2] === "fixture") {
     assert.deepEqual(s3.activeTools, []);
 
     // -------------------------------------------------------------------------
+    // Scenario 3b: a selection whose effective tools reach none of its servers fails at request time
+    // -------------------------------------------------------------------------
+    console.log("[3b] nativeMcp without a tool from its servers: rejected before anything starts");
+    const grantSessions = (await call("sessions")).count;
+    const grantRequests = requests.length;
+    for (const name of ["spawn", "run"]) {
+      const omitted = await raw(name, { cwd: dir, prompt: "x", nativeMcp: true, mcpServers: ["direct"] });
+      assert.equal(omitted.isError, true, `${name}: omitted tools fall back to the read-only defaults`);
+      assert.equal(omitted.content[0].text, "nativeMcp grants no tool from mcpServers [direct] (tools: read, grep, find, ls): " +
+        "add exact names such as mcp__direct__<tool> to tools (and PI_DELEGATE_ALLOW_TOOLS); codemode and tool_search " +
+        "reach only named tools. Pass tools: [] for a tool-free run.");
+    }
+    // Built-ins only, codemode/tool_search alone (they reach only named tools, see 7b and 8), and
+    // another server's tool.
+    for (const tools of [["read", "grep"], ["codemode"], ["tool_search"], ["codemode", "tool_search"], ["mcp__deferred__echo"]]) {
+      const rejected = await raw("spawn", { cwd: dir, prompt: "x", nativeMcp: true, mcpServers: ["direct"], tools });
+      assert.equal(rejected.isError, true, JSON.stringify(tools));
+      assert.match(rejected.content[0].text, /^nativeMcp grants no tool from mcpServers \[direct\]/);
+    }
+    const sanitized = await raw("spawn", { cwd: dir, prompt: "x", nativeMcp: true, mcpServers: ["hy-phen", "direct"], tools: ["read"] });
+    assert.match(sanitized.content[0].text, /mcpServers \[hy-phen, direct\] \(tools: read\): add exact names such as mcp__hy_phen__<tool>/);
+    assert.equal((await call("sessions")).count, grantSessions, "a rejected selection creates no session");
+    assert.equal(requests.length, grantRequests, "a rejected selection never calls the model");
+
+    // -------------------------------------------------------------------------
     // Scenario 4: extensions: false with native direct MCP works
     // -------------------------------------------------------------------------
     console.log("[4] extensions: false with direct native MCP: callable");
@@ -458,7 +490,9 @@ if (process.argv[2] === "fixture") {
     assert.equal(effectFileExists, false, "Unauthorized effect must not write to effects file");
 
     console.log("[7b] Codemode/search without named MCP tools cannot inherit server tools");
-    for (const tools of [["codemode"], ["codemode", "tool_search"]]) {
+    // Without a resource tool these selections are refused at request time (3b); a resource tool keeps
+    // the path where no mcp__ name is granted reachable.
+    for (const tools of [["codemode", "list_mcp_resources"], ["codemode", "tool_search", "list_mcp_resources"]]) {
       const blocked = await call("run", { cwd: dir, verbose: true, nativeMcp: true, mcpServers: ["coded"],
         prompt: "TRIGGER_CODEMODE_BLOCKED_EFFECT", tools, maxTurns: 5 });
       assert.match(blocked.lastText, /mcp__coded__effect does not exist/);
@@ -468,7 +502,7 @@ if (process.argv[2] === "fixture") {
 
     console.log("[7c] MCP resource tools also require explicit authorization");
     const blockedResource = await call("run", { cwd: dir, nativeMcp: true, mcpServers: ["coded"],
-      prompt: "TRIGGER_CODEMODE_BLOCKED_EFFECT RESOURCE", tools: ["codemode"], maxTurns: 5 });
+      prompt: "TRIGGER_CODEMODE_BLOCKED_EFFECT RESOURCE", tools: ["codemode", "mcp__coded__echo"], maxTurns: 5 });
     assert.match(blockedResource.lastText, /list_mcp_resources does not exist/);
     const allowedResource = await call("run", { cwd: dir, nativeMcp: true, mcpServers: ["coded"],
       prompt: "TRIGGER_CODEMODE_BLOCKED_EFFECT RESOURCE", tools: ["codemode", "list_mcp_resources"], maxTurns: 5 });
@@ -493,7 +527,7 @@ if (process.argv[2] === "fixture") {
     assert.ok(s8.toolCalls.some((tc) => tc.name === "mcp__deferred__echo"));
 
     const searchOnly = await call("run", { cwd: dir, verbose: true, nativeMcp: true, mcpServers: ["deferred"],
-      prompt: "TRIGGER_DEFERRED_SEARCH", tools: ["tool_search"], maxTurns: 5 });
+      prompt: "TRIGGER_DEFERRED_SEARCH", tools: ["tool_search", "list_mcp_resources"], maxTurns: 5 });
     assert.match(searchOnly.lastText, /Tool mcp__deferred__echo not found/);
     assert.ok(!searchOnly.toolCalls.some(tc => tc.name === "mcp__deferred__echo" && tc.state === "ok"),
       "search does not authorize unnamed MCP tools");
@@ -529,6 +563,40 @@ if (process.argv[2] === "fixture") {
       else assert.deepEqual((await call("status", { sessionId: id })).activeTools, []);
       await call("forget", { sessionId: id });
     }
+
+    console.log("[9b] One batch task without a tool from its servers fails the whole batch");
+    const grantBatchSessions = (await call("sessions")).count;
+    const grantBatchRequests = requests.length;
+    const grantless = await raw("spawn_batch", { cwd: dir, nativeMcp: true, mcpServers: ["direct"],
+      tasks: [{ id: "grant-ok", prompt: "TRIGGER_DIRECT", tools: ["mcp__direct__echo"] }, { id: "grant-missing", prompt: "x" }] });
+    assert.equal(grantless.isError, true);
+    assert.match(grantless.content[0].text, /tasks\[1\] \(grant-missing\): nativeMcp grants no tool from mcpServers \[direct\] \(tools: read, grep, find, ls\)/);
+    assert.equal((await call("sessions")).count, grantBatchSessions, "no task of the batch starts");
+    assert.equal(requests.length, grantBatchRequests);
+    assert.equal((await raw("status", { sessionId: "grant-ok" })).isError, true);
+
+    console.log("[9c] Tool names follow Pi's sanitized server name");
+    const hyphen = await call("run", { cwd: dir, prompt: "DEFAULT", nativeMcp: true, mcpServers: ["hy-phen"],
+      tools: ["mcp__hy_phen__echo"], maxTurns: 3 });
+    assert.equal(hyphen.state, "done", hyphen.error);
+    assert.deepEqual(requests.at(-1).tools.map((t) => t.function.name), ["mcp__hy_phen__echo"]);
+
+    console.log("[9d] Omitted tools are checked after PI_DELEGATE_DEFAULT_TOOLS applies");
+    const defaults = new Client({ name: "native-mcp-defaults", version: "1" });
+    await defaults.connect(new StdioClientTransport({ command: process.execPath, args: ["dist/index.js"], env: {
+      ...process.env, PI_OFFLINE: "1", PI_CODING_AGENT_DIR: agentDir, PI_DELEGATE_STATE_DIR: join(dir, "state"),
+      PI_DELEGATE_MODEL: "test/one", PI_DELEGATE_ALLOW_WRITE: "0", PI_DELEGATE_IGNORE_SCOPE: "1",
+      PI_DELEGATE_ALLOW_TOOLS: "mcp__direct__echo", PI_DELEGATE_DEFAULT_TOOLS: "mcp__direct__echo" } }));
+    try {
+      const viaDefaults = await defaults.callTool({ name: "run", arguments: { cwd: dir, prompt: "TRIGGER_DIRECT",
+        nativeMcp: true, mcpServers: ["direct"], maxTurns: 5 } });
+      assert.ok(!viaDefaults.isError, viaDefaults.content[0].text);
+      assert.match(JSON.parse(viaDefaults.content[0].text).lastText, /echo:direct:hello-direct/);
+      const otherServer = await defaults.callTool({ name: "spawn", arguments: { cwd: dir, prompt: "x",
+        nativeMcp: true, mcpServers: ["coded"] } });
+      assert.equal(otherServer.isError, true);
+      assert.match(otherServer.content[0].text, /mcpServers \[coded\] \(tools: mcp__direct__echo\): add exact names such as mcp__coded__<tool>/);
+    } finally { await defaults.close(); }
 
     console.log("[10] Trusted project overrides preserve the global transport");
     await mkdir(join(dir, ".pi"));

@@ -30,7 +30,10 @@ const http = createServer(async (req, res) => {
     id: "native-test", object: "chat.completion.chunk", created: 1, model: "one", choices: [{ index: 0, delta, finish_reason }],
   })}\n\n`);
   const user = JSON.stringify(request.messages.findLast(m => m.role === "user")?.content);
-  if (user.includes("The MCP service restarted.") && !request.messages.some(m => m.role === "tool" && JSON.stringify(m.content).includes("RECONNECTED"))) {
+  const legacy = JSON.stringify(request.messages).includes("LEGACY");
+  if (legacy && (user.includes("The MCP service restarted.") || user.includes("LEGACY_FOLLOW_UP"))) {
+    emit({ role: "assistant", content: user.includes("LEGACY_FOLLOW_UP") ? "LEGACY_FOLLOWED" : "LEGACY_RECOVERED" }); emit({}, "stop");
+  } else if (user.includes("The MCP service restarted.") && !request.messages.some(m => m.role === "tool" && JSON.stringify(m.content).includes("RECONNECTED"))) {
     emit({ role: "assistant", tool_calls: [{ index: 0, id: "reconnect-script", type: "function",
       function: { name: "codemode", arguments: JSON.stringify({ code: 'text(await tools.mcp__fixture__echo({text:"RECONNECTED"}));' }) } }] });
     emit({}, "tool_calls");
@@ -127,7 +130,35 @@ try {
   assert.deepEqual((await contents(join(dir, "effects.txt"))).trim().split("\n").sort(), ["completed", "unknown"]);
   assert.ok((await contents(join(dir, "connections.txt"))).trim().split("\n").length >= 3, "native MCP reconnects after crash");
   await host.call("forget", { sessionId: "interrupted" });
-  console.log("  OK -> native nested intent barrier, parallel committed results, unknown effects, reconnect and no script replay");
+
+  // A job stored before the request-time grant check, whose native selection grants no server tool,
+  // still recovers after a crash and loads again for follow_up.
+  const legacyBarrier = join(dir, "legacy-barrier");
+  await host.client.close(); hosts.delete(host);
+  host = await connect({ TEST_NESTED_TOOL_BARRIER: legacyBarrier });
+  await spawn(host, "legacy", "LEGACY BARRIER");
+  await until(() => existsSync(legacyBarrier + ".started"));
+  await kill(host);
+  const catalog = new DatabaseSync(join(state, "durable/v2/catalog.sqlite"));
+  try {
+    const row = catalog.prepare("SELECT key, options FROM jobs WHERE json_extract(options,'$.id')='legacy'").get();
+    catalog.prepare("UPDATE jobs SET options=? WHERE key=?").run(JSON.stringify({ ...JSON.parse(row.options), tools: ["codemode"] }), row.key);
+  } finally { catalog.close(); }
+  host = await connect();
+  const recovered = await finish(host, "legacy");
+  assert.equal(recovered.state, "done", recovered.error);
+  assert.equal(recovered.lastText, "LEGACY_RECOVERED");
+  // A fresh process loads the finished job from disk for the follow-up.
+  await host.client.close(); hosts.delete(host);
+  host = await connect();
+  await host.call("follow_up", { sessionId: "legacy", prompt: "LEGACY_FOLLOW_UP" });
+  const followed = await finish(host, "legacy");
+  assert.equal(followed.state, "done", followed.error);
+  assert.equal(followed.lastText, "LEGACY_FOLLOWED");
+  assert.equal((await host.client.callTool({ name: "spawn", arguments: { cwd: dir, prompt: "x", nativeMcp: true,
+    mcpServers: ["fixture"], tools: ["codemode"] } })).isError, true, "a new request with the same selection is refused");
+  await host.call("forget", { sessionId: "legacy" });
+  console.log("  OK -> native nested intent barrier, parallel committed results, unknown effects, reconnect and no script replay; stored grantless selections still recover");
 } finally {
   await Promise.all([...hosts].map(host => host.client.close()));
   for (const socket of sockets) socket.destroy();

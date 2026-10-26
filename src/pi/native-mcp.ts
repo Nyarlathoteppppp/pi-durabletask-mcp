@@ -23,6 +23,26 @@ export function validateNativeMcp(options: NativeMcpOptions, cwd: string): void 
   selectedConfig(cwd, options.mcpServers, new ProjectTrustStore(AGENT_DIR).get(cwd) === true);
 }
 
+/** Pi's resource tools read the selected servers' resources; they carry no server prefix. */
+const RESOURCE_TOOLS = new Set(["list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource"]);
+
+/**
+ * A native selection must grant something from its servers; otherwise the delegate silently runs
+ * without them. `tools` is the effective list, after defaults. codemode and tool_search reach only
+ * the MCP tools named there, so they do not count. Request time only: stored jobs are not re-checked.
+ */
+export function assertNativeMcpGrant(options: NativeMcpOptions, tools: string[]): void {
+  if (!options.nativeMcp || !tools.length) return;
+  const servers = options.mcpServers ?? [];
+  // Pi's naming: mcp__<server>__<tool>, non-identifier characters as "_"; a name over 64 characters
+  // keeps its first 55 and gets a hash suffix.
+  const prefixes = servers.map((server) => `mcp__${server}__`.replace(/[^A-Za-z0-9_]/g, "_"));
+  if (tools.some((tool) => RESOURCE_TOOLS.has(tool) || prefixes.some((prefix) => tool.startsWith(prefix.slice(0, 55))))) return;
+  throw new Error(`nativeMcp grants no tool from mcpServers [${servers.join(", ")}] (tools: ${tools.join(", ")}): ` +
+    `add exact names such as ${prefixes[0]}<tool> to tools (and PI_DELEGATE_ALLOW_TOOLS); codemode and tool_search ` +
+    "reach only named tools. Pass tools: [] for a tool-free run.");
+}
+
 function selectedConfig(cwd: string, names: string[], projectTrusted: boolean): LoadedMcpConfig {
   const servers = new Map<string, LoadedMcpConfig["servers"][number] & { override?: string }>();
   const paths = [{ path: join(AGENT_DIR, "mcp.json"), scope: "global" as const },

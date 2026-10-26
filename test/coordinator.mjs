@@ -82,6 +82,10 @@ const http = createServer(async (req, res) => {
     answer("VERIFIED FOLLOW-UP ALPHA");
   } else if (prompt.includes("CHILD_TARGET")) {
     answer("INITIAL ALPHA");
+  } else if (prompt.includes("GRANTLESS_COORDINATOR")) {
+    // The dispatch error is left uncaught: the coordinator reads it as codemode reports it.
+    if (!scripts) tool("codemode", { code: 'return await tools.delegate_start_batch({taskIndexes:[1]});' });
+    else answer("GRANTLESS " + JSON.stringify(request.messages.at(-1).content));
   } else if (prompt.includes("COORDINATOR") || prompt.includes("Coordinate the caller's approved task plan")) {
     assert.ok(request.tools.every((t) => !t.function.name.startsWith("delegate_")), "child tools are script-only, not direct declarations");
     if (!scripts) tool("codemode", { code: 'try { await tools.delegate_get({ sessionId: "facts" }); return "BAD foreign read"; } catch(e) { const b = await tools.delegate_start_batch({}); store("batch", b); return {blocked: e.message, batch:b}; }' });
@@ -373,6 +377,14 @@ try {
   }
   // Even a host-approved form tool is outside this read-only team feature.
   assert.equal((await raw("spawn",{cwd:dir,coordinator:{tasks:[{prompt:"no",mcpServers:["browser"],tools:["mcp__browser__agent_browser_fill"]}]}})).isError,true);
+  // A member that selects a server but none of its tools is refused at dispatch, readably and by its plan index.
+  await call("spawn",{cwd:dir,id:"grantless-boss",prompt:"GRANTLESS_COORDINATOR",maxTurns:3,coordinator:{tasks:[
+    {prompt:"CHILD_TARGET",label:"granted-member",tools:[],maxTurns:1},
+    {prompt:"GRANTLESS_MEMBER",label:"grantless-member",mcpServers:["github"],maxTurns:1}]}});
+  const grantlessBoss=await settle("grantless-boss");
+  assert.equal(grantlessBoss.state,"done",grantlessBoss.error);
+  assert.match(grantlessBoss.lastText,/Script error:\\nError: taskIndex 1: nativeMcp grants no tool from mcpServers \[github\] \(tools: read, grep, find, ls\): add exact names such as mcp__github__<tool> to tools/);
+  assert.ok(!(await call("sessions",{})).sessions.some(s=>["granted-member","grantless-member"].includes(s.label)),"no member starts");
   console.log("  OK -> team members use selected GitHub/Serena/browser MCP tools; forks/follow-ups keep exact grants");
 
   await call("spawn", { cwd: dir, id: "cancel-boss", prompt: "CANCEL_PARENT", tools: ["codemode"], maxTurns: 5,
