@@ -41,7 +41,7 @@ export async function choose<T extends string>(state: unknown, question: { instr
   try {
     const response = await fetch(cached.url, {
       method: "POST",
-      headers: { Authorization: `Bearer ${cached.key}`, "Content-Type": "application/json", "X-Title": "pi-durabletask-mcp" },
+      headers: { Authorization: `Bearer ${cached.key}`, "Content-Type": "application/json", "X-Title": "pi-durateam" },
       body: JSON.stringify({ model: cached.model, state, questions: { q: { type: "choice", ...question } } }),
       signal: AbortSignal.timeout(timeoutMs),
     });

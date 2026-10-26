@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="650" viewBox="0 0 1280 650" role="img" aria-labelledby="title desc">
-  <title id="title">pi-durabletask-mcp — Split work across models. Bring findings together.</title>
+  <title id="title">pi-durateam — Split work across models. Bring findings together.</title>
   <desc id="desc">Claude or Codex supplies a task plan to Pi. A coordinator dispatches code review, web research and test brainstorming to models across providers, then returns a synthesis with original report references.</desc>
   <defs>
     <pattern id="dots" width="24" height="24" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="#d9d2c5"/></pattern>
@@ -10,7 +10,7 @@
   <g font-family="Inter, -apple-system, BlinkMacSystemFont, Segoe UI, Arial, sans-serif">
     <rect x="56" y="30" width="36" height="36" rx="10" fill="#252724"/>
     <text x="74" y="55" text-anchor="middle" font-size="27" fill="#ff966d">π</text>
-    <text x="106" y="55" font-size="19" font-weight="650" fill="#252724">pi-durabletask-mcp</text>
+    <text x="106" y="55" font-size="19" font-weight="650" fill="#252724">pi-durateam</text>
     <text x="1220" y="53" text-anchor="end" font-size="12" font-weight="600" letter-spacing="2" fill="#6a6c63">MULTI-PROVIDER AGENT TEAMS</text>
     <path d="M56 88H1224" stroke="#ddd6c9"/>
     <g fill="#252724" font-size="55" font-weight="750" letter-spacing="-2.2">

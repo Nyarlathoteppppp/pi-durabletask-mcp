@@ -71,7 +71,7 @@ export function linkPiSdk({ root = bridgeRoot, managedOnly = false, quiet = fals
     } finally { rmSync(temporary, { force: true }); }
   }
   const { version } = JSON.parse(readFileSync(join(source, "package.json"), "utf8"));
-  if (!quiet) console.log(`pi-durabletask-mcp SDK -> ${managed ? "managed" : "global"} Pi ${version} (${source})`);
+  if (!quiet) console.log(`pi-durateam SDK -> ${managed ? "managed" : "global"} Pi ${version} (${source})`);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) linkPiSdk();

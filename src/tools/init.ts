@@ -80,7 +80,7 @@ export function registerInit(server: McpServer): void {
           recovery: "Connections are reopened on recovery. Interrupted scripts are not replayed; committed nested tool results are preserved.",
         },
         what:
-          "pi-delegate-mcp hands a task to the pi coding agent. The delegate reads files and reasons " +
+          "pi-durateam hands a task to the pi coding agent. The delegate reads files and reasons " +
           "on its own budget, then returns a result. Its context never enters yours.",
 
         permissions: {

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Renamed to pi-durateam: the npm package (`pi-durateam`), the GitHub repository (`Nyarlathoteppppp/pi-durateam`), the MCP Registry name (`io.github.Nyarlathoteppppp/pi-durateam`) and the skill path (`skills/pi-durateam/SKILL.md`). The `pi-durabletask-mcp` command still works as an alias of `pi-durateam`. Configuration, `PI_DELEGATE_*` environment variables, stored state and tool names are unchanged.
 - Fix: `nativeMcp` with `mcpServers` whose effective `tools` hold no tool from those servers (for example `tools` omitted, so the read-only default applies, or only `codemode`/`tool_search`, which reach only named MCP tools) is now refused before anything starts, instead of running a delegate that silently has none of the servers' tools. The error names the servers, the effective tools and the `mcp__<server>__<tool>` names to add; `tools: []` stays a tool-free run. This covers `spawn`, `run`, every `spawn_batch` task (one refuses the whole batch) and coordinator members, whose dispatch errors now name the plan's `taskIndex` rather than the position in that dispatch. Stored durable jobs still recover and load as before.
 - Opt-out `PI_DELEGATE_SECRET_GUARD=0`: turns off the secret-path guard for the whole server (tool paths, `grep` exclusions, attachments, `resources` and `saveTo`), so delegates read `.env` or `~/.ssh` like any other file. On by default, and any other value keeps it on; `init` reports it under `permissions.secretPathGuard`.
 - Fix: with `PI_DELEGATE_MAX_DURATION_MS` at 55 minutes or more, every provider whose OAuth tokens last an hour (Antigravity/Google) was reported under `failingProviders` with "OAuth refresh returned a token that expires too soon", even right after a fresh login. The up-front credential check asked for a token valid for the whole run plus 5 minutes; it now asks for at most 30 minutes, since Pi refreshes the token again before each request.
@@ -11,7 +12,7 @@
 - Finished results name the model that answered: `wait` (single and batch), coordinator `delegate_wait` and `delegate_get` now carry `model` and `thinking`, and the team `reportIndex` records `thinking` and follows a provider-error fallback instead of keeping the start receipt's model. `run` already did; polls of running work are unchanged.
 - Skill: ask delegates for evidence rather than a verdict (verification commands and outcome, unverified items; reviews give `file:line` findings or `No findings`, or `No findings; unchecked: …` when a budget cut them short; a bare `No findings` after a forced wrap-up counts as incomplete coverage).
 
-- Docs: the Codex setup shows an absolute-path config for the Codex desktop app, whose MCP servers start without Homebrew or nvm on `PATH`; a bare `pi-durabletask-mcp` or `node` command never starts there and the session just has no Pi tools.
+- Docs: the Codex setup shows an absolute-path config for the Codex desktop app, whose MCP servers start without Homebrew or nvm on `PATH`; a bare `pi-durateam` or `node` command never starts there and the session just has no Pi tools.
 
 ## 0.7.12 (2026-10-19)
 

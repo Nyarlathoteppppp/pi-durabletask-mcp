@@ -128,7 +128,7 @@ startup recovery explicitly; `init` does not start or recover tasks.
     "pi": {
       "type": "stdio",
       "command": "node",
-      "args": ["/absolute/path/pi-durabletask-mcp/dist/index.js"]
+      "args": ["/absolute/path/pi-durateam/dist/index.js"]
     }
   }
 }

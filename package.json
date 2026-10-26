@@ -1,10 +1,11 @@
 {
-  "name": "pi-durabletask-mcp",
+  "name": "pi-durateam",
   "version": "0.7.12",
-  "mcpName": "io.github.Nyarlathoteppppp/pi-durabletask-mcp",
-  "description": "Multi-provider Pi agent teams over MCP with parallel delegates, coordination, steering, and optional crash recovery",
+  "mcpName": "io.github.Nyarlathoteppppp/pi-durateam",
+  "description": "Pi agent teams for Claude Code and Codex on any provider: parallel delegates, forks, a coordinator and native MCP tools, with runs budgeted to finish with an answer and opt-in durable sessions",
   "type": "module",
   "bin": {
+    "pi-durateam": "dist/index.js",
     "pi-durabletask-mcp": "dist/index.js",
     "pi-delegate-mcp": "dist/index.js",
     "pi-delegate-statusline": "dist/statusline/cli.js"
@@ -44,13 +45,13 @@
   },
   "author": "Nyarlathoteppppp",
   "license": "MIT",
-  "homepage": "https://github.com/Nyarlathoteppppp/pi-durabletask-mcp#readme",
+  "homepage": "https://github.com/Nyarlathoteppppp/pi-durateam#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Nyarlathoteppppp/pi-durabletask-mcp.git"
+    "url": "git+https://github.com/Nyarlathoteppppp/pi-durateam.git"
   },
   "bugs": {
-    "url": "https://github.com/Nyarlathoteppppp/pi-durabletask-mcp/issues"
+    "url": "https://github.com/Nyarlathoteppppp/pi-durateam/issues"
   },
   "keywords": [
     "mcp",

@@ -4,7 +4,7 @@
       "type": "stdio",
       "command": "node",
       "args": [
-        "/absolute/path/pi-durabletask-mcp/dist/index.js"
+        "/absolute/path/pi-durateam/dist/index.js"
       ]
     }
   }

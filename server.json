@@ -1,18 +1,18 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.Nyarlathoteppppp/pi-durabletask-mcp",
-  "title": "Pi Durabletask MCP",
-  "description": "Multi-provider Pi agent teams: parallel delegates, coordination, steering, optional recovery.",
+  "name": "io.github.Nyarlathoteppppp/pi-durateam",
+  "title": "Pi Durateam",
+  "description": "Pi agent teams on any provider: parallel delegates, forks, MCP tools; runs built to finish.",
   "version": "0.7.12",
   "repository": {
-    "url": "https://github.com/Nyarlathoteppppp/pi-durabletask-mcp",
+    "url": "https://github.com/Nyarlathoteppppp/pi-durateam",
     "source": "github"
   },
-  "websiteUrl": "https://github.com/Nyarlathoteppppp/pi-durabletask-mcp#readme",
+  "websiteUrl": "https://github.com/Nyarlathoteppppp/pi-durateam#readme",
   "packages": [
     {
       "registryType": "npm",
-      "identifier": "pi-durabletask-mcp",
+      "identifier": "pi-durateam",
       "version": "0.7.12",
       "transport": { "type": "stdio" }
     }
