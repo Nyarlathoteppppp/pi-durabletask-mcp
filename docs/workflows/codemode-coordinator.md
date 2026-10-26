@@ -181,8 +181,8 @@ for no index IO. This is a report snapshot, not a runtime checkpoint.
   third-party extensions/coordinator are off; codemode is not implicitly granted.
   `durable: true` with `coordinator` is rejected: dispatch membership is not persisted,
   so this does not promise restartable group execution.
-- Child defaults: 10 turns, 12 own tool calls, 240 seconds, bounded by the server's
-  turn/time ceilings. Explicit child budgets are checked against the same ceilings.
+- Child defaults: 10 turns, 12 own tool calls and the `spawn` deadline
+  (`PI_DELEGATE_SPAWN_DURATION_MS`, 10 minutes), bounded by the server's turn/time ceilings. Explicit child budgets are checked against the same ceilings.
 - The coordinator occupies a concurrency slot. With the default limit of four, it
   can start at most three children at once when no other work is running. Larger
   plans can launch subsets in successive batches; there is no new admission queue.

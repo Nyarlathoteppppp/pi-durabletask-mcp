@@ -11,7 +11,7 @@
 | `spawn_batch` | Fan out up to the configured batch limit (default 4). Validated first, so nothing starts if one task is bad.                           |
 | `run`         | Delegate and block until done. For quick questions only.                                                                                |
 | `status`      | State, turns, tools used, latest text, and pending questions.                                                                           |
-| `wait`        | Wait up to 55 seconds for progress, pending questions or completion. Cancelling this call leaves the worker running. |
+| `wait`        | Wait for progress, pending questions or completion: 30 seconds by default for progress, `PI_DELEGATE_WAIT_MAX_MS` (55 seconds, also the most) until settled. Cancelling this call leaves the worker running. |
 | `steer`       | Redirect a running agent. Lands after its current tool call.                                                                            |
 | `follow_up`   | Give a finished delegate another turn. It keeps everything it read, so you do not re-explain the task.                                   |
 | `answer`      | Answer an actual pending extension UI question from `status` or `wait`; use `questions[].id` as `requestId`. |
