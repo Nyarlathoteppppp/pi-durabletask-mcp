@@ -134,8 +134,9 @@ try {
   await writeFile(join(dir, "a.txt"), "ALPHA\n");
   await writeFile(join(agentDir, "mcp.json"), JSON.stringify({ mcpServers: { exa: {
     command: process.execPath, args: [join(process.cwd(), "test/coordinator.mjs"), "exa-fixture"], exposure: "direct",
-  }, ...Object.fromEntries(["github","serena","browser"].map(name=>[name,{
-    command:process.execPath,args:[join(process.cwd(),"test/coordinator.mjs"),"member-fixture"],exposure:"direct",
+  }, ...Object.fromEntries([["github","deferred"],["serena",undefined],["browser","direct"]].map(([name,exposure])=>[name,{
+    // Members get their named tools whatever the exposure here: deferred, codemode by default, direct.
+    command:process.execPath,args:[join(process.cwd(),"test/coordinator.mjs"),"member-fixture"],...(exposure?{exposure}:{}),
   }])) } }));
   await writeFile(join(agentDir, "settings.json"), JSON.stringify({ defaultProvider: "test", defaultModel: "one", enabledModels: ["test/*"] }));
   await writeFile(join(agentDir, "models.json"), JSON.stringify({ providers: { test: {

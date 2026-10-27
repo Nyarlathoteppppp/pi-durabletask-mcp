@@ -125,11 +125,11 @@ A delegate can use MCP servers from Pi's `mcp.json` — read-only GitHub, Serena
 
 - Only the servers in `mcpServers` are connected. Of their tools, the delegate gets only the `mcp__<server>__<tool>` names listed in `tools` and permitted by `PI_DELEGATE_ALLOW_TOOLS`; selecting a server never grants all of its tools.
 - A call that selects servers but grants none of their tools is refused before anything starts — for example with `tools` omitted (the read-only default), or with only `codemode` or `tool_search`, which reach only tools named in `tools`. `tools: []` remains a tool-free run.
-- Name tools the way the server's `exposure` in `mcp.json` reaches them: with `direct` the `mcp__<server>__<tool>` name is enough (the example above), with `codemode` add `codemode`, with `deferred` add `tool_search`.
-- `extensions` can stay `false`. Batch tasks inherit `nativeMcp` and `mcpServers`; coordinator members select their own, and their servers need `direct` exposure.
+- The server's `exposure` in `mcp.json` does not matter to delegates: every tool named in `tools` is declared to the delegate directly, so you can keep servers `deferred` or `codemode` there for interactive Pi. Tools set to `hidden` stay unreachable. Add `codemode` to `tools` only for scripted loops; scripts reach the same named tools.
+- `extensions` can stay `false`. Batch tasks inherit `nativeMcp` and `mcpServers`; coordinator members select their own.
 - A permitted MCP tool may write or act outside `cwd`, and the secret-path guard does not cover external servers. Grant capabilities deliberately.
 
-Setup for GitHub, Serena and agent-browser: [optional tools](docs/optional-tools.md). Web search: [research](docs/research.md). Exposure modes and recovery: [native MCP](docs/reference.md#native-mcp).
+Setup for GitHub, Serena and agent-browser: [optional tools](docs/optional-tools.md). Web search: [research](docs/research.md). Details and recovery: [native MCP](docs/reference.md#native-mcp).
 
 ## Dura: runs built to finish
 

@@ -88,9 +88,9 @@ add these members to `coordinator.tasks`:
 
 `mcpServers` selects connections, never all tools on a server. Omitted `tools` still
 means `read/grep/find/ls`; explicit lists replace those defaults. Each MCP tool must
-have its server selected. Set `exposure: "direct"` on these servers in Pi's `mcp.json`
-(or a direct per-tool override): children do not receive `codemode`/`tool_search`
-to discover deferred tools. `research: true` unions in Exa's server and exact search/fetch
+have its server selected. The `exposure` in Pi's `mcp.json` does not matter: named
+tools are declared to children directly, whatever the server's exposure (`hidden` tools
+stay unreachable). `research: true` unions in Exa's server and exact search/fetch
 pair without duplicates; a member can use `research: false` to disable that shorthand.
 Parent/fact-session server selections are not inherited, and follow-ups retain the
 member's exact grants.

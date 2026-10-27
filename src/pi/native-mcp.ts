@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   createCodemodeExtension, createMcpExtension, createToolSearchExtension,
-  ProjectTrustStore, type InlineExtension, type LoadedMcpConfig, type McpServerConfig,
+  ProjectTrustStore, type InlineExtension, type LoadedMcpConfig, type McpExposure, type McpServerConfig,
 } from "@earendil-works/pi-coding-agent";
 import { AGENT_DIR } from "../config.js";
 
@@ -78,12 +78,28 @@ function selectedConfig(cwd: string, names: string[], projectTrusted: boolean): 
   return { servers: [...servers.values()], autoEnableCodemode: false, errors: [] };
 }
 
+/**
+ * A delegate reaches only the MCP tools named in its `tools`, so the exposure in mcp.json (shared
+ * with interactive Pi, where it limits declared tools) does not apply: every selected tool is
+ * declared directly. Direct tools stay callable from codemode scripts while active, which named
+ * tools are. `hidden` stays hidden, for a server and for single tools. In memory only.
+ */
+function delegateExposure(config: McpServerConfig): McpServerConfig {
+  const direct = (exposure: McpExposure | undefined): McpExposure => exposure === "hidden" ? "hidden" : "direct";
+  const toolExposure = config.toolExposure &&
+    Object.fromEntries(Object.entries(config.toolExposure).map(([tool, exposure]) => [tool, direct(exposure)]));
+  return { ...config, exposure: direct(config.exposure), ...(toolExposure ? { toolExposure } : {}) };
+}
+
 export function nativeMcpFactories(cwd: string, names: string[]): InlineExtension[] {
   return [
     { name: "delegate-codemode", factory: createCodemodeExtension({ mode: "on", models: false }) },
     { name: "delegate-tool-search", factory: createToolSearchExtension() },
     { name: "delegate-mcp", factory: createMcpExtension({
-      loadConfig: (ctx) => selectedConfig(cwd, names, ctx.isProjectTrusted()),
+      loadConfig: (ctx) => {
+        const config = selectedConfig(cwd, names, ctx.isProjectTrusted());
+        return { ...config, servers: config.servers.map((entry) => ({ ...entry, config: delegateExposure(entry.config) })) };
+      },
     }) },
   ];
 }

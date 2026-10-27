@@ -10,8 +10,7 @@ Merge this entry into `~/.pi/agent/mcp.json` (or your `PI_CODING_AGENT_DIR`):
 {
   "mcpServers": {
     "exa": {
-      "url": "https://mcp.exa.ai/mcp?tools=web_search_exa,web_fetch_exa",
-      "exposure": "direct"
+      "url": "https://mcp.exa.ai/mcp?tools=web_search_exa,web_fetch_exa"
     }
   }
 }

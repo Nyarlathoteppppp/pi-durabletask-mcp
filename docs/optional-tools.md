@@ -81,7 +81,8 @@ A killed launcher may require manual browser cleanup.
 These optional servers work with ordinary `spawn` / `run` / `spawn_batch` delegates.
 Coordinator children can explicitly select these servers with per-task `mcpServers`
 and exact `tools`; see the [member example](workflows/codemode-coordinator.md#member-mcp-tools).
-Set their server/tool exposure to `direct` for team members.
+The server's `exposure` in `mcp.json` does not matter: named tools are declared to members
+directly, while `hidden` tools stay unreachable.
 Supported GitHub/Serena operations are the selected tools listed above. Team browser
 tools are limited to open, snapshot, scroll, text, URL and close; click, fill and eval
 remain unavailable to team children even when the host grants them to ordinary delegates.

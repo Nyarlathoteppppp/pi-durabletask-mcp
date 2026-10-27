@@ -123,7 +123,10 @@ try {
   assert.equal(status.lastText, "NATIVE_RECOVERED");
   assert.ok(status.toolCalls.some(c => c.parentToolCallId && c.state === "ok"));
   assert.ok(status.toolCalls.some(c => c.parentToolCallId && c.state === "error"));
-  const messages = requests.findLast(r => JSON.stringify(r.messages).includes("The MCP service restarted.")).messages;
+  const resumed = requests.findLast(r => JSON.stringify(r.messages).includes("The MCP service restarted."));
+  const messages = resumed.messages;
+  // mcp.json says codemode; the recovered delegate still declares its named tools directly.
+  assert.deepEqual(resumed.tools.map(t => t.function.name).sort(), ["codemode", "mcp__fixture__echo", "mcp__fixture__effect"]);
   assert.match(JSON.stringify(messages), /COMMITTED_NATIVE_RESULT/);
   assert.match(JSON.stringify(messages), /outcome is unknown/);
   assert.match(JSON.stringify(messages), /do not replay/);

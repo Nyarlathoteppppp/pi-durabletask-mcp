@@ -727,7 +727,7 @@ it, and verify committed results, interrupted effects, concurrent claimers, live
 queued steering, graceful shutdown, terminal aborts, deadlines, persistent forget, and follow-up.
 They also cover running/completed follow-up restarts, a second crash before steering
 admission, successful tool results during pause, and the awaited tool-start callback contract.
-Native tests cover exact tool permissions, direct/codemode/deferred exposure, explicit
+Native tests cover exact tool permissions, delegate exposure and hidden tools, explicit
 server selection, batch inheritance, transport cleanup, parallel nested results, and
 the execution barrier and reconnection after a crash.
 
@@ -808,10 +808,17 @@ Authorize exact tool names in the bridge's environment, then request them in `to
 ```
 
 Use the names Pi assigns (`mcp__<server>__<tool>`); Pi sanitizes characters and may
-shorten long names. For `direct` exposure, name the MCP tool in `tools`. For
-`codemode` exposure, also name `codemode`; for `deferred` exposure, name `tool_search`.
-The existing server permission list and SDK tool restriction apply to direct,
-searched, and nested calls. `tools: []` starts no native transports and remains tool-free.
+shorten long names. The `exposure` in `mcp.json` does not apply to delegates: the bridge
+treats every selected server as `direct` in memory (it never writes `mcp.json`), so each MCP
+tool named in `tools` is declared to the delegate whether the server is configured `direct`,
+`deferred` or `codemode` (the default). Interactive Pi, which reads the same file, keeps the
+configured exposure, so servers can stay `deferred` or `codemode` there. `hidden` is kept, for a
+server and for single tools in `toolExposure`: a hidden tool stays unreachable even when named.
+Other `toolExposure` entries become `direct`. Direct tools are also callable from codemode
+scripts, so naming `codemode` adds scripted calls to the same named tools; `tool_search` has
+nothing to load, since named tools are already declared. The existing server permission list
+and SDK tool restriction apply to direct and nested calls. `tools: []` starts no native
+transports and remains tool-free.
 
 A call whose tools include no tool from the selected servers is refused before anything
 starts. The check uses the tools the delegate would get, so omitting `tools` means the

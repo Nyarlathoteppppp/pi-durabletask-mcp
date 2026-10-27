@@ -110,7 +110,26 @@ if (process.argv[2] === "fixture") {
         ? lastUser.content
         : JSON.stringify(lastUser?.content ?? "");
 
-    if (userPrompt.includes("TRIGGER_DIRECT") && lastMsg?.role !== "tool") {
+    const named = userPrompt.match(/TRIGGER_CALL:(\w+)/)?.[1];
+    if (named && lastMsg?.role !== "tool") {
+      emit({
+        role: "assistant",
+        tool_calls: [{
+          index: 0,
+          id: "call_named",
+          type: "function",
+          function: userPrompt.includes("VIA_CODEMODE") ? {
+            name: "codemode",
+            arguments: JSON.stringify({ code: `text(JSON.stringify(await tools.${named}(${named.endsWith("__effect")
+              ? '{ payload: "hidden-effect" }' : '{ message: "named" }'})));` }),
+          } : {
+            name: named,
+            arguments: JSON.stringify(named.endsWith("__effect") ? { payload: "hidden-effect" } : { message: "named" }),
+          },
+        }],
+      });
+      emit({}, "tool_calls");
+    } else if (userPrompt.includes("TRIGGER_DIRECT") && lastMsg?.role !== "tool") {
       emit({
         role: "assistant",
         tool_calls: [
@@ -294,6 +313,21 @@ if (process.argv[2] === "fixture") {
             exposure: "direct",
             description: "Hyphenated server name",
           },
+          // Hidden tools stay hidden for delegates, by pattern and with a hidden server.
+          partly: {
+            command: process.execPath,
+            args: [testScriptPath, "fixture", "partly"],
+            exposure: "deferred",
+            toolExposure: { "eff*": "hidden" },
+            env: { TEST_EFFECTS_FILE: effectsFile },
+          },
+          guarded: {
+            command: process.execPath,
+            args: [testScriptPath, "fixture", "guarded"],
+            exposure: "hidden",
+            toolExposure: { echo: "codemode" },
+            env: { TEST_EFFECTS_FILE: effectsFile },
+          },
         },
       }),
     );
@@ -310,7 +344,8 @@ if (process.argv[2] === "fixture") {
           PI_DELEGATE_MODEL: "test/one",
           PI_DELEGATE_ALLOW_WRITE: "0",
           PI_DELEGATE_ALLOW_TOOLS:
-            "mcp__direct__echo,mcp__coded__echo,mcp__deferred__echo,mcp__hy_phen__echo,codemode,tool_search,list_mcp_resources",
+            "mcp__direct__echo,mcp__coded__echo,mcp__deferred__echo,mcp__hy_phen__echo,codemode,tool_search,list_mcp_resources," +
+            "mcp__partly__echo,mcp__partly__effect,mcp__guarded__echo,mcp__guarded__effect",
           PI_DELEGATE_IGNORE_SCOPE: "1",
         },
       }),
@@ -509,9 +544,9 @@ if (process.argv[2] === "fixture") {
     assert.match(allowedResource.lastText, /fixture-text/);
 
     // -------------------------------------------------------------------------
-    // Scenario 8: tool_search (deferred exposure) search and call
+    // Scenario 8: a tool_search grant on a deferred server keeps working (its named tool is direct, 8b)
     // -------------------------------------------------------------------------
-    console.log("[8] tool_search discovers and calls deferred native tool");
+    console.log("[8] tool_search grant calls the named tool of a deferred server");
     const s8 = await call("run", {
       verbose: true,
       cwd: dir,
@@ -531,6 +566,38 @@ if (process.argv[2] === "fixture") {
     assert.match(searchOnly.lastText, /Tool mcp__deferred__echo not found/);
     assert.ok(!searchOnly.toolCalls.some(tc => tc.name === "mcp__deferred__echo" && tc.state === "ok"),
       "search does not authorize unnamed MCP tools");
+
+    console.log("[8b] Named tools are declared to delegates whatever the exposure in mcp.json");
+    for (const server of ["coded", "deferred"]) {
+      const name = `mcp__${server}__echo`;
+      const named = await call("run", { cwd: dir, verbose: true, nativeMcp: true, mcpServers: [server],
+        prompt: `TRIGGER_CALL:${name}`, tools: [name], maxTurns: 5 });
+      assert.equal(named.state, "done", named.error);
+      assert.ok(named.toolCalls.some((tc) => tc.name === name && tc.state === "ok"), JSON.stringify(named.toolCalls));
+      assert.match(named.lastText, new RegExp(`echo:${server}:named`));
+      assert.deepEqual(requests.at(-1).tools.map((t) => t.function.name), [name]);
+      // A codemode grant still reaches the named tool from a script, and only that tool (6, 7).
+      const scripted = await call("run", { cwd: dir, verbose: true, nativeMcp: true, mcpServers: [server],
+        prompt: `TRIGGER_CALL:${name} VIA_CODEMODE`, tools: ["codemode", name], maxTurns: 5 });
+      assert.match(scripted.lastText, new RegExp(`echo:${server}:named`));
+      assert.ok(scripted.toolCalls.some((tc) => tc.name === name && tc.state === "ok"), JSON.stringify(scripted.toolCalls));
+    }
+
+    console.log("[8c] Hidden tools stay hidden even when named");
+    for (const server of ["partly", "guarded"]) {
+      const tools = [`mcp__${server}__echo`, `mcp__${server}__effect`];
+      const echo = await call("run", { cwd: dir, nativeMcp: true, mcpServers: [server],
+        prompt: `TRIGGER_CALL:${tools[0]}`, tools, maxTurns: 5 });
+      assert.match(echo.lastText, new RegExp(`echo:${server}:named`), "a non-hidden override becomes direct");
+      assert.deepEqual(requests.at(-1).tools.map((t) => t.function.name), [tools[0]]);
+      const direct = await call("run", { cwd: dir, verbose: true, nativeMcp: true, mcpServers: [server],
+        prompt: `TRIGGER_CALL:${tools[1]}`, tools, maxTurns: 5 });
+      assert.match(direct.lastText, new RegExp(`Tool ${tools[1]} not found`));
+      const scripted = await call("run", { cwd: dir, verbose: true, nativeMcp: true, mcpServers: [server],
+        prompt: `TRIGGER_CALL:${tools[1]} VIA_CODEMODE`, tools: ["codemode", ...tools], maxTurns: 5 });
+      assert.match(scripted.lastText, new RegExp(`${tools[1]} does not exist`));
+      await assert.rejects(readFile(effectsFile, "utf8"), { code: "ENOENT" }, "a hidden tool never runs");
+    }
 
     // -------------------------------------------------------------------------
     // Scenario 9: forget closes corresponding MCP child process
