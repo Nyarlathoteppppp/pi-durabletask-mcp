@@ -170,6 +170,9 @@ export const DAY_MS = 86_400_000;
 /** Above this, the oldest finished durable delegates are deleted early. Unfinished ones never are. */
 export const STORAGE_LIMIT_BYTES = num(process.env.PI_DELEGATE_STORAGE_LIMIT_MB, 1024) * 1024 * 1024;
 
+/** How often to check that the host that launched this server is still alive. */
+export const HOST_WATCH_MS = num(process.env.PI_DELEGATE_HOST_WATCH_MS, 30_000);
+
 /** How often a server looks for abandoned durable jobs, besides at startup and when its own work ends. */
 export const RECOVERY_INTERVAL_MS = num(process.env.PI_DELEGATE_RECOVERY_INTERVAL_MS, 30_000);
 

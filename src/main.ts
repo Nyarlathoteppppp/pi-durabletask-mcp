@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { HOST_WATCH_MS } from "./config.js";
 import { recoverAbandoned, startRecoveryTicks, suspendAll } from "./registry.js";
 import { createServer } from "./server.js";
 import { cleanup } from "./statusline/state.js";
 
-/** How often to check that the host that launched us is still alive. */
-const HOST_WATCH_MS = 30_000;
+const HOST_PID = process.ppid;
 
 // A misbehaving pi extension can fire a timer after its session is disposed and throw from
 // outside every await. Without this the whole server dies with it.
@@ -33,9 +33,12 @@ process.on("exit", cleanup);
 // An MCP host that dies without closing the transport would otherwise leave this process
 // running forever, holding sessions and a state file nobody reads.
 process.stdin.on("close", () => void shutdown());
-const HOST_PID = process.ppid;
+// Only macOS guarantees PID 1 is launchd; on Linux it may be a live containerized MCP host.
+if ((process.platform === "darwin" && HOST_PID === 1) || process.ppid !== HOST_PID) await shutdown();
 setInterval(() => {
   try {
+    // Reparenting can be to a subreaper, not just PID 1; the old PID may also be reused.
+    if (process.ppid !== HOST_PID) { void shutdown(); return; }
     process.kill(HOST_PID, 0);
   } catch {
     void shutdown();

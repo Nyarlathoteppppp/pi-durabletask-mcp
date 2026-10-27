@@ -880,6 +880,7 @@ Recipes: [web research](research.md) · [parallel review and synthesis](workflow
 | `PI_DELEGATE_STATE_DIR`       | XDG state dir    | Status-line state and durable task storage (local filesystem only)       |
 | `PI_DELEGATE_MAX_RECOVERY_ATTEMPTS` | `3`        | Claims without progress before a delegate is reported instead of resumed |
 | `PI_DELEGATE_RECOVERY_INTERVAL_MS` | `30000`     | How often a server looks for abandoned durable delegates               |
+| `PI_DELEGATE_HOST_WATCH_MS`   | `30000`          | How often the stdio server checks for host loss or reparenting (milliseconds) |
 | `PI_DELEGATE_RETENTION_DAYS`  | `7`              | Days a finished durable delegate is kept when its spawn sets no `retentionDays` |
 | `PI_DELEGATE_STORAGE_LIMIT_MB` | `1024`          | Soft limit on job stores; above it finished stores are compacted, then the oldest finished deleted early |
 | `PI_DELEGATE_STATUSLINE_WRAP` | unset            | Status line command to wrap and append to                                |
