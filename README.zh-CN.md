@@ -26,7 +26,7 @@
 主 agent 负责规划、选模型和判断结果。读代码、搜索、交叉核对这些重活交给 Pi 委托去跑，花的是 Gemini、Grok、GPT、DeepSeek 或 Pi 支持的其他 provider 的额度，而不是 Claude Code 或 Codex 的额度；主 agent 收到的只是精简的状态和最终报告，或者只是一个文件路径。拿我们自己发布前的那轮审查来说，四个 agent 在 Gemini、Grok 和一个 GPT 模型上一共读了大约两百万 token 的代码，而 Claude 会话只收到约 7 KB 的报告。
 
 - **team**：一个任务单跑或几个任务并行，同一个问题同时问几个模型；fork 让读过一次的上下文回答多个问题；还有可选的 coordinator；每个委托还能单独授予 MCP 服务器（只读的 GitHub、浏览器）。
-- **dura**：每次运行都有轮次、时间和工具调用预算，最后一轮去掉工具，专门留给作答。可选：软时限、provider 出错时换模型继续、服务器重启后能恢复的会话。
+- **dura**：每次运行都有轮次和时间预算，最后一轮去掉工具，专门留给作答。还可以用 `maxToolCalls` 设置工具调用次数上限。可选：软时限、provider 出错时换模型继续、服务器重启后能恢复的会话。
 
 举个例子，对你的 agent 说：*“用 Pi 把附件里的 diff 同时交给 Gemini、Grok 和 GPT 审查，不要改文件，只报确定的问题并给出 file:line。”* 它会用 `spawn_batch` 把一个共用的 `prompt` 发给三个模型，用 `wait` 收结果，拿回三份独立报告，附带 token 用量和费用。
 
@@ -134,8 +134,8 @@ GitHub、Serena 和 agent-browser 的配置见[可选工具](docs/optional-tools
 ## Dura 为跑完而设计
 
 **始终生效**
-- 轮次、时间和工具调用三重预算。`spawn` 和 `spawn_batch` 默认 30 轮、10 分钟，`run` 默认 12 轮、5 分钟；上限由 `PI_DELEGATE_MAX_TURNS`（默认 50）和 `PI_DELEGATE_MAX_DURATION_MS`（默认 15 分钟）决定。`maxToolCalls` 限制委托自己发起的工具调用次数。
-- 轮次或工具调用用到 75%，或者时间用掉 2/3 时，会提醒委托收尾；最后一轮去掉工具，专门留给作答。
+- 轮次和时间预算。`spawn` 和 `spawn_batch` 默认 30 轮、10 分钟，`run` 默认 12 轮、5 分钟；上限由 `PI_DELEGATE_MAX_TURNS`（默认 50）和 `PI_DELEGATE_MAX_DURATION_MS`（默认 15 分钟）决定。可选的 `maxToolCalls` 限制委托自己发起的工具调用次数。
+- 轮次预算或工具调用上限（设了 `maxToolCalls` 时）用到 75%，或者时间用掉 2/3 时，会提醒委托收尾；最后一轮去掉工具，专门留给作答。
 - `answerState` 标出空答案（`missing`）或被截断的答案（`partial`）。没给出答案就结束的运行（`aborted`、`error`）会把中途写过的最近一段较长文字作为 `salvagedText` 返回。结束的结果会写明实际作答的模型。
 
 **可选**

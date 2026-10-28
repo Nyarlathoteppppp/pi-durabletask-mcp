@@ -26,7 +26,7 @@ A team of [Pi](https://pi.dev) agents for Claude Code and Codex, on any provider
 Your main agent plans, picks the models and judges the results. The reading, searching and cross-checking run on Pi delegates — Gemini, Grok, GPT, DeepSeek or any other provider Pi supports — and spend those quotas instead of your Claude Code or Codex one; what comes back is a compact status and the final report, or just a file path. In our own pre-release review, four agents read about two million tokens of this codebase on Gemini, Grok and a GPT model, and our Claude session received about 7 KB of reports.
 
 - **team** — one task or several in parallel, the same question to several models, forks that read once and answer many questions, an opt-in coordinator, and MCP servers (read-only GitHub, a browser) granted per delegate.
-- **dura** — every run has turn, time and tool-call budgets and a last turn without tools, reserved for the answer. Opt in to a soft deadline, model fallback on provider errors, and sessions that survive a server restart.
+- **dura** — every run has turn and time budgets and a last turn without tools, reserved for the answer. `maxToolCalls` adds an optional tool-call cap. Opt in to a soft deadline, model fallback on provider errors, and sessions that survive a server restart.
 
 For example, ask your agent: *"Use Pi to review the attached diff with Gemini, Grok and GPT in parallel. Don't edit files. Report only real defects with file:line."* It calls `spawn_batch` with one shared `prompt` and three models, collects with `wait`, and gets three independent reports with token usage and cost.
 
@@ -134,8 +134,8 @@ Setup for GitHub, Serena and agent-browser: [optional tools](docs/optional-tools
 ## Dura: runs built to finish
 
 **Always on**
-- Turn, time and tool-call budgets. `spawn` and `spawn_batch` default to 30 turns and 10 minutes, `run` to 12 turns and 5 minutes; the ceilings are `PI_DELEGATE_MAX_TURNS` (default 50) and `PI_DELEGATE_MAX_DURATION_MS` (default 15 minutes). `maxToolCalls` caps the delegate's own calls.
-- At 75% of the turn or tool-call budget, or after 2/3 of the time, the delegate is told to wrap up; its last turn has no tools and is reserved for the answer.
+- Turn and time budgets. `spawn` and `spawn_batch` default to 30 turns and 10 minutes, `run` to 12 turns and 5 minutes; the ceilings are `PI_DELEGATE_MAX_TURNS` (default 50) and `PI_DELEGATE_MAX_DURATION_MS` (default 15 minutes). `maxToolCalls` optionally caps the delegate's own calls.
+- At 75% of the turn budget or tool-call cap (if `maxToolCalls` is set), or after 2/3 of the time, the delegate is told to wrap up; its last turn has no tools and is reserved for the answer.
 - `answerState` flags an empty (`missing`) or cut-off (`partial`) answer. A run that ends without an answer (`aborted`, `error`) returns its latest substantial text as `salvagedText`. Finished results name the model that answered.
 
 **Opt-in**
