@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 
 const directory = await mkdtemp(join(tmpdir(), "pi-delegate-usability-"));
 const agentDir = join(directory, "agent");
@@ -288,6 +289,7 @@ try {
   const noDefault = join(directory, "no-default");
   await mkdir(join(noDefault, ".pi"), { recursive: true });
   await writeFile(join(noDefault, ".pi", "settings.json"), JSON.stringify({ defaultProvider: "", defaultModel: "" }));
+  new ProjectTrustStore(agentDir).set(noDefault, true);
   await close(host);
   host = await connect({ PI_DELEGATE_MODEL: "" });
   await assert.rejects(() => host.call("spawn_batch", { cwd: noDefault, tools: [], tasks: [

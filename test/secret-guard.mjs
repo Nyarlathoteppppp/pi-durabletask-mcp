@@ -94,7 +94,7 @@ try {
   }
 
   // The tool_call guard is the only inline extension of a session without tools, and is left out when off.
-  const loader = await loadResources({ cwd: repo, tools: [], extensions: false, nativeMcp: false, mcpServers: [],
+  const { resourceLoader: loader } = await loadResources({ cwd: repo, tools: [], extensions: false, nativeMcp: false, mcpServers: [],
     resources: undefined, customTools: [], journal: undefined });
   assert.equal(loader.getExtensions().extensions.length, guarded ? 1 : 0, "secret-path guard installed");
 

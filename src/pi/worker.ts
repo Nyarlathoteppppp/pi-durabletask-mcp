@@ -276,10 +276,10 @@ export class PiWorker {
     const spec: SessionSpec = { cwd: this.cwd, tools: this.toolNames, extensions: this.extensionsEnabled,
       nativeMcp: this.nativeMcp, mcpServers: this.mcpServers, resources: this.options.resources ? selectedResources : undefined,
       customTools: this.customTools, journal: this.nestedCalls ? this.nativeExecutionJournal() : undefined };
-    const resourceLoader = await loadResources(spec);
+    const resources = await loadResources(spec);
     if (this.isStopped()) return this;
 
-    const session = await createSession(spec, resourceLoader, { model, thinking: this.thinkingSpec, saved, seedEntries });
+    const session = await createSession(spec, resources, { model, thinking: this.thinkingSpec, saved, seedEntries });
     this.session = session;
     if (TOOL_CHOICE_NONE.length) this.forbidToolsWhenRemoved(session);
     if (DEADLINE_GRACE_MS > 0) this.blockToolsPastDeadline(session);

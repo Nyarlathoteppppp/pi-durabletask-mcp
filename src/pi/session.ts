@@ -4,6 +4,7 @@ import {
   DefaultResourceLoader,
   defineTool,
   SessionManager,
+  SettingsManager,
   type FileEntry,
   type InlineExtension,
   type ToolDefinition,
@@ -17,6 +18,7 @@ import { repairEntries } from "./repair.js";
 import type { PreparedResources } from "./resources.js";
 import { getRuntime, type PiModel } from "./runtime.js";
 import { createProtectedGrepTool } from "./search.js";
+import { delegateProjectTrusted } from "./trust.js";
 
 /** What a delegate's Pi session is built from. The worker owns everything after creation. */
 export interface SessionSpec {
@@ -32,13 +34,20 @@ export interface SessionSpec {
   journal: InlineExtension | undefined;
 }
 
-export async function loadResources(spec: SessionSpec): Promise<DefaultResourceLoader> {
+interface SessionResources {
+  resourceLoader: DefaultResourceLoader;
+  settingsManager: SettingsManager;
+}
+
+export async function loadResources(spec: SessionSpec): Promise<SessionResources> {
   const { cwd, tools, nativeMcp, resources } = spec;
+  const settingsManager = SettingsManager.create(cwd, AGENT_DIR, { projectTrusted: delegateProjectTrusted(cwd) });
   // Third-party pi extensions start timers and sockets that outlive dispose() and then
   // throw against a stale ctx. A delegate does not need them.
   const resourceLoader = new DefaultResourceLoader({
     cwd,
     agentDir: AGENT_DIR,
+    settingsManager,
     noExtensions: !spec.extensions,
     noSkills: true,
     noContextFiles: true,
@@ -58,10 +67,10 @@ export async function loadResources(spec: SessionSpec): Promise<DefaultResourceL
   // Always reload so the inline secret-path guard is installed even when third-party
   // extensions stay off. Failure must not leave the secret guard uninstalled.
   await resourceLoader.reload();
-  return resourceLoader;
+  return { resourceLoader, settingsManager };
 }
 
-export async function createSession(spec: SessionSpec, resourceLoader: DefaultResourceLoader, start: {
+export async function createSession(spec: SessionSpec, { resourceLoader, settingsManager }: SessionResources, start: {
   model: PiModel | undefined;
   thinking: PiThinkingLevel | undefined;
   saved: Checkpoint | undefined;
@@ -70,6 +79,7 @@ export async function createSession(spec: SessionSpec, resourceLoader: DefaultRe
   const { cwd, tools, customTools } = spec;
   const { session } = await createAgentSession({
     cwd,
+    settingsManager,
     modelRuntime: await getRuntime(),
     model: start.model,
     thinkingLevel: start.thinking,

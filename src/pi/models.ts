@@ -11,6 +11,7 @@ import {
 } from "../config.js";
 import type { ModelScope, PiThinkingLevel } from "../types.js";
 import { getRuntime, type PiModel } from "./runtime.js";
+import { delegateProjectTrusted } from "./trust.js";
 
 function readJson(path: string): Record<string, unknown> | undefined {
   try {
@@ -25,13 +26,13 @@ function readJson(path: string): Record<string, unknown> | undefined {
  * custom provider from models.json, since those are declared by hand and are the point of
  * having a custom provider at all.
  *
- * Mirrors pi's settings precedence: project `<cwd>/.pi/settings.json` overrides global.
+ * Mirrors pi's settings precedence: trusted project `<cwd>/.pi/settings.json` overrides global.
  * An empty or missing enabledModels means no scoping, matching pi's own no-op default.
  */
 export function modelScope(cwd?: string): ModelScope | undefined {
   if (IGNORE_SCOPE) return undefined;
   const global = readJson(join(AGENT_DIR, "settings.json"))?.enabledModels;
-  const local = cwd ? readJson(join(cwd, ".pi", "settings.json"))?.enabledModels : undefined;
+  const local = cwd && delegateProjectTrusted(cwd) ? readJson(join(cwd, ".pi", "settings.json"))?.enabledModels : undefined;
   const enabled = local ?? global;
   if (!Array.isArray(enabled) || enabled.length === 0) return undefined;
 
@@ -69,11 +70,11 @@ export function inDelegateDenylist(provider: string, id: string): boolean {
 
 /**
  * The model a spawn without `model` gets: PI_DELEGATE_MODEL, else Pi's configured default for this
- * cwd (project settings over global). Undefined when neither names one.
+ * cwd (trusted project settings over global). Undefined when neither names one.
  */
 export function defaultModelRef(cwd?: string): string | undefined {
   if (DEFAULT_MODEL) return DEFAULT_MODEL;
-  const local = cwd ? readJson(join(cwd, ".pi", "settings.json")) : undefined;
+  const local = cwd && delegateProjectTrusted(cwd) ? readJson(join(cwd, ".pi", "settings.json")) : undefined;
   const global = readJson(join(AGENT_DIR, "settings.json"));
   const provider = (local?.defaultProvider ?? global?.defaultProvider) as string | undefined;
   const model = (local?.defaultModel ?? global?.defaultModel) as string | undefined;

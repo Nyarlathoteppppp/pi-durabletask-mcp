@@ -5,6 +5,7 @@ import {
   type ModelRuntime,
 } from "@earendil-works/pi-coding-agent";
 import { AGENT_DIR } from "../config.js";
+import { delegateProjectTrusted } from "./trust.js";
 
 /**
  * pi's model runtime is expensive to build and safe to share, so every delegate on this
@@ -14,7 +15,10 @@ let runtimePromise: Promise<ModelRuntime> | undefined;
 
 export function getRuntime(): Promise<ModelRuntime> {
   runtimePromise ??= (async (): Promise<ModelRuntime> => {
-    const settingsManager = SettingsManager.create(process.cwd(), AGENT_DIR);
+    // The loader resolves packages even with noExtensions, so project settings must be trust-gated.
+    const settingsManager = SettingsManager.create(process.cwd(), AGENT_DIR, {
+      projectTrusted: delegateProjectTrusted(process.cwd()),
+    });
     // SDK hosts do not run Pi's CLI HTTP bootstrap. Use that same initializer:
     // Node 26's native fetch loses headers and gzip decoding with npm Undici's
     // HTTP/2 dispatcher, which breaks successful xAI OAuth refresh responses.

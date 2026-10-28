@@ -787,8 +787,9 @@ not reliably cut tokens: the model used it unevenly, once for 156 nested reads.
 Pass `nativeMcp: true` and an explicit `mcpServers` list to `spawn`, `run`, or
 `spawn_batch`. This works with `extensions: false`: only Pi's official MCP,
 codemode, and tool-search factories are loaded. Unselected servers are not connected.
-Server entries come from the Pi agent directory's `mcp.json`, with project entries
-used only when Pi trusts that project. Disabled or unknown selections are rejected.
+Server entries come from the Pi agent directory's `mcp.json`. Delegates use Pi's saved
+project trust: an untrusted project's `.pi/mcp.json` and `.pi/settings.json` are ignored
+at admission and runtime. Disabled or unknown selections are rejected.
 
 Authorize exact tool names in the bridge's environment, then request them in `tools`:
 

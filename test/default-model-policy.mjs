@@ -43,8 +43,35 @@ try {
     models: ["one", "two"].map(id => ({ id, name: id, reasoning: false, input: ["text"], contextWindow: 16000,
       maxTokens: 512, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } })),
   } } }));
-  const { preflight, resolveModel } = await import("../dist/pi/models.js");
+  const { preflight, resolveModel, defaultModelRef, modelScope } = await import("../dist/pi/models.js");
   registry = await import("../dist/registry.js");
+  if (policy === "scope") {
+    const { ProjectTrustStore } = await import("@earendil-works/pi-coding-agent");
+    const { createSession, loadResources } = await import("../dist/pi/session.js");
+    const trust = new ProjectTrustStore(agent);
+    const projectSettings = join(dir, ".pi", "settings.json");
+    await writeFile(projectSettings, JSON.stringify({ defaultProvider: "test", defaultModel: "two", enabledModels: ["test/two"] }));
+    await writeFile(join(dir, ".pi", "APPEND_SYSTEM.md"), "PROJECT_TRUST_MARKER");
+    const spec = { cwd: dir, tools: [], extensions: false, nativeMcp: false, mcpServers: [],
+      resources: undefined, customTools: [], journal: undefined };
+    for (const decision of [null, false, true]) {
+      trust.set(dir, decision);
+      const trusted = decision === true;
+      assert.equal(defaultModelRef(dir), trusted ? "test/two" : "test/one");
+      assert.deepEqual([...modelScope(dir).enabled], trusted ? ["test/two"] : ["test/*"]);
+      const resources = await loadResources(spec);
+      assert.equal(resources.settingsManager.isProjectTrusted(), trusted);
+      assert.equal(resources.resourceLoader.getAppendSystemPrompt().some((text) => text.includes("PROJECT_TRUST_MARKER")), trusted);
+      const session = await createSession(spec, resources, { model: undefined, thinking: undefined,
+        saved: undefined, seedEntries: undefined });
+      try {
+        assert.equal(session.settingsManager, resources.settingsManager, "loader and session share settings");
+        assert.equal(session.settingsManager.getDefaultModel(), trusted ? "two" : "one");
+        assert.equal(session.model.id, trusted ? "two" : "one", "untrusted project settings cannot select a model");
+      } finally { session.dispose(); }
+    }
+    await writeFile(projectSettings, JSON.stringify({ enabledModels: ["test/two"] }));
+  }
   assert.deepEqual((await preflight(dir)).usable, ["test/two"]);
   const rejected = policy === "allow" ? /MODEL_ALLOWLIST/ : policy === "deny" ? /MODEL_DENYLIST/ : /out of scope/;
   await assert.rejects(() => resolveModel("test/one", dir), rejected);

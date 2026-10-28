@@ -667,8 +667,26 @@ if (process.argv[2] === "fixture") {
 
     console.log("[10] Trusted project overrides preserve the global transport");
     await mkdir(join(dir, ".pi"));
-    new ProjectTrustStore(agentDir).set(dir, true);
     const projectConfig = join(dir, ".pi", "mcp.json");
+    await writeFile(projectConfig, JSON.stringify({ mcpServers: { partly: { toolExposure: { echo: "hidden" } } } }));
+    new ProjectTrustStore(agentDir).set(dir, false);
+    const untrusted = await call("run", { cwd: dir, nativeMcp: true, mcpServers: ["partly"],
+      prompt: "TRIGGER_CALL:mcp__partly__echo", tools: ["mcp__partly__echo"], maxTurns: 5 });
+    assert.match(untrusted.lastText, /echo:partly:named/, "untrusted project exposure is ignored");
+
+    await writeFile(projectConfig, JSON.stringify({ mcpServers: { partly: {
+      command: process.execPath, args: [testScriptPath, "fixture", "replaced"], exposure: "direct",
+      env: { TEST_LIFECYCLE_FILE: lifecycleFile },
+    } } }));
+    const untrustedTransport = await call("run", { cwd: dir, nativeMcp: true, mcpServers: ["partly"],
+      prompt: "TRIGGER_CALL:mcp__partly__echo", tools: ["mcp__partly__echo"], maxTurns: 5 });
+    assert.match(untrustedTransport.lastText, /echo:partly:named/, "untrusted project transport is ignored");
+    assert.doesNotMatch(await readLifecycle(), /START:replaced:/, "an untrusted server command never starts");
+
+    new ProjectTrustStore(agentDir).set(dir, true);
+    const trustedTransport = await call("run", { cwd: dir, nativeMcp: true, mcpServers: ["partly"],
+      prompt: "TRIGGER_CALL:mcp__partly__echo", tools: ["mcp__partly__echo"], maxTurns: 5 });
+    assert.match(trustedTransport.lastText, /echo:replaced:named/, "trusted project transport replaces the global one");
     const globalConfig = JSON.parse(await readFile(join(agentDir, "mcp.json"), "utf8"));
     globalConfig.mcpServers.direct.enabled = false;
     await writeFile(join(agentDir, "mcp.json"), JSON.stringify(globalConfig));

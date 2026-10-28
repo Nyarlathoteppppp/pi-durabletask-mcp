@@ -2,9 +2,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   createCodemodeExtension, createMcpExtension, createToolSearchExtension,
-  ProjectTrustStore, type InlineExtension, type LoadedMcpConfig, type McpExposure, type McpServerConfig,
+  type InlineExtension, type LoadedMcpConfig, type McpExposure, type McpServerConfig,
 } from "@earendil-works/pi-coding-agent";
 import { AGENT_DIR } from "../config.js";
+import { delegateProjectTrusted } from "./trust.js";
 
 export interface NativeMcpOptions {
   nativeMcp?: boolean;
@@ -20,7 +21,7 @@ export function validateNativeMcp(options: NativeMcpOptions, cwd: string): void 
     return;
   }
   if (!options.mcpServers?.length) throw new Error("nativeMcp requires an explicit, non-empty mcpServers list.");
-  selectedConfig(cwd, options.mcpServers, new ProjectTrustStore(AGENT_DIR).get(cwd) === true);
+  selectedConfig(cwd, options.mcpServers, delegateProjectTrusted(cwd));
 }
 
 /** Pi's resource tools read the selected servers' resources; they carry no server prefix. */
