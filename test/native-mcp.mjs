@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
+import { createHash } from "node:crypto";
 import { appendFileSync } from "node:fs";
 import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -8,6 +9,10 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
+
+const longTool = `long${"x".repeat(70)}`;
+const longGrant = `mcp__partly__${longTool}`.slice(0, 55) + "_" +
+  createHash("sha256").update(`partly\0${longTool}`).digest("hex").slice(0, 8);
 
 // ---------------------------------------------------------------------------
 // 1. In-process Fixture Branch: run when process.argv[2] === "fixture"
@@ -45,14 +50,16 @@ if (process.argv[2] === "fixture") {
     version: "1.0.0",
   });
 
-  server.tool(
-    "echo",
-    "Echo input text back",
-    { message: z.string().describe("Message to echo") },
-    async ({ message }) => ({
-      content: [{ type: "text", text: `echo:${serverName}:${message}` }],
-    }),
-  );
+  for (const name of serverName === "partly" ? ["echo", "echo_safe", longTool] : ["echo"]) {
+    server.tool(
+      name,
+      "Echo input text back",
+      { message: z.string().describe("Message to echo") },
+      async ({ message }) => ({
+        content: [{ type: "text", text: `echo:${serverName}:${message}` }],
+      }),
+    );
+  }
 
   server.tool(
     "effect",
@@ -318,7 +325,7 @@ if (process.argv[2] === "fixture") {
             command: process.execPath,
             args: [testScriptPath, "fixture", "partly"],
             exposure: "deferred",
-            toolExposure: { "eff*": "hidden" },
+            toolExposure: { "eff*": "hidden", echo_safe: "hidden", "long*": "hidden", [longTool]: "codemode-deferred" },
             env: { TEST_EFFECTS_FILE: effectsFile },
           },
           guarded: {
@@ -344,8 +351,10 @@ if (process.argv[2] === "fixture") {
           PI_DELEGATE_MODEL: "test/one",
           PI_DELEGATE_ALLOW_WRITE: "0",
           PI_DELEGATE_ALLOW_TOOLS:
-            "mcp__direct__echo,mcp__coded__echo,mcp__deferred__echo,mcp__hy_phen__echo,codemode,tool_search,list_mcp_resources," +
-            "mcp__partly__echo,mcp__partly__effect,mcp__guarded__echo,mcp__guarded__effect",
+            "mcp__direct__echo,mcp__coded__echo,mcp__deferred__echo,mcp__hy_phen__echo,codemode,tool_search," +
+            "list_mcp_resources,list_mcp_resource_templates,read_mcp_resource," +
+            "mcp__partly__echo,mcp__partly__effect,mcp__guarded__echo,mcp__guarded__effect," +
+            `mcp__partly__echo_safe,${longGrant}`,
           PI_DELEGATE_IGNORE_SCOPE: "1",
         },
       }),
@@ -446,6 +455,19 @@ if (process.argv[2] === "fixture") {
       const rejected = await raw("spawn", { cwd: dir, prompt: "x", nativeMcp: true, mcpServers: ["direct"], tools });
       assert.equal(rejected.isError, true, JSON.stringify(tools));
       assert.match(rejected.content[0].text, /^nativeMcp grants no tool from mcpServers \[direct\]/);
+    }
+    for (const name of ["spawn", "run"]) {
+      for (const [server, tools] of [
+        ["partly", ["mcp__partly__effect"]],
+        ["partly", ["mcp__partly__echo_safe"]],
+        ["guarded", ["mcp__guarded__effect"]],
+        ...["list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource"].map((tool) => ["guarded", [tool]]),
+        ["guarded", ["list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource"]],
+      ]) {
+        const hidden = await raw(name, { cwd: dir, prompt: "x", nativeMcp: true, mcpServers: [server], tools });
+        assert.equal(hidden.isError, true, `${name}: ${tools.join(", ")}`);
+        assert.match(hidden.content[0].text, /granted tools are hidden in mcp\.json/);
+      }
     }
     const sanitized = await raw("spawn", { cwd: dir, prompt: "x", nativeMcp: true, mcpServers: ["hy-phen", "direct"], tools: ["read"] });
     assert.match(sanitized.content[0].text, /mcpServers \[hy-phen, direct\] \(tools: read\): add exact names such as mcp__hy_phen__<tool>/);
@@ -586,8 +608,13 @@ if (process.argv[2] === "fixture") {
     console.log("[8c] Hidden tools stay hidden even when named");
     for (const server of ["partly", "guarded"]) {
       const tools = [`mcp__${server}__echo`, `mcp__${server}__effect`];
+      const echoOnly = await call("run", { cwd: dir, nativeMcp: true, mcpServers: [server],
+        prompt: `TRIGGER_CALL:${tools[0]}`, tools: [tools[0]], maxTurns: 5 });
+      assert.equal(echoOnly.state, "done", echoOnly.error);
+      assert.match(echoOnly.lastText, new RegExp(`echo:${server}:named`));
       const echo = await call("run", { cwd: dir, nativeMcp: true, mcpServers: [server],
         prompt: `TRIGGER_CALL:${tools[0]}`, tools, maxTurns: 5 });
+      assert.equal(echo.state, "done", "mixed hidden and reachable grants are admitted");
       assert.match(echo.lastText, new RegExp(`echo:${server}:named`), "a non-hidden override becomes direct");
       assert.deepEqual(requests.at(-1).tools.map((t) => t.function.name), [tools[0]]);
       const direct = await call("run", { cwd: dir, verbose: true, nativeMcp: true, mcpServers: [server],
@@ -597,6 +624,20 @@ if (process.argv[2] === "fixture") {
         prompt: `TRIGGER_CALL:${tools[1]} VIA_CODEMODE`, tools: ["codemode", ...tools], maxTurns: 5 });
       assert.match(scripted.lastText, new RegExp(`${tools[1]} does not exist`));
       await assert.rejects(readFile(effectsFile, "utf8"), { code: "ENOENT" }, "a hidden tool never runs");
+    }
+
+    const mixedResources = await call("run", { cwd: dir, nativeMcp: true, mcpServers: ["guarded", "partly"],
+      prompt: "DEFAULT", tools: ["list_mcp_resources"], maxTurns: 3 });
+    assert.equal(mixedResources.state, "done", mixedResources.error);
+    assert.deepEqual(requests.at(-1).tools.map((t) => t.function.name), ["list_mcp_resources"]);
+
+    console.log("[8d] Shortened names are not mistaken for hidden raw names");
+    for (const name of [longGrant]) {
+      const reachable = await call("run", { cwd: dir, nativeMcp: true, mcpServers: ["partly"],
+        prompt: `TRIGGER_CALL:${name}`, tools: [name], maxTurns: 5 });
+      assert.equal(reachable.state, "done", reachable.error);
+      assert.match(reachable.lastText, /echo:partly:named/);
+      assert.deepEqual(requests.at(-1).tools.map((t) => t.function.name), [name]);
     }
 
     // -------------------------------------------------------------------------
@@ -638,6 +679,11 @@ if (process.argv[2] === "fixture") {
       tasks: [{ id: "grant-ok", prompt: "TRIGGER_DIRECT", tools: ["mcp__direct__echo"] }, { id: "grant-missing", prompt: "x" }] });
     assert.equal(grantless.isError, true);
     assert.match(grantless.content[0].text, /tasks\[1\] \(grant-missing\): nativeMcp grants no tool from mcpServers \[direct\] \(tools: read, grep, find, ls\)/);
+    const hiddenBatch = await raw("spawn_batch", { cwd: dir, nativeMcp: true,
+      tasks: [{ id: "hidden-ok", prompt: "TRIGGER_DIRECT", mcpServers: ["direct"], tools: ["mcp__direct__echo"] },
+        { id: "hidden-only", prompt: "x", mcpServers: ["partly"], tools: ["mcp__partly__effect"] }] });
+    assert.equal(hiddenBatch.isError, true);
+    assert.match(hiddenBatch.content[0].text, /tasks\[1\] \(hidden-only\): .*granted tools are hidden in mcp\.json/);
     assert.equal((await call("sessions")).count, grantBatchSessions, "no task of the batch starts");
     assert.equal(requests.length, grantBatchRequests);
     assert.equal((await raw("status", { sessionId: "grant-ok" })).isError, true);
@@ -697,6 +743,21 @@ if (process.argv[2] === "fixture") {
       prompt: "TRIGGER_DIRECT", tools: ["mcp__direct__echo"], maxTurns: 5 });
     assert.equal(overridden.state, "done", overridden.error);
     assert.match(overridden.lastText, /echo:direct:hello-direct/, "the override keeps command, args and env");
+
+    const projectRequests = requests.length;
+    await writeFile(projectConfig, JSON.stringify({ mcpServers: { partly: { toolExposure: { echo: "hidden" } } } }));
+    const hiddenOverride = await raw("spawn", { cwd: dir, nativeMcp: true, mcpServers: ["partly"],
+      prompt: "x", tools: ["mcp__partly__echo"] });
+    assert.equal(hiddenOverride.isError, true);
+    assert.match(hiddenOverride.content[0].text, /granted tools are hidden in mcp\.json/);
+    assert.equal(requests.length, projectRequests, "trusted project exposure is checked before launch");
+
+    await writeFile(projectConfig, JSON.stringify({ mcpServers: { partly: {
+      toolExposure: { "*": "hidden", echo: "codemode-deferred" },
+    } } }));
+    const exactOverride = await call("run", { cwd: dir, nativeMcp: true, mcpServers: ["partly"],
+      prompt: "TRIGGER_CALL:mcp__partly__echo", tools: ["mcp__partly__echo"], maxTurns: 5 });
+    assert.match(exactOverride.lastText, /echo:partly:named/, "an exact non-hidden alias wins over a pattern");
 
     await writeFile(projectConfig, JSON.stringify({ mcpServers: { direct: { enabled: false } } }));
     const disabled = await raw("spawn", { cwd: dir, nativeMcp: true, mcpServers: ["direct"], prompt: "x" });

@@ -15,33 +15,69 @@ export interface NativeMcpOptions {
 type McpProjectOverride = Partial<Pick<McpServerConfig, "enabled" | "exposure" | "toolExposure">>;
 
 /** Selection is explicit: the user's global config also includes this bridge itself. */
-export function validateNativeMcp(options: NativeMcpOptions, cwd: string): void {
+export function validateNativeMcp(options: NativeMcpOptions, cwd: string): LoadedMcpConfig | undefined {
   if (!options.nativeMcp) {
     if (options.mcpServers?.length) throw new Error("mcpServers requires nativeMcp: true.");
     return;
   }
   if (!options.mcpServers?.length) throw new Error("nativeMcp requires an explicit, non-empty mcpServers list.");
-  selectedConfig(cwd, options.mcpServers, delegateProjectTrusted(cwd));
+  return selectedConfig(cwd, options.mcpServers, delegateProjectTrusted(cwd));
 }
 
-/** Pi's resource tools read the selected servers' resources; they carry no server prefix. */
+/** Pi's resource tools read non-hidden selected servers' resources; they carry no server prefix. */
 const RESOURCE_TOOLS = new Set(["list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource"]);
 
 /**
- * A native selection must grant something from its servers; otherwise the delegate silently runs
- * without them. `tools` is the effective list, after defaults. codemode and tool_search reach only
- * the MCP tools named there, so they do not count. Request time only: stored jobs are not re-checked.
+ * A native selection must grant a non-hidden tool from its servers; otherwise the delegate silently
+ * runs without them. `tools` is the effective list, after defaults. codemode and tool_search reach
+ * only the MCP tools named there; resource tools reach only non-hidden servers. Truncated/hashed names
+ * count as reachable. Other suffixes are treated as raw names, accepting rare kebab-case false refusals.
+ * Request time only: stored jobs are not re-checked.
  */
-export function assertNativeMcpGrant(options: NativeMcpOptions, tools: string[]): void {
+export function assertNativeMcpGrant(options: NativeMcpOptions, tools: string[], cwd: string, config?: LoadedMcpConfig): void {
   if (!options.nativeMcp || !tools.length) return;
   const servers = options.mcpServers ?? [];
+  const selected = config ?? selectedConfig(cwd, servers, delegateProjectTrusted(cwd));
   // Pi's naming: mcp__<server>__<tool>, non-identifier characters as "_"; a name over 64 characters
   // keeps its first 55 and gets a hash suffix.
   const prefixes = servers.map((server) => `mcp__${server}__`.replace(/[^A-Za-z0-9_]/g, "_"));
-  if (tools.some((tool) => RESOURCE_TOOLS.has(tool) || prefixes.some((prefix) => tool.startsWith(prefix.slice(0, 55))))) return;
+  let hidden = false;
+  if (tools.some((tool) => selected.servers.some(({ name, config }) => {
+    if (RESOURCE_TOOLS.has(tool)) {
+      if (config.exposure !== "hidden") return true;
+    } else {
+      const prefix = `mcp__${name}__`.replace(/[^A-Za-z0-9_]/g, "_");
+      if (!tool.startsWith(prefix.slice(0, 55))) return false;
+      const suffix = tool.slice(prefix.length);
+      // Truncated/hashed names cannot be reversed; a hidden server can still expose overrides.
+      if (config.exposure !== "hidden" || Object.values(config.toolExposure ?? {}).some((exposure) => exposure !== "hidden")) {
+        if (!tool.startsWith(prefix) || tool.length >= 64) return true;
+        if (getMcpToolExposure(config, suffix) !== "hidden") return true;
+      }
+    }
+    hidden = true;
+    return false;
+  }))) return;
   throw new Error(`nativeMcp grants no tool from mcpServers [${servers.join(", ")}] (tools: ${tools.join(", ")}): ` +
+    (hidden ? "granted tools are hidden in mcp.json; " : "") +
     `add exact names such as ${prefixes[0]}<tool> to tools (and PI_DELEGATE_ALLOW_TOOLS); codemode and tool_search ` +
     "reach only named tools. Pass tools: [] for a tool-free run.");
+}
+
+// Match Pi's getMcpToolExposure and toolPatternRegExp in core/mcp-servers.js (not exported by the package index).
+function getMcpToolExposure(config: McpServerConfig, toolName: string): McpExposure {
+  const overrides = config.toolExposure ?? {};
+  const exact = overrides[toolName];
+  if (exact !== undefined) return exact;
+  for (const [pattern, exposure] of Object.entries(overrides)) {
+    if (pattern.includes("*") && toolPatternRegExp(pattern).test(toolName)) return exposure;
+  }
+  return config.exposure ?? "codemode";
+}
+
+function toolPatternRegExp(pattern: string): RegExp {
+  const source = pattern.split("*").map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*");
+  return new RegExp(`^${source}$`);
 }
 
 function selectedConfig(cwd: string, names: string[], projectTrusted: boolean): LoadedMcpConfig {

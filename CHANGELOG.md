@@ -4,6 +4,8 @@
 
 - Security: delegates now apply Pi's project trust, ignoring an untrusted project's `.pi/mcp.json` and `.pi/settings.json`. Previously an untrusted repo's `.pi/mcp.json` could replace a selected server's command.
 
+- Fix: `nativeMcp` also refuses grants of only tools hidden in `mcp.json`, including resource tools when every selected server is hidden. Stored jobs are not re-checked.
+
 - Fix: on macOS, stdio servers starting orphaned under PID 1 (launchd) exit before recovering durable jobs. On Linux, PID 1 may be a live containerized MCP host, so an orphan is detected by the watchdog only if it is reparented after startup. The watchdog detects reparenting everywhere (including to a subreaper), so a reused host PID cannot keep an orphan alive; `PI_DELEGATE_HOST_WATCH_MS` configures its interval (default 30 seconds).
 
 - `nativeMcp` delegates (including coordinator members and recovered durable jobs) no longer depend on the `exposure` in `mcp.json`: the bridge treats each selected server as `direct` in memory, so every MCP tool named in `tools` is declared to the delegate, and `codemode` scripts reach the same named tools. Servers can stay `deferred` or `codemode` in the `mcp.json` that interactive Pi shares, keeping their tools out of every interactive session. `hidden` is kept for servers and single tools (`toolExposure`), so a hidden tool stays unreachable even when named; `mcp.json` is never written.

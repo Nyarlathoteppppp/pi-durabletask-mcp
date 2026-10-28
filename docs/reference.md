@@ -821,12 +821,12 @@ nothing to load, since named tools are already declared. The existing server per
 and SDK tool restriction apply to direct and nested calls. `tools: []` starts no native
 transports and remains tool-free.
 
-A call whose tools include no tool from the selected servers is refused before anything
-starts. The check uses the tools the delegate would get, so omitting `tools` means the
-read-only default or `PI_DELEGATE_DEFAULT_TOOLS`. `codemode` and `tool_search` reach only
+A call whose tools include no tool from the selected servers, or only tools hidden in
+`mcp.json`, is refused before anything starts. The check uses the tools the delegate would get,
+so omitting `tools` means the read-only default or `PI_DELEGATE_DEFAULT_TOOLS`. `codemode` and `tool_search` reach only
 the MCP tools named in `tools`, so on their own they grant nothing; Pi's resource tools
-(`list_mcp_resources`, `list_mcp_resource_templates`, `read_mcp_resource`) count, since they
-read the selected servers' resources. This applies to `spawn`, `run`, every `spawn_batch`
+(`list_mcp_resources`, `list_mcp_resource_templates`, `read_mcp_resource`) count only when
+at least one selected server is not hidden. This applies to `spawn`, `run`, every `spawn_batch`
 task (one such task refuses the whole batch) and coordinator members, whose dispatch then
 fails with the member's `taskIndex`. Stored durable jobs are not re-checked when they
 recover or load, and `follow_up` keeps the session's tools.

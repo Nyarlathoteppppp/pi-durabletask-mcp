@@ -124,7 +124,7 @@ curl -fsSL https://raw.githubusercontent.com/Nyarlathoteppppp/pi-durateam/main/s
 ```
 
 - 只有 `mcpServers` 里列出的服务器会被连接。这些服务器的工具里，委托只能拿到 `tools` 里写明、并且 `PI_DELEGATE_ALLOW_TOOLS` 放开了的 `mcp__<server>__<tool>`；选中一个服务器不等于拿到它的全部工具。
-- 选了服务器、却没授予其中任何一个工具的调用，会在启动前直接被拒绝。比如省略了 `tools`（于是用只读默认值），或者只给了 `codemode`、`tool_search`：它们只能调用 `tools` 里写明的工具。`tools: []` 仍然是不带工具的运行。
+- 选了服务器、却没授予其中任何一个工具的调用，会在启动前直接被拒绝。比如省略了 `tools`（于是用只读默认值），或者只给了 `codemode`、`tool_search`：它们只能调用 `tools` 里写明的工具。只授予 `mcp.json` 中隐藏的工具也会被拒绝。`tools: []` 仍然是不带工具的运行。
 - 服务器在 `mcp.json` 里的 `exposure` 对委托不起作用：`tools` 里写明的工具一律直接声明给委托，所以那里可以为交互式 Pi 保持 `deferred` 或 `codemode`。设成 `hidden` 的工具仍然调不到。只有想用脚本批量调用时才在 `tools` 里加 `codemode`，脚本能调的也只是这些写明的工具。
 - `extensions` 可以保持 `false`。批次里的任务会继承 `nativeMcp` 和 `mcpServers`；coordinator 成员各自选择。
 - 放开的 MCP 工具可能会写文件，或者在 `cwd` 之外操作，敏感路径保护也管不到外部服务器。授予哪些能力要想清楚。

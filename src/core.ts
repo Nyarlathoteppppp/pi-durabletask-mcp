@@ -242,8 +242,8 @@ export async function startBatch({
       withCoordinator(t);
       await checkCoordinatorAttachments(t.coordinator);
       const taskCwd = await resolveDelegateCwd(t.cwd ?? cwd);
-      validateNativeMcp(t, taskCwd);
-      assertNativeMcpGrant(t, taskTools);
+      const mcpConfig = validateNativeMcp(t, taskCwd);
+      assertNativeMcpGrant(t, taskTools, taskCwd, mcpConfig);
       t.preparedResources = await prepareResources(t.resources, taskCwd, taskTools);
       // The model the task will really run on, including Pi's own default, and its credentials:
       // a task that would fail after its siblings started must stop the whole batch here.

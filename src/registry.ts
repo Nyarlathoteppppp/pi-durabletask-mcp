@@ -374,9 +374,9 @@ async function prepare(req: LaunchRequest): Promise<LaunchRequest & { cwd: strin
   if (req.saveTo !== undefined) checkSavePath(req.saveTo);
   if (req.saveDir !== undefined) checkSavePath(req.saveDir, "saveDir");
   const cwd = await resolveDelegateCwd(req.cwd);
-  validateNativeMcp(req, cwd);
+  const mcpConfig = validateNativeMcp(req, cwd);
   const tools = pickTools(req.tools);
-  assertNativeMcpGrant(req, tools);
+  assertNativeMcpGrant(req, tools, cwd, mcpConfig);
   return { ...req, cwd, tools, preparedResources: req.preparedResources ?? await prepareResources(req.resources, cwd, tools) };
 }
 
